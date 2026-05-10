@@ -35,14 +35,14 @@
   (packet-t link id kind 0 (make-vector 4 0)))
 
 (define (packet-add-to packet queue)
-  (set! (ref packet 'link) '())
+  (setf! (ref packet 'link) '())
   (if (null? queue)
       packet
       (begin
         (let loop ((next queue))
           (let ((peek (ref next 'link)))
             (if (null? peek)
-                (set! (ref next 'link) packet)
+                (setf! (ref next 'link) packet)
                 (loop peek))))
         queue)))
 
@@ -82,29 +82,29 @@
   (let ((tcb (make-tcb list-head id priority queue task)))
     (set! current-tcb tcb)
     (set! list-head tcb)
-    (set! (ref blocks id) tcb)))
+    (setf! (ref blocks id) tcb)))
 
 (define (add-running-task id priority queue task)
   (add-task id priority queue task)
-  (set! (ref current-tcb 'state) STATE-RUNNING))
+  (setf! (ref current-tcb 'state) STATE-RUNNING))
 
 (define (sched-release id)
   (let ((t (ref blocks id)))
     (if (null? t)
         t
         (begin
-          (set! (ref t 'state) (bitwise-and (ref t 'state) STATE-NOT-HELD))
+          (setf! (ref t 'state) (bitwise-and (ref t 'state) STATE-NOT-HELD))
           (if (> (ref t 'priority) (ref current-tcb 'priority))
               t
               current-tcb)))))
 
 (define (sched-hold-current)
   (set! hold-count (+ hold-count 1))
-  (set! (ref current-tcb 'state) (bitwise-ior (ref current-tcb 'state) STATE-HELD))
+  (setf! (ref current-tcb 'state) (bitwise-ior (ref current-tcb 'state) STATE-HELD))
   (ref current-tcb 'link))
 
 (define (sched-suspend-current)
-  (set! (ref current-tcb 'state) (bitwise-ior (ref current-tcb 'state) STATE-SUSPENDED))
+  (setf! (ref current-tcb 'state) (bitwise-ior (ref current-tcb 'state) STATE-SUSPENDED))
   current-tcb)
 
 (define (sched-queue packet)
@@ -113,28 +113,28 @@
         t
         (begin
           (set! queue-count (+ queue-count 1))
-          (set! (ref packet 'link) '())
-          (set! (ref packet 'id) current-id)
+          (setf! (ref packet 'link) '())
+          (setf! (ref packet 'id) current-id)
           (tcb-check-priority-add t current-tcb packet)))))
 
 (define (tcb-check-priority-add t task packet)
   (cond
     ((null? (ref t 'queue))
-     (set! (ref t 'queue) packet)
-     (set! (ref t 'state) (bitwise-ior (ref t 'state) STATE-RUNNABLE))
+     (setf! (ref t 'queue) packet)
+     (setf! (ref t 'state) (bitwise-ior (ref t 'state) STATE-RUNNABLE))
      (if (> (ref t 'priority) (ref task 'priority)) t task))
     (else
-     (set! (ref t 'queue) (packet-add-to packet (ref t 'queue)))
+     (setf! (ref t 'queue) (packet-add-to packet (ref t 'queue)))
      task)))
 
 (define (tcb-run t)
   (cond
     ((= (ref t 'state) STATE-SUSPENDED-RUNNABLE)
      (let ((packet (ref t 'queue)))
-       (set! (ref t 'queue) (ref packet 'link))
+       (setf! (ref t 'queue) (ref packet 'link))
        (if (null? (ref t 'queue))
-           (set! (ref t 'state) STATE-RUNNING)
-           (set! (ref t 'state) STATE-RUNNABLE))
+           (setf! (ref t 'state) STATE-RUNNING)
+           (setf! (ref t 'state) STATE-RUNNABLE))
        (task-run (ref t 'task) packet)))
     (else
      (task-run (ref t 'task) '()))))
@@ -149,14 +149,14 @@
     (else                            (device-task-run task packet))))
 
 (define (idle-task-run t packet)
-  (set! (ref t 'v2) (- (ref t 'v2) 1))
+  (setf! (ref t 'v2) (- (ref t 'v2) 1))
   (cond
     ((= (ref t 'v2) 0) (sched-hold-current))
     ((= 0 (bitwise-and (ref t 'v1) 1))
-     (set! (ref t 'v1) (arithmetic-shift (ref t 'v1) -1))
+     (setf! (ref t 'v1) (arithmetic-shift (ref t 'v1) -1))
      (sched-release ID-DEVICE-A))
     (else
-     (set! (ref t 'v1) (bitwise-xor (arithmetic-shift (ref t 'v1) -1) 53256))
+     (setf! (ref t 'v1) (bitwise-xor (arithmetic-shift (ref t 'v1) -1) 53256))
      (sched-release ID-DEVICE-B))))
 
 (define (device-task-run t packet)
@@ -165,32 +165,32 @@
      (if (null? (ref t 'v1))
          (sched-suspend-current)
          (let ((v (ref t 'v1)))
-           (set! (ref t 'v1) '())
+           (setf! (ref t 'v1) '())
            (sched-queue v))))
     (else
-     (set! (ref t 'v1) packet)
+     (setf! (ref t 'v1) packet)
      (sched-hold-current))))
 
 (define (worker-task-run t packet)
   (cond
     ((null? packet) (sched-suspend-current))
     (else
-     (set! (ref t 'v1) (if (= (ref t 'v1) ID-HANDLER-A) ID-HANDLER-B ID-HANDLER-A))
-     (set! (ref packet 'id) (ref t 'v1))
-     (set! (ref packet 'a1) 0)
+     (setf! (ref t 'v1) (if (= (ref t 'v1) ID-HANDLER-A) ID-HANDLER-B ID-HANDLER-A))
+     (setf! (ref packet 'id) (ref t 'v1))
+     (setf! (ref packet 'a1) 0)
      (let loop ((i 0))
        (when (< i DATA-SIZE)
-         (set! (ref t 'v2) (+ (ref t 'v2) 1))
-         (when (> (ref t 'v2) 26) (set! (ref t 'v2) 1))
-         (set! (ref (ref packet 'a2) i) (ref t 'v2))
+         (setf! (ref t 'v2) (+ (ref t 'v2) 1))
+         (when (> (ref t 'v2) 26) (setf! (ref t 'v2) 1))
+         (setf! (ref (ref packet 'a2) i) (ref t 'v2))
          (loop (+ i 1))))
      (sched-queue packet))))
 
 (define (handler-task-run t packet)
   (when (not (null? packet))
     (if (= (ref packet 'kind) KIND-WORK)
-        (set! (ref t 'v1) (packet-add-to packet (ref t 'v1)))
-        (set! (ref t 'v2) (packet-add-to packet (ref t 'v2)))))
+        (setf! (ref t 'v1) (packet-add-to packet (ref t 'v1)))
+        (setf! (ref t 'v2) (packet-add-to packet (ref t 'v2)))))
   (cond
     ((null? (ref t 'v1)) (sched-suspend-current))
     (else
@@ -201,13 +201,13 @@
             ((null? (ref t 'v2)) (sched-suspend-current))
             (else
              (let ((v (ref t 'v2)))
-               (set! (ref t 'v2) (ref v 'link))
-               (set! (ref v 'a1) (ref (ref (ref t 'v1) 'a2) count))
-               (set! (ref (ref t 'v1) 'a1) (+ count 1))
+               (setf! (ref t 'v2) (ref v 'link))
+               (setf! (ref v 'a1) (ref (ref (ref t 'v1) 'a2) count))
+               (setf! (ref (ref t 'v1) 'a1) (+ count 1))
                (sched-queue v)))))
          (else
           (let ((v (ref t 'v1)))
-            (set! (ref t 'v1) (ref v 'link))
+            (setf! (ref t 'v1) (ref v 'link))
             (sched-queue v))))))))
 
 (define (schedule)

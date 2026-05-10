@@ -48,6 +48,7 @@ enum class TokenKind : uint8_t
 	Define,
 	If,
 	Set,
+	Setf,
 	QuoteWord,
 	Apply,
 	Let,
@@ -731,6 +732,10 @@ namespace
 			{
 				return TokenKind::Set;
 			}
+			if (text == "setf!")
+			{
+				return TokenKind::Setf;
+			}
 			if (text == "quote")
 			{
 				return TokenKind::QuoteWord;
@@ -1092,6 +1097,8 @@ namespace
 					return parse_if(loc);
 				case TokenKind::Set:
 					return parse_set_bang(loc);
+				case TokenKind::Setf:
+					return parse_setf_bang(loc);
 				case TokenKind::Apply:
 					return parse_apply(loc);
 				case TokenKind::QuoteWord:
@@ -1244,30 +1251,6 @@ namespace
 		{
 			advance();
 
-			// (set! (ref obj key) value): polymorphic place set. Only `ref`
-			// is accepted as the place form; reject anything else loudly.
-			if (peek().kind == TokenKind::LParen)
-			{
-				SourceLoc place_loc = peek().loc;
-				advance();
-				if (peek().kind != TokenKind::Variable || peek().text != "ref")
-				{
-					CITY_DIE("%d:%d: set! place form must be (ref obj key)", place_loc.line, place_loc.col);
-				}
-				advance();
-				Expr* obj = parse_expr();
-				Expr* key = parse_expr();
-				expect(TokenKind::RParen);
-				Expr* value = parse_expr();
-				expect(TokenKind::RParen);
-
-				Expr* e = make_expr(ExprKind::SetRef, loc);
-				e->set_ref.obj = obj;
-				e->set_ref.key = key;
-				e->set_ref.value = value;
-				return e;
-			}
-
 			std::string_view name = expect_identifier("set!");
 			Expr* value = parse_expr();
 			expect(TokenKind::RParen);
@@ -1276,6 +1259,30 @@ namespace
 			e->set_bang.name = name;
 			e->set_bang.value = value;
 			e->set_bang.is_init = false;
+			return e;
+		}
+
+		Expr* parse_setf_bang(SourceLoc loc)
+		{
+			advance();
+
+			SourceLoc place_loc = peek().loc;
+			expect(TokenKind::LParen);
+			if (peek().kind != TokenKind::Variable || peek().text != "ref")
+			{
+				CITY_DIE("%d:%d: setf! place form must be (ref obj key)", place_loc.line, place_loc.col);
+			}
+			advance();
+			Expr* obj = parse_expr();
+			Expr* key = parse_expr();
+			expect(TokenKind::RParen);
+			Expr* value = parse_expr();
+			expect(TokenKind::RParen);
+
+			Expr* e = make_expr(ExprKind::SetRef, loc);
+			e->set_ref.obj = obj;
+			e->set_ref.key = key;
+			e->set_ref.value = value;
 			return e;
 		}
 

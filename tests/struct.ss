@@ -39,14 +39,14 @@
 ($check (= 8 (ref pp 'y)))
 
 ;; Mutation via set! place form.
-(set! (ref pp 'x) 100)
-(set! (ref pp 'y) 200)
+(setf! (ref pp 'x) 100)
+(setf! (ref pp 'y) 200)
 ($check (= 100 (ref pp 'x)))
 ($check (= 200 (ref pp 'y)))
 
 ;; Mutation on one instance doesn't affect another.
 (define pp2 (point 7 8))
-(set! (ref pp2 'x) 9999)
+(setf! (ref pp2 'x) 9999)
 ($check (= 100 (ref pp 'x)))
 ($check (= 9999 (ref pp2 'x)))
 

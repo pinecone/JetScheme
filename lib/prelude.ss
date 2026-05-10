@@ -187,7 +187,7 @@
 (define vector (%prim "vector"))
 (define make-vector (%prim "make-vector"))
 (define (vector-ref v i) (ref v i))
-(define (vector-set! v i x) (set! (ref v i) x))
+(define (vector-set! v i x) (setf! (ref v i) x))
 (define vector-length (%prim "vector-length"))
 (define vector? (%prim "vector?"))
 
@@ -198,7 +198,7 @@
 (define string (%prim "string"))
 (define string-length (%prim "string-length"))
 (define (string-ref s i) (ref s i))
-(define (string-set! s i c) (set! (ref s i) c))
+(define (string-set! s i c) (setf! (ref s i) c))
 (define substring (%prim "substring"))
 (define string-copy (%prim "string-copy"))
 (define string-copy! (%prim "string-copy!"))
