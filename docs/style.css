@@ -1,0 +1,394 @@
+/* 0xProto -- self-hosted, not on Google Fonts */
+@font-face {
+  font-family: "0xProto";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("fonts/0xProto-Regular.woff2") format("woff2");
+}
+@font-face {
+  font-family: "0xProto";
+  font-style: italic;
+  font-weight: 400;
+  font-display: swap;
+  src: url("fonts/0xProto-Italic.woff2") format("woff2");
+}
+@font-face {
+  font-family: "0xProto";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("fonts/0xProto-Bold.woff2") format("woff2");
+}
+
+/* Tokyo Night (night variant) palette + CityScheme tokens */
+:root {
+  --bg-darkest:     #0c0e14;
+  --bg-dark:        #16161e;
+  --bg:             #030314;
+  --bg-line:        #1e202e;
+  --bg-highlight:   #292e42;
+
+  --fg:             #c0caf5;
+  --fg-dark:        #a9b1d6;
+  --fg-muted:       #9aa5ce;
+  --fg-gutter:      #3b4261;
+
+  --comment:        #565f89;
+
+  --red:            #f7768e;
+  --orange:         #ff9e64;
+  --green:          #9ece6a;
+  --teal:           #73daca;
+  --cyan:           #7dcfff;
+  --cyan-pale:      #89ddff;
+  --blue:           #7aa2f7;
+  --magenta:        #bb9af7;
+  --magenta-hot:    #ff007c;
+
+  --h1: #9cdbfb;
+  --h2: #bb9af7;
+  --h3: #9ece6a;
+
+  --font-sans:    -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro", system-ui, ui-sans-serif, "Segoe UI", sans-serif;
+  --font-display: "Poiret One", ui-sans-serif, system-ui, sans-serif;
+  --font-heading: "Manrope", ui-sans-serif, system-ui, sans-serif;
+  --font-mono:    "0xProto", ui-monospace, "SFMono-Regular", "Menlo", "Consolas", monospace;
+
+  /* Type scale: 1.25 (major third) */
+  --fs-micro:  0.8rem;
+  --fs-small:  0.9rem;
+  --fs-base:   1rem;
+  --fs-lead:   1.25rem;
+  --fs-h3:     1rem;
+  --fs-h2:     1.2rem;
+  --fs-h1-min: 2rem;
+  --fs-h1-max: 3rem;
+
+  /* Spacing scale (rem), powers of ~1.5 */
+  --sp-1: 0.25rem;
+  --sp-2: 0.5rem;
+  --sp-3: 0.75rem;
+  --sp-4: 1rem;
+  --sp-5: 1.5rem;
+  --sp-6: 2rem;
+  --sp-7: 3rem;
+  --sp-8: 4rem;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  min-height: 100vh;
+}
+
+main {
+  max-width: 53.75rem;
+  margin: 0 auto;
+  padding: var(--sp-8) var(--sp-5);
+}
+
+::selection {
+  background: rgba(187, 154, 247, 0.4);
+  color: var(--fg);
+}
+
+/* Headings */
+h1, h2, h3 {
+  margin: 0;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+h1 {
+  font-family: var(--font-display);
+  color: var(--h1);
+  font-size: clamp(2rem, 5vw, 3rem);
+  font-weight: 400;
+  letter-spacing: 0.01em;
+  line-height: 1.05;
+  margin: 0 0 var(--sp-7) 0;
+  text-align: center;
+  animation: h1-pulse 3.4s ease-in-out infinite alternate;
+}
+
+.glyph {
+  text-align: center;
+  font-size: clamp(7rem, 18vw, 11rem);
+  line-height: 1;
+  margin: 0 0 var(--sp-3) 0;
+}
+
+@keyframes h1-pulse {
+  from {
+    text-shadow:
+      0 0  5px rgba(187,154,247,0.75),
+      0 0 16px rgba(187,154,247,0.55),
+      0 0 36px rgba(187,154,247,0.40),
+      0 0 70px rgba(255,0,124,0.30);
+  }
+  to {
+    text-shadow:
+      0 0  8px rgba(187,154,247,1.00),
+      0 0 28px rgba(187,154,247,0.90),
+      0 0 60px rgba(187,154,247,0.75),
+      0 0 120px rgba(255,0,124,0.65);
+  }
+}
+
+
+@media (prefers-reduced-motion: reduce) {
+  h1 { animation: none; }
+}
+
+h2 {
+  font-family: var(--font-heading);
+  color: var(--h2);
+  font-size: var(--fs-h2);
+  text-transform: uppercase;
+  letter-spacing: 0.10em;
+  margin: var(--sp-7) 0 var(--sp-4) 0;
+}
+
+h3 {
+  font-family: var(--font-heading);
+  color: var(--h3);
+  font-size: var(--fs-h3);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin: var(--sp-6) 0 var(--sp-3) 0;
+}
+
+/* Hero */
+.hero {
+  margin: 0 0 var(--sp-7) 0;
+}
+
+.tagline {
+  color: var(--fg-dark);
+  font-size: var(--fs-lead);
+  line-height: 1.55;
+  margin: 0;
+}
+
+.tagline strong {
+  color: var(--cyan-pale);
+  font-weight: 600;
+}
+
+/* Body text */
+p, li {
+  text-align: justify;
+  hyphens: auto;
+  -webkit-hyphens: auto;
+}
+
+p {
+  margin: 0 0 var(--sp-4) 0;
+  color: var(--fg-dark);
+}
+
+strong { color: var(--fg); font-weight: 500; }
+
+a.cite {
+  color: var(--fg-muted);
+  font-style: italic;
+  font-weight: 400;
+  font-size: var(--fs-small);
+  text-decoration: none;
+  border-bottom: 1px dotted var(--fg-gutter);
+}
+a.cite:hover { color: var(--fg-dark); border-bottom-color: var(--fg-muted); }
+
+.cs {
+  color: var(--h1);
+  font-weight: 700;
+}
+
+ul, ol {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 var(--sp-4) 0;
+  color: var(--fg-dark);
+}
+
+li {
+  position: relative;
+  padding-left: 1.5rem;
+  margin: 0 0 var(--sp-2) 0;
+}
+
+li::before {
+  content: "🌃";
+  position: absolute;
+  left: 0;
+  top: 0.28em;
+  font-size: 0.78em;
+}
+
+#optimizations li::before {
+  content: "💡";
+  filter: drop-shadow(0 0 4px rgba(255, 235, 60, 0.85));
+}
+
+#benchmarks li::before {
+  content: "📐";
+}
+
+/* Links */
+a {
+  color: var(--cyan);
+  text-decoration: none;
+  border-bottom: 1px solid rgba(125,207,255,0.30);
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+a:hover {
+  color: var(--cyan-pale);
+  border-bottom-color: var(--cyan-pale);
+}
+
+/* Inline code */
+code {
+  font-family: var(--font-mono);
+  font-feature-settings: "calt", "liga";
+}
+
+p code, li code, td code {
+  background: var(--bg-dark);
+  color: var(--magenta);
+  padding: 0.05rem 0.36rem;
+  border-radius: 4px;
+  font-size: var(--fs-small);
+  border: 1px solid var(--bg-highlight);
+}
+
+/* Code blocks */
+pre {
+  font-family: var(--font-mono);
+  background: var(--bg-dark);
+  border: 1px solid var(--bg-highlight);
+  border-radius: 8px;
+  padding: var(--sp-4) 1.1rem;
+  overflow-x: auto;
+  margin: 0 0 var(--sp-5) 0;
+  font-size: var(--fs-small);
+  line-height: 1.65;
+}
+
+pre code {
+  color: var(--fg);
+  background: none;
+  border: 0;
+  padding: 0;
+}
+
+pre code .c   { color: var(--comment); font-style: italic; }
+pre code .k   { color: var(--magenta); }
+pre code .b   { color: var(--blue); }
+pre code .n   { color: var(--orange); }
+pre code .s   { color: var(--green); }
+pre code .ch  { color: var(--green); }
+pre code .cmd { color: var(--blue); }
+
+/* Tables */
+.table-wrap {
+  overflow-x: auto;
+  margin: 0 0 var(--sp-5) 0;
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: var(--fs-base);
+  background: var(--bg-dark);
+  border: 1px solid var(--bg-highlight);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+thead th {
+  background: var(--bg-line);
+  color: var(--cyan-pale);
+  font-weight: 600;
+  text-align: left;
+  padding: var(--sp-3) var(--sp-4);
+  border-bottom: 1px solid var(--bg-highlight);
+  font-family: var(--font-mono);
+  font-size: var(--fs-small);
+  letter-spacing: 0.02em;
+}
+
+tbody td {
+  padding: var(--sp-2) var(--sp-4);
+  border-bottom: 1px solid var(--bg-highlight);
+  color: var(--fg-dark);
+}
+
+tbody td:first-child {
+  font-family: var(--font-mono);
+  color: var(--magenta);
+}
+
+tbody td:nth-child(n+2) {
+  font-family: var(--font-mono);
+  color: var(--green);
+}
+
+th.sep, td.sep { border-left: 1px solid var(--bg-highlight); }
+
+p.caption {
+  font-size: var(--fs-small);
+  color: var(--fg-muted);
+  text-align: left;
+  margin-top: calc(-1 * var(--sp-3));
+}
+
+tbody tr:last-child td { border-bottom: 0; }
+tbody tr:hover td { background: rgba(122,162,247,0.04); }
+
+tfoot th, tfoot td {
+  padding: var(--sp-4) var(--sp-4);
+  border-top: 1px solid var(--bg-highlight);
+  background: var(--bg-line);
+  font-family: var(--font-mono);
+  font-size: var(--fs-small);
+}
+
+tfoot th {
+  color: var(--cyan-pale);
+  font-weight: 600;
+  text-align: left;
+  letter-spacing: 0.02em;
+}
+
+tfoot td { color: var(--green); }
+
+/* Footer */
+footer {
+  margin-top: var(--sp-8);
+  padding-top: var(--sp-5);
+  border-top: 1px solid var(--fg-gutter);
+  color: var(--fg-muted);
+  font-size: var(--fs-small);
+  text-align: center;
+}
+
+/* Smaller screens */
+@media (max-width: 560px) {
+  main { padding: var(--sp-6) 1.1rem var(--sp-7); }
+  pre { font-size: var(--fs-micro); padding: var(--sp-3); }
+}

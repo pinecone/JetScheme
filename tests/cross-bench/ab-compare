@@ -1,0 +1,203 @@
+#!/usr/bin/env python3
+"""Head-to-head benchmark of two git refs.
+
+Builds both refs in temp worktrees, runs each bench N times interleaved
+(alternating order to neutralize drift), reports per-bench median, sign
+test, one-sided binomial p-value, and a verdict (REAL / weak / noise).
+
+Usage:
+    ./ab-compare <ref-old> <ref-new> [-n RUNS] [-b BENCH ...] [--keep]
+
+Examples:
+    ./ab-compare HEAD~1 HEAD
+    ./ab-compare main perf-branch -n 30
+    ./ab-compare 5fc6008 2105bcf -b bench-fib -b bench-tak
+"""
+import argparse
+import os
+import statistics
+import subprocess
+import sys
+import tempfile
+import time
+from math import comb
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+REPO = HERE.parent.parent
+DEFAULT_BENCHES = sorted(p.stem for p in HERE.glob("bench-*.ss"))
+
+
+def die(msg):
+    print(f"error: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def run(cmd, **kw):
+    r = subprocess.run(cmd, **kw)
+    if r.returncode != 0:
+        die(f"command failed (exit {r.returncode}): {' '.join(map(str, cmd))}")
+    return r
+
+
+def short(ref):
+    r = subprocess.run(["git", "rev-parse", "--short", ref], cwd=REPO,
+                       capture_output=True, text=True)
+    return r.stdout.strip() if r.returncode == 0 else ref
+
+
+def build_ref(ref, dest):
+    print(f"  building {ref} ({short(ref)}) at {dest} ...", flush=True)
+    run(["git", "worktree", "add", "--detach", str(dest), ref], cwd=REPO,
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    run(["make", "-j"], cwd=dest,
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    bin = dest / "build" / "city"
+    if not bin.exists():
+        die(f"build did not produce {bin}")
+    return bin
+
+
+def remove_worktree(dest):
+    subprocess.run(["git", "worktree", "remove", "--force", str(dest)],
+                   cwd=REPO, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def time_run(cmd):
+    s = time.perf_counter()
+    r = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    dt = time.perf_counter() - s
+    if r.returncode != 0:
+        die(f"benchmark exited {r.returncode}: {' '.join(map(str, cmd))}")
+    return dt
+
+
+def compile_bench(bin, src, bc):
+    with bc.open("wb") as f:
+        run([str(bin), "compile", str(src)], stdout=f)
+
+
+def sign_p(wins, n_decisive):
+    if n_decisive == 0:
+        return 1.0
+    one_sided = sum(comb(n_decisive, k) for k in range(wins, n_decisive + 1)) / 2 ** n_decisive
+    losses = n_decisive - wins
+    other_tail = sum(comb(n_decisive, k) for k in range(losses, n_decisive + 1)) / 2 ** n_decisive
+    return min(1.0, 2 * min(one_sided, other_tail))
+
+
+def fmt_p(p):
+    if p < 1e-6:
+        return f"{p:.0e}"
+    if p < 0.01:
+        return f"{p:.4f}"
+    return f"{p:.3f}"
+
+
+def verdict(p, delta_pct):
+    if p < 0.01 and abs(delta_pct) > 0.2:
+        return "REAL"
+    if p < 0.05:
+        return "weak"
+    return "noise"
+
+
+def main():
+    ap = argparse.ArgumentParser(
+        description="Head-to-head A/B benchmark of two git refs.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__)
+    ap.add_argument("ref_old", help="old git ref (e.g. HEAD~1, main)")
+    ap.add_argument("ref_new", help="new git ref (e.g. HEAD, perf-branch)")
+    ap.add_argument("-n", "--runs", type=int, default=20,
+                    help="trials per binary per bench (default 20)")
+    ap.add_argument("-b", "--bench", action="append",
+                    help="restrict to specific bench (repeatable)")
+    ap.add_argument("--keep", action="store_true",
+                    help="keep temp worktrees after run")
+    args = ap.parse_args()
+
+    benches = args.bench or DEFAULT_BENCHES
+
+    # sanity-check refs resolve
+    for ref in (args.ref_old, args.ref_new):
+        r = subprocess.run(["git", "rev-parse", "--verify", f"{ref}^{{commit}}"],
+                           cwd=REPO, capture_output=True)
+        if r.returncode != 0:
+            die(f"unknown git ref: {ref}")
+
+    tmp = Path(tempfile.mkdtemp(prefix="ab-compare-"))
+    wt_old = tmp / "old"
+    wt_new = tmp / "new"
+    bin_old = build_ref(args.ref_old, wt_old)
+    bin_new = build_ref(args.ref_new, wt_new)
+
+    print()
+    print(f"  old:  {args.ref_old} ({short(args.ref_old)})  →  {bin_old}")
+    print(f"  new:  {args.ref_new} ({short(args.ref_new)})  →  {bin_new}")
+    print(f"  runs: {args.runs} per binary per bench, interleaved (alternating order)")
+    print()
+
+    bcs = {}
+    for b in benches:
+        src = HERE / f"{b}.ss"
+        if not src.exists():
+            die(f"missing source: {src}")
+        bc_old = tmp / f"{b}.old.bc"
+        bc_new = tmp / f"{b}.new.bc"
+        compile_bench(bin_old, src, bc_old)
+        compile_bench(bin_new, src, bc_new)
+        bcs[b] = (bc_old, bc_new)
+
+    name_w = max(len(b) for b in benches)
+    header = f"  {'bench':<{name_w}}  {'old(ms)':>9} {'new(ms)':>9}  {'delta':>7}  {'wins/ties/loss':>15}  {'p':>10}  verdict"
+    print(header)
+    print("  " + "-" * (len(header) - 2))
+
+    ratios = []
+    for b in benches:
+        bc_old, bc_new = bcs[b]
+        time_run([str(bin_old), "exec", str(bc_old)])
+        time_run([str(bin_new), "exec", str(bc_new)])
+        new_t, old_t = [], []
+        wins = ties = losses = 0
+        for i in range(args.runs):
+            if i % 2 == 0:
+                a = time_run([str(bin_new), "exec", str(bc_new)])
+                o = time_run([str(bin_old), "exec", str(bc_old)])
+            else:
+                o = time_run([str(bin_old), "exec", str(bc_old)])
+                a = time_run([str(bin_new), "exec", str(bc_new)])
+            new_t.append(a)
+            old_t.append(o)
+            if a < o:
+                wins += 1
+            elif a > o:
+                losses += 1
+            else:
+                ties += 1
+        med_n = statistics.median(new_t)
+        med_o = statistics.median(old_t)
+        delta = (med_n / med_o - 1) * 100 if med_o > 0 else 0.0
+        ratios.append(med_n / med_o if med_o > 0 else 1.0)
+        p = sign_p(wins, wins + losses)
+        v = verdict(p, delta)
+        print(f"  {b:<{name_w}}  {med_o*1000:>9.2f} {med_n*1000:>9.2f}  {delta:>+6.2f}%  "
+              f"{wins:>3}/{ties:>3}/{losses:>3}    {fmt_p(p):>10}  {v}")
+
+    if len(ratios) >= 2:
+        gm = statistics.geometric_mean(ratios)
+        print()
+        print(f"  geomean ratio (new/old): {gm:.4f}  ({(gm - 1) * 100:+.2f}%)")
+        print()
+        print("  verdict legend: REAL = p<0.01 and |delta|>0.2%;  weak = p<0.05;  noise = otherwise.")
+
+    if not args.keep:
+        remove_worktree(wt_old)
+        remove_worktree(wt_new)
+    else:
+        print(f"\n  worktrees kept: {wt_old} {wt_new}")
+
+
+if __name__ == "__main__":
+    main()

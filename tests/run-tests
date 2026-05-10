@@ -1,0 +1,40 @@
+#!/bin/sh
+
+trap exit 2
+
+CITY=${CITY:-../build/city}
+export CITY
+
+if [ ! -e "$CITY" ]
+then
+    echo "error: city executable '$CITY' not found; build it first."
+    exit
+fi
+
+echo "runnin' tests:"
+pass=0
+fail=0
+failed_names=
+for file in *.ss
+do
+    name=${file%%.*}
+    printf "   $name... "
+    if ./run-test $file > /dev/null
+    then
+      echo "success"
+      pass=$((pass + 1))
+    else
+      echo "fail"
+      fail=$((fail + 1))
+      failed_names="$failed_names $name"
+    fi
+done
+
+total=$((pass + fail))
+if [ $fail -eq 0 ]
+then
+    echo "===== $pass/$total passed ====="
+else
+    echo "===== $pass/$total passed, $fail failed:$failed_names ====="
+    exit 1
+fi

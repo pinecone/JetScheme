@@ -1,0 +1,6 @@
+#!/bin/sh
+
+file=$1
+shift
+CITY=${CITY:-../build/city}
+"$CITY" run $file $@ > /dev/null 2>&1

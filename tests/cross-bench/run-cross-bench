@@ -1,0 +1,86 @@
+#!/usr/bin/env python3
+# Compare CityScheme VM against the Lua interpreter on matched benchmarks.
+# Times child user-time via getrusage, reports min-of-N and city/lua ratio.
+
+import os
+import resource
+import shutil
+import statistics
+import subprocess
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+CITY = Path(os.environ.get("CITY", HERE / ".." / ".." / "build" / "city"))
+LUA = shutil.which("lua")
+
+BENCHES = sorted(p.stem for p in HERE.glob("bench-*.ss"))
+RUNS = 5
+
+
+def die(msg):
+    print(f"error: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def user_time(cmd, **kw):
+    before = resource.getrusage(resource.RUSAGE_CHILDREN)
+    r = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **kw)
+    after = resource.getrusage(resource.RUSAGE_CHILDREN)
+    if r.returncode != 0:
+        die(f"{cmd[0]} exited {r.returncode}")
+    return after.ru_utime - before.ru_utime
+
+
+def main():
+    if not CITY.exists() or not os.access(CITY, os.X_OK):
+        die(f"{CITY} not found or not executable; build it first with 'make'")
+    if LUA is None:
+        die("no 'lua' on PATH. Install Lua 5.5 (e.g., brew install lua).")
+
+    lua_version = subprocess.run([LUA, "-v"], capture_output=True, text=True).stderr.strip() \
+        or subprocess.run([LUA, "-v"], capture_output=True, text=True).stdout.strip()
+    print(f"city: {CITY}")
+    print(f"lua: {LUA} ({lua_version})")
+    print()
+
+    name_w = max(len(b) for b in BENCHES)
+    ratios = []
+
+    for bench in BENCHES:
+        bc_path = Path("/tmp") / f"{bench}.bc"
+        lua_path = HERE / f"{bench}.lua"
+        with bc_path.open("wb") as f:
+            subprocess.run([str(CITY), "compile", str(HERE / f"{bench}.ss")],
+                           stdout=f, check=True)
+
+        print(f"  {bench:<{name_w}}  city: ", end="", flush=True)
+        city_times = []
+        for _ in range(RUNS):
+            city_times.append(user_time([str(CITY), "exec", str(bc_path)]))
+            print(".", end="", flush=True)
+
+        print("  lua: ", end="", flush=True)
+        lua_times = []
+        for _ in range(RUNS):
+            lua_times.append(user_time([LUA, str(lua_path)]))
+            print(".", end="", flush=True)
+
+        city_min = min(city_times)
+        lua_min = min(lua_times)
+        ratio = city_min / lua_min if lua_min > 0 else float("inf")
+        if lua_min > 0:
+            ratios.append(ratio)
+        print(f"  {city_min:.3f}s / {lua_min:.3f}s = {ratio:.2f}x", flush=True)
+
+    if len(ratios) >= 2:
+        gm = statistics.geometric_mean(ratios)
+        sd = statistics.stdev(ratios)
+        print()
+        cv = (sd / gm) * 100 if gm > 0 else 0.0
+        print(f"  overall (geomean): {gm:.2f}x ± {cv:.0f}% across {len(ratios)} benches",
+              flush=True)
+
+
+if __name__ == "__main__":
+    main()

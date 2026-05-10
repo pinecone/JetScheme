@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>🌃 CityScheme</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8C%83%3C/text%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700&family=Poiret+One&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+
+<header class="hero">
+  <div class="glyph">🌃</div>
+  <h1>CityScheme</h1>
+  <p class="tagline">A <a href="https://en.wikipedia.org/wiki/Scheme_(programming_language)">Scheme</a> interpreter
+    written in C++ that <a href="#benchmarks">tries to go fast</a>. (The "C" in "City" may be pronounced "sh" as needed.)</p>
+</header>
+
+<section id="language">
+  <h2>Features</h2>
+  <ul>
+    <li>Forms: <code>define</code>, <code>lambda</code>, <code>if</code>, <code>cond</code>, <code>when</code>, <code>unless</code>, <code>and</code>, <code>or</code>, <code>set!</code>, <code>begin</code>, <code>quote</code>, <code>let</code> (incl. named), <code>let*</code>, <code>letrec</code>/<code>letrec*</code>, <code>apply</code></li>
+    <li>Library: pairs and lists, strings, vectors, characters, booleans, symbols, numbers (IEEE 754 doubles), procedures, ports; list and vector operations, string/character predicates and conversions, arithmetic and bit ops, <code>eq?</code>/<code>eqv?</code>/<code>equal?</code>, <code>read</code>, file IO</li>
+  </ul>
+</section>
+
+<section id="usage">
+  <h2>How to run</h2>
+  <p>Needs <code>make</code> and a C++20 <code>clang</code>.</p>
+<pre><code><span class="cmd">git</span> clone https://github.com/pinecone/CityScheme.git
+<span class="cmd">cd</span> CityScheme
+<span class="cmd">make</span> test                   <span class="c"># build &amp; run tests</span>
+<span class="cmd">build/city</span> &lt;file.ss&gt;        <span class="c"># run file.ss</span></code></pre>
+  <p>Benchmarks:</p>
+<pre><code><span class="cmd">make</span> bench                  <span class="c"># in-language microbenchmarks</span>
+<span class="cmd">make</span> cross-bench            <span class="c"># cross-language benchmarks</span></code></pre>
+</section>
+
+<section id="benchmarks">
+  <h2>Cross-language benchmarks</h2>
+  <ul>
+    <li>Latest <code>make cross-bench</code> against <a href="https://www.lua.org/">PUC Lua 5.4</a> and <a href="https://www.python.org/">CPython 3.14</a>, all built with <code>-O2</code></li>
+  </ul>
+
+  <div class="table-wrap">
+  <table>
+    <thead>
+      <tr><th rowspan="2">bench</th><th colspan="2">🍎 MacBook Air (Apple M1)</th><th colspan="2" class="sep">🎮 Steam Deck OG (AMD Zen 2)</th></tr>
+      <tr><th>lua</th><th>python</th><th class="sep">lua</th><th>python</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>deltablue</td><td>1.45×</td><td>2.17×</td><td class="sep">1.75×</td><td>1.89×</td></tr>
+      <tr><td>richards</td><td>1.37×</td><td>2.22×</td><td class="sep">1.00×</td><td>1.79×</td></tr>
+      <tr><td>nbody</td><td>1.41×</td><td>2.08×</td><td class="sep">1.14×</td><td>1.64×</td></tr>
+      <tr><td>tak</td><td>1.59×</td><td>2.70×</td><td class="sep">1.54×</td><td>2.56×</td></tr>
+      <tr><td>json</td><td>1.39×</td><td>1.35×</td><td class="sep">1.25×</td><td>1.28×</td></tr>
+      <tr><td>fib</td><td>1.69×</td><td>3.23×</td><td class="sep">1.35×</td><td>2.70×</td></tr>
+      <tr><td>splay</td><td>1.64×</td><td>1.23×</td><td class="sep">1.75×</td><td>1.25×</td></tr>
+    </tbody>
+    <tfoot>
+      <tr><th>geomean</th><td>1.50×</td><td>2.04×</td><td class="sep">1.37×</td><td>1.80×</td></tr>
+    </tfoot>
+  </table>
+  </div>
+  <p class="caption">Time relative to CityScheme (1.65s on M1, 2.67s on Zen 2); &gt;1× means slower than CityScheme on the same workload.</p>
+</section>
+
+<section id="optimizations">
+  <h2>Impl</h2>
+  <p><strong>CityScheme</strong> leans heavily on techniques described in:</p>
+  <ul>
+    <li><strong>Tail-threaded dispatch</strong> <a class="cite" href="https://dl.acm.org/doi/10.1145/362248.362270">(Bell, 1973)</a> — each opcode is its own small function; each function ends by tail-calling the next opcode's function directly. There's no central dispatch loop and no callee-save spills between opcodes; hot VM state stays in registers across the whole run.</li>
+    <li><strong>Inline caching</strong> <a class="cite" href="https://dl.acm.org/doi/10.1145/800017.800542">(Deutsch &amp; Schiffman, 1984)</a> — on the first time through a call site, the slow path patches the opcode in place to point at a specialized fast version of itself. Subsequent passes through the same site skip the lookup, key compare, and type check entirely.</li>
+    <li><strong>Flat closures</strong> <a class="cite" href="https://www.cs.unc.edu/xcms/wpfiles/dissertations/dybvig.pdf">(Dybvig, 1987)</a> — captures live in an inline array on the closure; immutable captures by value, mutated <em>and</em> shared ones get a heap indirection.</li>
+    <li><strong>NaN-boxing</strong> <a class="cite" href="https://www.cs.arizona.edu/sites/default/files/TR93-27.pdf">(Gudeman, 1993)</a> — every value fits in 8 bytes: numbers are raw doubles; immediates (bool, char, empty list) and tagged heap pointers all hide in the IEEE 754 quiet-NaN payload. Type tests are cheap bit ops and any value passes in a single register.</li>
+    <li><strong>Superinstructions</strong> <a class="cite" href="https://dl.acm.org/doi/10.1145/199448.199526">(Proebsting, 1995)</a> — common back-to-back opcode pairs are emitted as a single fused opcode: one chain step instead of two, and the body can skip the intermediate push and pop on the value stack.</li>
+    <li><strong>Opcode replication for ICs</strong> <a class="cite" href="https://dl.acm.org/doi/10.1145/781131.781162">(Ertl &amp; Gregg, 2003)</a> — each cached opcode has several near-identical copies that rotate per call site, so distinct sites land on distinct branch-target-predictor entries instead of all colliding on one.</li>
+  </ul>
+</section>
+
+<footer>
+  <p>
+    <a href="https://github.com/pinecone/CityScheme">source on github</a>
+  </p>
+</footer>
+
+</main>
+</body>
+</html>
