@@ -127,10 +127,10 @@ def main():
 
     benches = args.bench or DEFAULT_BENCHES
 
-    lua = shutil.which("lua")
-    py = shutil.which("python3") or shutil.which("python")
+    lua = os.environ.get("LUA") or shutil.which("lua")
+    py = os.environ.get("PYTHON") or shutil.which("python3") or shutil.which("python")
     if lua is None and py is None:
-        die("no 'lua' or 'python3' on PATH")
+        die("no 'lua' or 'python3' on PATH (or LUA/PYTHON env)")
 
     r = subprocess.run(["git", "rev-parse", "--verify", f"{args.ref}^{{commit}}"],
                        cwd=REPO, capture_output=True)

@@ -12,7 +12,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 CITY = Path(os.environ.get("CITY", HERE / ".." / ".." / "build" / "city"))
-LUA = shutil.which("lua")
+LUA = os.environ.get("LUA") or shutil.which("lua")
 
 BENCHES = sorted(p.stem for p in HERE.glob("bench-*.ss"))
 RUNS = 5
