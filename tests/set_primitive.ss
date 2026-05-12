@@ -1,18 +1,19 @@
 ;; set! on a primitive: subsequent calls see the new value; restoring brings
 ;; back the original.
 ;;
-;; Note: + and - are compiled directly as arithmetic and ignore set!, so
-;; we use * here, which goes through the symbol's binding.
+;; Note: + - * / and the comparison ops are compiled directly as arithmetic
+;; and ignore set!, so we use modulo here, which goes through the symbol's
+;; binding.
 
-(define orig* *)
+(define orig-modulo modulo)
 
-($check (= 6 (* 2 3)))      ;; original behavior
+($check (= 1 (modulo 7 3)))         ;; original behavior
 
-(set! * -)                  ;; redefine * to subtract
-($check (= -1 (* 2 3)))     ;; new behavior
+(set! modulo -)                     ;; redefine modulo to subtract
+($check (= 4 (modulo 7 3)))         ;; new behavior
 
-(set! * orig*)              ;; restore
-($check (= 6 (* 2 3)))      ;; original behavior again
+(set! modulo orig-modulo)           ;; restore
+($check (= 1 (modulo 7 3)))         ;; original behavior again
 
 ;; The same dance with a unary primitive, just to exercise nargs=1.
 (define orig-zero? zero?)

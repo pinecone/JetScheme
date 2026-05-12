@@ -1213,6 +1213,16 @@ CITY_ALWAYS_INLINE static Atom add_op(Atom a, Atom b)
 	CITY_DIE_UNLESS(is_type<city::Type::Number>(a) && is_type<city::Type::Number>(b), "+: expected numbers");
 	return box<Number>(unbox<Number>(a) + unbox<Number>(b));
 }
+CITY_ALWAYS_INLINE static Atom mul_op(Atom a, Atom b)
+{
+	CITY_DIE_UNLESS(is_type<city::Type::Number>(a) && is_type<city::Type::Number>(b), "*: expected numbers");
+	return box<Number>(unbox<Number>(a) * unbox<Number>(b));
+}
+CITY_ALWAYS_INLINE static Atom div_op(Atom a, Atom b)
+{
+	CITY_DIE_UNLESS(is_type<city::Type::Number>(a) && is_type<city::Type::Number>(b), "/: expected numbers");
+	return box<Number>(unbox<Number>(a) / unbox<Number>(b));
+}
 CITY_ALWAYS_INLINE static Atom eq_op(Atom a, Atom b)
 {
 	CITY_DIE_UNLESS(is_type<city::Type::Number>(a) && is_type<city::Type::Number>(b), "=: expected numbers");
@@ -1261,6 +1271,8 @@ CITY_PRESERVE_NONE static void op_binop_sc(VM_OP_PARAMS)
 
 static constexpr auto& op_sub2ss = op_binop_ss<sub_op>;
 static constexpr auto& op_add2ss = op_binop_ss<add_op>;
+static constexpr auto& op_mul2ss = op_binop_ss<mul_op>;
+static constexpr auto& op_div2ss = op_binop_ss<div_op>;
 static constexpr auto& op_eq2ss  = op_binop_ss<eq_op>;
 static constexpr auto& op_lt2ss  = op_binop_ss<lt_op>;
 static constexpr auto& op_le2ss  = op_binop_ss<le_op>;
@@ -1268,6 +1280,8 @@ static constexpr auto& op_gt2ss  = op_binop_ss<gt_op>;
 static constexpr auto& op_ge2ss  = op_binop_ss<ge_op>;
 static constexpr auto& op_sub2sc = op_binop_sc<sub_op>;
 static constexpr auto& op_add2sc = op_binop_sc<add_op>;
+static constexpr auto& op_mul2sc = op_binop_sc<mul_op>;
+static constexpr auto& op_div2sc = op_binop_sc<div_op>;
 static constexpr auto& op_eq2sc  = op_binop_sc<eq_op>;
 static constexpr auto& op_lt2sc  = op_binop_sc<lt_op>;
 

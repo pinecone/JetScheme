@@ -53,6 +53,8 @@
 	X(set_upvalue_slot_field_ck,            "stusfk")                                                        \
 	X(sub2ss,              "sub2ss")                                                                         \
 	X(add2ss,              "add2ss")                                                                         \
+	X(mul2ss,              "mul2ss")                                                                         \
+	X(div2ss,              "div2ss")                                                                         \
 	X(eq2ss,               "eq2ss")                                                                          \
 	X(lt2ss,               "lt2ss")                                                                          \
 	X(le2ss,               "le2ss")                                                                          \
@@ -60,6 +62,8 @@
 	X(ge2ss,               "ge2ss")                                                                          \
 	X(sub2sc,              "sub2sc")                                                                         \
 	X(add2sc,              "add2sc")                                                                         \
+	X(mul2sc,              "mul2sc")                                                                         \
+	X(div2sc,              "div2sc")                                                                         \
 	X(eq2sc,               "eq2sc")                                                                          \
 	X(lt2sc,               "lt2sc")                                                                          \
 	X(ldc,                 "ldc")
@@ -261,6 +265,8 @@ inline size_t opcode_step(uint8_t op, const uint8_t* operands)
 		case Opcode::apply:
 		case Opcode::sub2ss:
 		case Opcode::add2ss:
+		case Opcode::mul2ss:
+		case Opcode::div2ss:
 		case Opcode::eq2ss:
 		case Opcode::lt2ss:
 		case Opcode::le2ss:
@@ -269,6 +275,8 @@ inline size_t opcode_step(uint8_t op, const uint8_t* operands)
 			return OPCODE_SIZE;
 		case Opcode::sub2sc:
 		case Opcode::add2sc:
+		case Opcode::mul2sc:
+		case Opcode::div2sc:
 		case Opcode::eq2sc:
 		case Opcode::lt2sc:
 			return OPCODE_SIZE + sizeof(OP_binop_sc);

@@ -2341,6 +2341,8 @@ namespace
 						bool fused = true;
 						if (name == "-")       op = Opcode::sub2ss;
 						else if (name == "+")  op = Opcode::add2ss;
+						else if (name == "*")  op = Opcode::mul2ss;
+						else if (name == "/")  op = Opcode::div2ss;
 						else if (name == "=")  op = Opcode::eq2ss;
 						else if (name == "<")  op = Opcode::lt2ss;
 						else if (name == "<=") op = Opcode::le2ss;
@@ -2362,6 +2364,8 @@ namespace
 									{
 										case Opcode::sub2ss: sc_op = Opcode::sub2sc; break;
 										case Opcode::add2ss: sc_op = Opcode::add2sc; break;
+										case Opcode::mul2ss: sc_op = Opcode::mul2sc; break;
+										case Opcode::div2ss: sc_op = Opcode::div2sc; break;
 										case Opcode::eq2ss:  sc_op = Opcode::eq2sc;  break;
 										case Opcode::lt2ss:  sc_op = Opcode::lt2sc;  break;
 										default:             has_sc = false;         break;
