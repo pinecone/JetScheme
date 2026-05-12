@@ -184,6 +184,25 @@ h3 {
   margin: 0;
 }
 
+.hero-nav {
+  text-align: center;
+  font-family: var(--font-heading);
+  font-size: var(--fs-small);
+  letter-spacing: 0.04em;
+  margin: calc(-1 * var(--sp-6)) 0 var(--sp-5) 0;
+}
+
+.hero-nav a {
+  color: var(--fg-muted);
+  border-bottom: 0;
+  padding: 0 var(--sp-3);
+  transition: color 0.15s ease;
+}
+
+.hero-nav a:hover { color: var(--fg); border-bottom: 0; }
+
+.hero-nav .sep { color: var(--fg-gutter); }
+
 .tagline strong {
   color: var(--cyan-pale);
   font-weight: 600;

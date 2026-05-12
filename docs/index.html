@@ -16,6 +16,9 @@
 <header class="hero">
   <div class="glyph">🌃</div>
   <h1>CityScheme</h1>
+  <nav class="hero-nav">
+    <a href="https://github.com/pinecone/CityScheme">source ↗</a><span class="sep">|</span><a href="#docs">docs ↓</a>
+  </nav>
   <p class="tagline">A <a href="https://en.wikipedia.org/wiki/Scheme_(programming_language)">Scheme</a> interpreter
     written in C++ that <a href="#benchmarks">tries to go fast</a>. (The "C" in "City" may be pronounced "sh" as needed.)</p>
 </header>
@@ -82,11 +85,43 @@
   </ul>
 </section>
 
-<footer>
-  <p>
-    <a href="https://github.com/pinecone/CityScheme">source on github</a>
-  </p>
-</footer>
+<section id="docs">
+  <h2>Docs</h2>
+
+  <h3>Synopsis</h3>
+<pre><code><span class="cmd">city</span> &lt;file.ss&gt; [args...]
+<span class="cmd">city</span> run &lt;file.ss&gt; [args...]
+<span class="cmd">city</span> compile [&lt;file.ss&gt; | -]
+<span class="cmd">city</span> exec [&lt;file.bc&gt; | -] [args...]
+<span class="cmd">city</span> disasm [&lt;file.ss&gt; | &lt;file.bc&gt; | -]
+<span class="cmd">city</span> --help</code></pre>
+
+  <h3>Deviations from R7RS-small</h3>
+  <p>The language tracks R7RS-small with the following deviations.</p>
+  <p><strong>All numbers are 64-bit doubles.</strong> No exact/inexact tower, no rationals, no bignums. <code>exact?</code> is true for integral doubles. <code>integer?</code> likewise.</p>
+  <p><strong>Strings and characters are byte-level.</strong> Storage is UTF-8; <code>string-length</code>, <code>string-ref</code>, <code>string-set!</code>, <code>char-&gt;integer</code> are byte-indexed. Bytewise compare gives correct codepoint order on valid UTF-8. Char predicates, <code>char-upcase</code>/<code>-downcase</code>, <code>string-upcase</code>/<code>-downcase</code> are ASCII-only.</p>
+
+  <h3>Extras</h3>
+  <p><strong>SRFI 1.</strong> <code>first</code>, <code>second</code>, <code>third</code>, <code>fourth</code>, <code>fifth</code>, <code>take</code>, <code>drop</code>, <code>last</code>, <code>concatenate</code>, <code>fold</code>, <code>fold-right</code>, <code>reduce-right</code>, <code>filter</code>.</p>
+  <p><strong>SRFI 60.</strong> <code>bitwise-and</code>, <code>bitwise-ior</code>, <code>bitwise-xor</code>, <code>bitwise-not</code>, <code>arithmetic-shift</code>. Operate on integral doubles.</p>
+  <p><strong><code>struct</code>, <code>isa?</code>.</strong> Each <code>(struct ...)</code> call yields a distinct type, even when invoked twice with the same name and field list.</p>
+<pre><code>(<span class="k">define</span> <span class="b">point</span> (<span class="b">struct</span> '<span class="n">point</span> '(<span class="n">x</span> <span class="n">y</span>)))     <span class="c">; create a fresh type</span>
+(<span class="k">define</span> p (<span class="b">point</span> <span class="n">3</span> <span class="n">4</span>))                    <span class="c">; call the type to construct</span>
+(<span class="b">isa?</span> p <span class="b">point</span>)                            <span class="c">; =&gt; #t</span>
+(<span class="b">ref</span> p '<span class="n">x</span>)                                <span class="c">; =&gt; 3</span>
+(<span class="k">setf!</span> (<span class="b">ref</span> p '<span class="n">x</span>) <span class="n">10</span>)                     <span class="c">; mutate field</span></code></pre>
+  <p><strong><code>ref</code>.</strong> <code>(ref v i)</code> is a polymorphic accessor. It works on vectors and strings (integer index) and structs (symbol field name).</p>
+  <p><strong><code>setf!</code>.</strong> Mutates the place denoted by its first argument:</p>
+<pre><code>(<span class="k">setf!</span> (<span class="b">ref</span> v <span class="n">3</span>) '<span class="n">x</span>)             <span class="c">; vector-set!</span>
+(<span class="k">setf!</span> (<span class="b">ref</span> s <span class="n">0</span>) <span class="ch">#\H</span>)            <span class="c">; string-set!</span>
+(<span class="k">setf!</span> (<span class="b">ref</span> pt '<span class="n">x</span>) <span class="n">99</span>)           <span class="c">; struct field mutation</span></code></pre>
+  <p><strong><code>$check</code>.</strong> <code>($check expr)</code> evaluates <em>expr</em> and, if false, prints the source location and exits. Used as a test assertion.</p>
+  <p><strong><code>argv</code>.</strong> Vector of strings holding the script's command-line arguments (excluding the binary and script path).</p>
+  <p><strong>Random.</strong> <code>(random)</code> returns a pseudorandom non-negative integer. <code>(random-seed n)</code> seeds the generator with <em>n</em>.</p>
+
+  <h3>Files</h3>
+  <p><code>$CITY_PRELUDE/lib/prelude.ss</code> is the bundled prelude, auto-loaded unless <code>--no-prelude</code> is given.</p>
+</section>
 
 </main>
 </body>
