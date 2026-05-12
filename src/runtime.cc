@@ -207,6 +207,14 @@ void init_number(Env& e)
 	e.bind("round", make_prim<arith_unary_fun<Number, ::round>>(exactly(1)));
 	e.bind("sqrt", make_prim<arith_unary_fun<Number, ::sqrt>>(exactly(1)));
 	e.bind("expt", make_prim<arith_binary_fun<Number, ::pow>>(exactly(2)));
+	e.bind("exp", make_prim<arith_unary_fun<Number, ::exp>>(exactly(1)));
+	e.bind("log", make_prim<arith_unary_fun<Number, ::log>>(exactly(1)));
+	e.bind("sin", make_prim<arith_unary_fun<Number, ::sin>>(exactly(1)));
+	e.bind("cos", make_prim<arith_unary_fun<Number, ::cos>>(exactly(1)));
+	e.bind("tan", make_prim<arith_unary_fun<Number, ::tan>>(exactly(1)));
+	e.bind("asin", make_prim<arith_unary_fun<Number, ::asin>>(exactly(1)));
+	e.bind("acos", make_prim<arith_unary_fun<Number, ::acos>>(exactly(1)));
+	e.bind("atan", make_prim<arith_unary_fun<Number, ::atan>>(exactly(1)));
 	e.bind("abs", make_prim<arith_unary_fun<Number, city_abs>>(exactly(1)));
 	e.bind("square", make_prim<arith_unary_fun<Number, city_square>>(exactly(1)));
 	e.bind("quotient", make_prim<arith_binary_fun<Number, city_quotient>>(exactly(2)));
