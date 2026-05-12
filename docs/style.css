@@ -23,6 +23,7 @@
 
 /* Tokyo Night (night variant) palette + CityScheme tokens */
 :root {
+  color-scheme: dark;
   --bg-darkest:     #0c0e14;
   --bg-dark:        #16161e;
   --bg:             #030314;

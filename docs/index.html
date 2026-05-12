@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark">
 <title>CityScheme</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8C%83%3C/text%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -45,31 +46,29 @@
 
 <section id="benchmarks">
   <h2>Cross-language benchmarks</h2>
-  <ul>
-    <li>Latest <code>make cross-bench</code> against <a href="https://www.lua.org/">PUC Lua 5.4</a> and <a href="https://www.python.org/">CPython 3.14</a>, all built with <code>-O2</code></li>
-  </ul>
+  <p>Latest <code>make cross-bench</code>; all binaries built with <code>-O2</code>.</p>
 
   <div class="table-wrap">
   <table>
     <thead>
       <tr><th rowspan="2">bench</th><th colspan="2">🍎 MacBook Air (Apple M1)</th><th colspan="2" class="sep">🎮 Steam Deck OG (AMD Zen 2)</th></tr>
-      <tr><th>lua</th><th>python</th><th class="sep">lua</th><th>python</th></tr>
+      <tr><th>vs lua5.4</th><th>vs python3.14</th><th class="sep">vs lua5.4</th><th>vs python3.14</th></tr>
     </thead>
     <tbody>
-      <tr><td>deltablue</td><td>1.45×</td><td>2.17×</td><td class="sep">1.75×</td><td>1.89×</td></tr>
-      <tr><td>richards</td><td>1.37×</td><td>2.22×</td><td class="sep">1.00×</td><td>1.79×</td></tr>
-      <tr><td>nbody</td><td>1.41×</td><td>2.08×</td><td class="sep">1.14×</td><td>1.64×</td></tr>
-      <tr><td>tak</td><td>1.59×</td><td>2.70×</td><td class="sep">1.54×</td><td>2.56×</td></tr>
-      <tr><td>json</td><td>1.39×</td><td>1.35×</td><td class="sep">1.25×</td><td>1.28×</td></tr>
-      <tr><td>fib</td><td>1.69×</td><td>3.23×</td><td class="sep">1.35×</td><td>2.70×</td></tr>
-      <tr><td>splay</td><td>1.64×</td><td>1.23×</td><td class="sep">1.75×</td><td>1.25×</td></tr>
+      <tr><td>cdjs</td><td>1.72×</td><td>2.27×</td><td class="sep">1.55×</td><td>1.82×</td></tr>
+      <tr><td>deltablue</td><td>1.47×</td><td>2.20×</td><td class="sep">1.82×</td><td>1.72×</td></tr>
+      <tr><td>richards</td><td>1.38×</td><td>2.21×</td><td class="sep">0.98×</td><td>1.73×</td></tr>
+      <tr><td>nbody</td><td>1.40×</td><td>2.09×</td><td class="sep">1.23×</td><td>1.74×</td></tr>
+      <tr><td>tak</td><td>1.61×</td><td>2.72×</td><td class="sep">1.55×</td><td>2.08×</td></tr>
+      <tr><td>json</td><td>1.38×</td><td>1.36×</td><td class="sep">1.25×</td><td>1.02×</td></tr>
+      <tr><td>fib</td><td>1.85×</td><td>3.55×</td><td class="sep">1.44×</td><td>2.20×</td></tr>
+      <tr><td>splay</td><td>1.64×</td><td>1.23×</td><td class="sep">1.72×</td><td>1.01×</td></tr>
     </tbody>
     <tfoot>
-      <tr><th>geomean</th><td>1.50×</td><td>2.04×</td><td class="sep">1.37×</td><td>1.80×</td></tr>
+      <tr><th>overall city is…</th><td>1.55× faster</td><td>2.10× faster</td><td class="sep">1.42× faster</td><td>1.61× faster</td></tr>
     </tfoot>
   </table>
   </div>
-  <p class="caption">Time relative to CityScheme (1.65s on M1, 2.67s on Zen 2); &gt;1× means slower than CityScheme on the same workload.</p>
 </section>
 
 <section id="optimizations">
@@ -115,7 +114,6 @@
 <pre><code>(<span class="k">setf!</span> (<span class="b">ref</span> v <span class="n">3</span>) '<span class="n">x</span>)             <span class="c">; vector-set!</span>
 (<span class="k">setf!</span> (<span class="b">ref</span> s <span class="n">0</span>) <span class="ch">#\H</span>)            <span class="c">; string-set!</span>
 (<span class="k">setf!</span> (<span class="b">ref</span> pt '<span class="n">x</span>) <span class="n">99</span>)           <span class="c">; struct field mutation</span></code></pre>
-  <p><strong><code>$check</code>.</strong> <code>($check expr)</code> evaluates <em>expr</em> and, if false, prints the source location and exits. Used as a test assertion.</p>
   <p><strong><code>argv</code>.</strong> Vector of strings holding the script's command-line arguments (excluding the binary and script path).</p>
 
   <h3>Files</h3>
