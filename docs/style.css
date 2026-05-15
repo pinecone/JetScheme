@@ -21,6 +21,12 @@
   src: url("fonts/0xProto-Bold.woff2") format("woff2");
 }
 
+/* Signal to dark-mode extensions (Dark Reader et al.) that this site
+   ships its own dark theme and should not be re-inverted. */
+@media (prefers-color-scheme: dark) {
+  :root { color-scheme: dark; }
+}
+
 /* Tokyo Night (night variant) palette + CityScheme tokens */
 :root {
   color-scheme: dark;
