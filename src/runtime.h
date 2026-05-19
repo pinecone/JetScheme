@@ -74,7 +74,7 @@ class StructType
 {
   public:
 	StructType(std::string name, std::vector<std::string> field_names)
-		: name_{std::move(name)}, field_names_{std::move(field_names)}
+	  : name_{std::move(name)}, field_names_{std::move(field_names)}
 	{
 	}
 
@@ -157,7 +157,7 @@ inline bool operator==(Prim& p1, Prim& p2)
 	return p1.stub == p2.stub;
 }
 
-inline void check_arity(Arity& a, size_t actual)
+inline void check_arity(Arity a, size_t actual)
 {
 	if (Arity::Exactly == a.how)
 	{

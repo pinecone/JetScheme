@@ -81,7 +81,8 @@ static bool slurp_bytes(const string& path, vector<uint8_t>& out)
 	return true;
 }
 
-static int compile_to_bytecode(const string& source_path, const string& prelude_path, bool no_inline, Bytecode& out)
+static int compile_to_bytecode(const string& source_path, const string& prelude_path, bool no_inline,
+							   Bytecode& out)
 {
 	string source;
 	CITY_DIE_UNLESS(slurp_text(source_path, source), "error: cannot read '%s'", source_path.c_str());
@@ -103,12 +104,10 @@ static int execute_bytecode(vector<uint8_t>& bytecode, int script_argc, char* sc
 	init_primitives(primitives_env);
 	init_cmdline(primitives_env, script_argc, script_argv);
 
-	uint32_t n_toplevel_slots = 0;
-	vector<Atom> constants;
-	Code* code_start = load_program(bytecode.data(), bytecode.size(), primitives_env, n_toplevel_slots, constants);
+	LoadedProgram prog = load_program(bytecode.data(), bytecode.size(), primitives_env);
 
-	Frame frame = {code_start, nullptr, 0};
-	eval(frame, constants.data(), constants.size(), n_toplevel_slots);
+	Frame frame = {prog.code, nullptr, 0};
+	eval(frame, prog.constants.data(), prog.constants.size(), prog.n_toplevel_slots);
 
 	g_gc = nullptr;
 	return 0;

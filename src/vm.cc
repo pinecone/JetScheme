@@ -12,7 +12,7 @@
 #include <string_view>
 #include <sys/mman.h>
 
-using GcDestructor = void (*)(void*);
+using GcDestructor = void(*)(void*);
 static GcDestructor gc_destructor_table[city_tag::TAG_MAX] = {};
 static VmOp dispatch_table[256];
 
@@ -313,27 +313,26 @@ static Code* decode_constant(Code* p, Atom& out, Env& env)
 	CITY_DIE("unknown constant-pool tag <%d>", static_cast<int>(tag));
 }
 
-Code* load_program(Code* bytecode, size_t bytecode_size, Env& primitives_env, uint32_t& n_toplevel_slots_out,
-				   std::vector<Atom>& constants_out)
+LoadedProgram load_program(Code* bytecode, size_t bytecode_size, Env& primitives_env)
 {
+	LoadedProgram prog;
 	Code* p = bytecode;
-	uint32_t n_toplevel_slots;
-	memcpy(&n_toplevel_slots, p, sizeof(n_toplevel_slots));
-	p += sizeof(n_toplevel_slots);
-	n_toplevel_slots_out = n_toplevel_slots;
+	memcpy(&prog.n_toplevel_slots, p, sizeof(prog.n_toplevel_slots));
+	p += sizeof(prog.n_toplevel_slots);
 
 	uint32_t n_constants;
 	memcpy(&n_constants, p, sizeof(n_constants));
 	p += sizeof(n_constants);
-	constants_out.reserve(n_constants);
+	prog.constants.reserve(n_constants);
 	for (uint32_t i = 0; i < n_constants; ++i)
 	{
 		Atom a;
 		p = decode_constant(p, a, primitives_env);
-		constants_out.push_back(a);
+		prog.constants.push_back(a);
 	}
 	link_opcode_handlers(p, bytecode + bytecode_size);
-	return p;
+	prog.code = p;
+	return prog;
 }
 
 static Atom* pass_results(VmState& s, Atom* stack_top, Atom* stack_base, size_t frame_base)
@@ -1357,6 +1356,26 @@ CITY_PRESERVE_NONE static void op_call(VM_OP_PARAMS)
 	}
 }
 
+CITY_NOINLINE static VmOp resolve_call_stub(Atom callee, size_t nargs, bool tail)
+{
+	if (is_type<city::Type::Procedure>(callee))
+	{
+		Lambda* la = unbox<Lambda>(callee);
+		check_arity(la->arity, nargs);
+		return tail ? &fast_call_lambda_tail : &fast_call_lambda_notail;
+	}
+	if (is_type<city::Type::StructType>(callee))
+	{
+		StructType* t = unbox<StructType>(callee);
+		Arity a = struct_arity(t);
+		check_arity(a, nargs);
+		return &fast_call_struct;
+	}
+	Prim* p = slow_unbox<Prim>(callee);
+	check_arity(p->arity, nargs);
+	return p->stub;
+}
+
 template <int N>
 CITY_NOINLINE CITY_PRESERVE_NONE static void op_call_ic_slot_miss(VM_OP_PARAMS)
 {
@@ -1366,26 +1385,7 @@ CITY_NOINLINE CITY_PRESERVE_NONE static void op_call_ic_slot_miss(VM_OP_PARAMS)
 	size_t nargs = op->nargs;
 	Slot* sl = unbox<Slot>(frame->closure->captures[op->upvalue_idx]);
 	callee = sl->value;
-	VmOp stub;
-	if (is_type<city::Type::Procedure>(callee))
-	{
-		Lambda* la = unbox<Lambda>(callee);
-		check_arity(la->arity, nargs);
-		stub = op->tail ? &fast_call_lambda_tail : &fast_call_lambda_notail;
-	}
-	else if (is_type<city::Type::StructType>(callee))
-	{
-		StructType* t = unbox<StructType>(callee);
-		Arity a = struct_arity(t);
-		check_arity(a, nargs);
-		stub = &fast_call_struct;
-	}
-	else
-	{
-		Prim* p = slow_unbox<Prim>(callee);
-		check_arity(p->arity, nargs);
-		stub = p->stub;
-	}
+	VmOp stub = resolve_call_stub(callee, nargs, op->tail);
 	op->ic_slot = reinterpret_cast<uint64_t>(sl);
 	op->ic_atom = callee.bits;
 	op->ic_stub = reinterpret_cast<uint64_t>(stub);
@@ -1425,26 +1425,7 @@ CITY_NOINLINE CITY_PRESERVE_NONE static void op_call_ic_slot_local_miss(VM_OP_PA
 	size_t nargs = op->nargs;
 	Slot* sl = unbox<Slot>(frame->closure->captures[op->upvalue_idx]);
 	callee = sl->value;
-	VmOp stub;
-	if (is_type<city::Type::Procedure>(callee))
-	{
-		Lambda* la = unbox<Lambda>(callee);
-		check_arity(la->arity, nargs);
-		stub = op->tail ? &fast_call_lambda_tail : &fast_call_lambda_notail;
-	}
-	else if (is_type<city::Type::StructType>(callee))
-	{
-		StructType* t = unbox<StructType>(callee);
-		Arity a = struct_arity(t);
-		check_arity(a, nargs);
-		stub = &fast_call_struct;
-	}
-	else
-	{
-		Prim* p = slow_unbox<Prim>(callee);
-		check_arity(p->arity, nargs);
-		stub = p->stub;
-	}
+	VmOp stub = resolve_call_stub(callee, nargs, op->tail);
 	op->ic_slot = reinterpret_cast<uint64_t>(sl);
 	op->ic_atom = callee.bits;
 	op->ic_stub = reinterpret_cast<uint64_t>(stub);
@@ -1493,26 +1474,7 @@ CITY_NOINLINE CITY_PRESERVE_NONE static void op_call_ic_direct_miss(VM_OP_PARAMS
 	Atom current =
 		(src == IcDirectSource::Local) ? stack_base[frame_base + op->idx] : frame->closure->captures[op->idx];
 	callee = current;
-	VmOp stub;
-	if (is_type<city::Type::Procedure>(callee))
-	{
-		Lambda* la = unbox<Lambda>(callee);
-		check_arity(la->arity, nargs);
-		stub = op->tail ? &fast_call_lambda_tail : &fast_call_lambda_notail;
-	}
-	else if (is_type<city::Type::StructType>(callee))
-	{
-		StructType* t = unbox<StructType>(callee);
-		Arity a = struct_arity(t);
-		check_arity(a, nargs);
-		stub = &fast_call_struct;
-	}
-	else
-	{
-		Prim* p = slow_unbox<Prim>(callee);
-		check_arity(p->arity, nargs);
-		stub = p->stub;
-	}
+	VmOp stub = resolve_call_stub(callee, nargs, op->tail);
 	op->ic_atom = callee.bits;
 	op->ic_stub = reinterpret_cast<uint64_t>(stub);
 

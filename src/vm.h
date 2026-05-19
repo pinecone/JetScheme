@@ -304,7 +304,7 @@ struct VmState
 	size_t n_constants;
 };
 
-#define VM_OP_PARAMS                                                                                       \
+#define VM_OP_PARAMS                                                                                         \
 	VmState &s, Frame *frame, Code *pc, Atom *stack_top, Atom callee, Atom *args, size_t result_slot,        \
 		Atom *stack_base, size_t frame_base
 using VmOp = void (*)(VM_OP_PARAMS) CITY_PRESERVE_NONE;
@@ -334,11 +334,11 @@ inline ObjShape* shape_of(Atom a)
 #define DISPATCH()                                                                                           \
 	do                                                                                                       \
 	{                                                                                                        \
-		VmOp h = *reinterpret_cast<VmOp*>(pc);                                                         \
+		VmOp h = *reinterpret_cast<VmOp*>(pc);                                                               \
 		pc += OPCODE_SIZE;                                                                                   \
 		CITY_PROFILE_OP(pc[-1]);                                                                             \
 		CITY_TRACE_STEP(s, frame, pc, stack_top);                                                            \
-		CITY_MUSTTAIL return h(VM_OP_ARGS);                                                          \
+		CITY_MUSTTAIL return h(VM_OP_ARGS);                                                                  \
 	} while (0)
 
 #define CITY_GC_CHECK()                                                                                      \
@@ -346,14 +346,20 @@ inline ObjShape* shape_of(Atom a)
 	{                                                                                                        \
 		if (g_gc->should_collect()) [[unlikely]]                                                             \
 		{                                                                                                    \
-			CITY_MUSTTAIL return gc_then_dispatch(VM_OP_ARGS);                                       \
+			CITY_MUSTTAIL return gc_then_dispatch(VM_OP_ARGS);                                               \
 		}                                                                                                    \
 	} while (0)
 
 void eval(Frame& init_frame, Atom* constants, size_t n_constants, size_t initial_stack_size);
 
+struct LoadedProgram
+{
+	Code* code;
+	uint32_t n_toplevel_slots;
+	std::vector<Atom> constants;
+};
+
 // Bytecode layout: [u32 n_toplevel_slots][u32 n_constants][pool entries][toplevel code...].
-Code* load_program(Code* bytecode, size_t bytecode_size, Env& primitives_env, uint32_t& n_toplevel_slots_out,
-				   std::vector<Atom>& constants_out);
+LoadedProgram load_program(Code* bytecode, size_t bytecode_size, Env& primitives_env);
 
 #endif
