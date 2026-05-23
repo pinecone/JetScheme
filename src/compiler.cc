@@ -449,6 +449,7 @@ struct Compiler
 	void push_lambda_scope(Expr* lambda);
 	void pop_lambda_scope();
 	Expr* binding_lambda(ResolvedBinding b);
+	bool prim_binding_lowerable(ResolvedBinding b);
 	void record_ref(ResolvedBinding b);
 	void record_set(ResolvedBinding b, bool is_init, Expr* value);
 	void resolve_bindings(Program& program);
@@ -2352,7 +2353,7 @@ namespace
 						if (fused)
 						{
 							ResolvedBinding rb = db.binding(proc);
-							if (db.binding_lambda(rb) == db.toplevel_lambda_)
+							if (db.prim_binding_lowerable(rb))
 							{
 								Expr* lhs = expr->call.args[0];
 								Expr* rhs = expr->call.args[1];
@@ -2393,7 +2394,7 @@ namespace
 					if (proc->kind == ExprKind::VarRef && proc->var_ref.name == "ref" && nargs == 2)
 					{
 						ResolvedBinding rb = db.binding(proc);
-						if (db.binding_lambda(rb) == db.toplevel_lambda_)
+						if (db.prim_binding_lowerable(rb))
 						{
 							Expr* obj_expr = expr->call.args[0];
 							Expr* key_expr = expr->call.args[1];
@@ -3303,6 +3304,16 @@ Expr* Compiler::expand_letrec(Expr* expr)
 Expr* Compiler::binding_lambda(ResolvedBinding b)
 {
 	return b.lambda;
+}
+
+bool Compiler::prim_binding_lowerable(ResolvedBinding b)
+{
+	if (b.lambda != toplevel_lambda_)
+	{
+		return false;
+	}
+	LambdaScope& tl = lambda_scopes_[toplevel_lambda_];
+	return b.breadth >= tl.reassigned_after_init.size() || !tl.reassigned_after_init[b.breadth];
 }
 
 // Marks the binding as captured in its owner and registers it as an upvalue
