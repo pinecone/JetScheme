@@ -18,12 +18,12 @@
 #include <vector>
 
 // clang-format off
-#define CITY_IMM_TYPES(X)                  \
+#define JET_IMM_TYPES(X)                  \
 	X(Boolean,   boolean,    bool)        \
 	X(Character, character,  Character)   \
 	X(EmptyList, empty_list, EmptyList)
 
-#define CITY_HEAP_TYPES(X)                  \
+#define JET_HEAP_TYPES(X)                  \
 	X(Pair,       pair,        Cons)       \
 	X(Procedure,  procedure,   Lambda)     \
 	X(Primitive,  primitive,   Prim)       \
@@ -36,7 +36,7 @@
 	X(StructType, struct_type, StructType) \
 	X(Struct,     struct_,     Struct)
 
-#define CITY_ALL_TYPES(X)                  \
+#define JET_ALL_TYPES(X)                  \
 	X(Number,    "number")                \
 	X(Boolean,   "boolean")               \
 	X(Character, "character")             \
@@ -56,18 +56,18 @@
 	X(Unknown,   "unknown")
 // clang-format on
 
-namespace city
+namespace jet
 {
 	// clang-format off
 	enum class Type : uint8_t
 	{
 #define X(name, _str) name,
-		CITY_ALL_TYPES(X)
+		JET_ALL_TYPES(X)
 #undef X
 		TypeMax,
 	};
 	// clang-format on
-} // namespace city
+} // namespace jet
 
 using Character = uint8_t;
 using Number = double;
@@ -85,24 +85,24 @@ constexpr uint64_t TAG_MASK = 0x0007'0000'0000'0000ULL;
 constexpr uint64_t SIGN_BIT = 0x8000'0000'0000'0000ULL;
 constexpr uint64_t PAYLOAD_MASK = 0x0000'FFFF'FFFF'FFFFULL;
 
-namespace city_tag
+namespace jet_tag
 {
 	// clang-format off
 	enum : int
 	{
 		none = 0,
 #define X(_enum, name, _cpp) name,
-		CITY_IMM_TYPES(X)
+		JET_IMM_TYPES(X)
 #undef X
 		eof_tag,  // Marker tag (singleton, no C++ value type).
 #define X(_enum, name, _cpp) name,
-		CITY_HEAP_TYPES(X)
+		JET_HEAP_TYPES(X)
 #undef X
 		HEAP_END,
 		TAG_MAX = HEAP_END,
 	};
 	// clang-format on
-} // namespace city_tag
+} // namespace jet_tag
 
 class Atom
 {
@@ -154,7 +154,7 @@ class Atom
 						 (static_cast<uint64_t>((tag >> 3) & 0x1) << 63) | (payload & PAYLOAD_MASK));
 	}
 
-	city::Type type();
+	jet::Type type();
 
 	bool is_heap()
 	{
@@ -163,32 +163,32 @@ class Atom
 			return false;
 		}
 		int t = tag();
-		return t > city_tag::eof_tag && t < city_tag::HEAP_END;
+		return t > jet_tag::eof_tag && t < jet_tag::HEAP_END;
 	}
 };
 
-inline city::Type Atom::type()
+inline jet::Type Atom::type()
 {
 	if (is_number())
 	{
-		return city::Type::Number;
+		return jet::Type::Number;
 	}
 	switch (tag())
 	{
 		// clang-format off
-#define X(name, tag, _cpp) case city_tag::tag: return city::Type::name;
-		CITY_IMM_TYPES(X)
-		CITY_HEAP_TYPES(X)
+#define X(name, tag, _cpp) case jet_tag::tag: return jet::Type::name;
+		JET_IMM_TYPES(X)
+		JET_HEAP_TYPES(X)
 #undef X
 		// clang-format on
-		case city_tag::eof_tag:
-			return city::Type::Eof;
+		case jet_tag::eof_tag:
+			return jet::Type::Eof;
 		default:
-			return city::Type::Unknown;
+			return jet::Type::Unknown;
 	}
 }
 
-template <city::Type type>
+template <jet::Type type>
 bool is_type(Atom x)
 {
 	return type == x.type();
@@ -218,28 +218,28 @@ struct dynamic_type;
 template <>
 struct dynamic_type<Number>
 {
-	static constexpr city::Type id = city::Type::Number;
+	static constexpr jet::Type id = jet::Type::Number;
 };
 
 // clang-format off
 #define X(name, _tag, cpp) \
-	template <> struct dynamic_type<cpp> { static constexpr city::Type id = city::Type::name; };
-CITY_IMM_TYPES(X)
-CITY_HEAP_TYPES(X)
+	template <> struct dynamic_type<cpp> { static constexpr jet::Type id = jet::Type::name; };
+JET_IMM_TYPES(X)
+JET_HEAP_TYPES(X)
 #undef X
 // clang-format on
 
-// IPortFile/OPortFile are the concrete heap types in CITY_HEAP_TYPES; the
+// IPortFile/OPortFile are the concrete heap types in JET_HEAP_TYPES; the
 // abstract bases are what unbox<>() callers reference.
 template <>
 struct dynamic_type<IPort>
 {
-	static constexpr city::Type id = city::Type::IPort;
+	static constexpr jet::Type id = jet::Type::IPort;
 };
 template <>
 struct dynamic_type<OPort>
 {
-	static constexpr city::Type id = city::Type::OPort;
+	static constexpr jet::Type id = jet::Type::OPort;
 };
 
 template <class T>
@@ -256,7 +256,7 @@ struct box_unbox_t<Number>
 template <>
 struct box_unbox_t<bool>
 {
-	static Atom box(bool v) { return Atom::make_immediate(city_tag::boolean, v ? 1 : 0); }
+	static Atom box(bool v) { return Atom::make_immediate(jet_tag::boolean, v ? 1 : 0); }
 
 	static bool unbox(Atom x) { return x.as_payload() != 0; }
 };
@@ -264,7 +264,7 @@ struct box_unbox_t<bool>
 template <>
 struct box_unbox_t<Character>
 {
-	static Atom box(Character v) { return Atom::make_immediate(city_tag::character, v); }
+	static Atom box(Character v) { return Atom::make_immediate(jet_tag::character, v); }
 
 	static Character unbox(Atom x) { return static_cast<Character>(x.as_payload()); }
 };
@@ -272,20 +272,20 @@ struct box_unbox_t<Character>
 template <>
 struct box_unbox_t<EmptyList>
 {
-	static Atom box(EmptyList = {}) { return Atom::make_immediate(city_tag::empty_list); }
+	static Atom box(EmptyList = {}) { return Atom::make_immediate(jet_tag::empty_list); }
 
 	static EmptyList unbox(Atom&) { return {}; }
 };
 
-std::string_view type_name(city::Type type);
+std::string_view type_name(jet::Type type);
 
-inline void type_check(Atom a, city::Type t)
+inline void type_check(Atom a, jet::Type t)
 {
 	if (t != a.type()) [[unlikely]]
 	{
 		std::string_view want = type_name(t);
 		std::string_view got = type_name(a.type());
-		CITY_DIE("expected <%.*s>, got <%.*s>", static_cast<int>(want.size()), want.data(),
+		JET_DIE("expected <%.*s>, got <%.*s>", static_cast<int>(want.size()), want.data(),
 				 static_cast<int>(got.size()), got.data());
 	}
 }

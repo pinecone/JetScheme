@@ -1,8 +1,8 @@
-# Builds one binary per variant: build/city[suffix]
+# Builds one binary per variant: build/jet[suffix]
 #
 #		make										release build (default)
-#		make debug							debug build:	 build/city-debug
-#		make profile						profile build: build/city-profile
+#		make debug							debug build:	 build/jet-debug
+#		make profile						profile build: build/jet-profile
 #		make all-variants				build release + debug + profile in one go
 #
 #		make test								run tests against release binary
@@ -21,7 +21,7 @@
 #
 # Object files live under build/<variant>/ so all three variants coexist.
 
-CXX				 ?= clang++
+CXX				 := clang++
 ASAN_RTDIR := $(shell $(CXX) -print-runtime-dir 2>/dev/null)
 
 VARIANT ?= release
@@ -32,13 +32,13 @@ BUILD		 := build
 # --- Variant selection ---------------------------------------------------
 
 ifeq ($(VARIANT),debug)
-	OPT		 := -g3 -DCITY_DEBUG -DCITY_TRACE -fsanitize=undefined -fno-sanitize=vptr,function,alignment -fno-omit-frame-pointer -O1
+	OPT		 := -g3 -DJET_DEBUG -DJET_TRACE -fsanitize=undefined -fno-sanitize=vptr,function,alignment -fno-omit-frame-pointer -O1
 	LDOPT	 := -fsanitize=undefined -Wl,-rpath,$(ASAN_RTDIR)
 	SUFFIX := -debug
 else ifeq ($(VARIANT),profile)
 	OPT		 := -O2 -g3
 	SUFFIX := -profile
-	PROFILE_DEF := -DCITY_PROFILE
+	PROFILE_DEF := -DJET_PROFILE
 	LDOPT	 :=
 else ifeq ($(VARIANT),release)
 	OPT		 := -O2 -g3
@@ -50,7 +50,7 @@ endif
 
 OBJDIR := $(BUILD)/$(VARIANT)
 
-CITY_BIN := $(BUILD)/city$(SUFFIX)
+JET_BIN := $(BUILD)/jet$(SUFFIX)
 
 # --- Flags ---------------------------------------------------------------
 
@@ -76,7 +76,7 @@ DEPS := $(ALL_OBJ:.o=.d)
 				clean
 .DEFAULT_GOAL := all
 
-all: $(CITY_BIN)
+all: $(JET_BIN)
 
 release:
 	@$(MAKE) VARIANT=release
@@ -92,39 +92,39 @@ all-variants:
 	@$(MAKE) VARIANT=debug
 	@$(MAKE) VARIANT=profile
 
-# --- Run targets (variant-aware via CITY env var) --------------------
+# --- Run targets (variant-aware via JET env var) --------------------
 
 test: release
-	cd tests && CITY=../build/city ./run-tests
+	cd tests && JET=../build/jet ./run-tests
 
 test-debug: debug
-	cd tests && CITY=../build/city-debug ./run-tests
+	cd tests && JET=../build/jet-debug ./run-tests
 
 test-profile: profile
-	cd tests && CITY=../build/city-profile ./run-tests
+	cd tests && JET=../build/jet-profile ./run-tests
 
 bench: release
-	cd tests && CITY=../build/city ./run-bench
+	cd tests && JET=../build/jet ./run-bench
 
 bench-debug: debug
-	cd tests && CITY=../build/city-debug ./run-bench
+	cd tests && JET=../build/jet-debug ./run-bench
 
 bench-profile: profile
-	cd tests && CITY=../build/city-profile ./run-bench
+	cd tests && JET=../build/jet-profile ./run-bench
 
 cross-bench: release
-	cd tests/cross-bench && CITY=../../build/city ./run-cross-bench
+	cd tests/cross-bench && JET=../../build/jet ./run-cross-bench
 
 cross-bench-debug: debug
-	cd tests/cross-bench && CITY=../../build/city-debug ./run-cross-bench
+	cd tests/cross-bench && JET=../../build/jet-debug ./run-cross-bench
 
 cross-bench-profile: profile
-	cd tests/cross-bench && CITY=../../build/city-profile ./run-cross-bench
+	cd tests/cross-bench && JET=../../build/jet-profile ./run-cross-bench
 
 clean:
 	rm -rf $(BUILD)
 
-$(CITY_BIN): $(ALL_OBJ) | $(BUILD)
+$(JET_BIN): $(ALL_OBJ) | $(BUILD)
 	$(CXX) $(LDFLAGS) -o $@ $^
 
 $(OBJDIR)/%.o: $(SRC)/%.cc | $(OBJDIR)

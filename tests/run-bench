@@ -2,13 +2,13 @@
 # Pre-compiles benchmarks, then times VM execution only.
 # Run 3 times each and report all times.
 
-CITY=${CITY:-../build/city}
+JET=${JET:-../build/jet}
 
 for bench in bench-fib bench-tail bench-list; do
-    "$CITY" compile $bench.ss > /tmp/$bench.bc
+    "$JET" compile $bench.ss > /tmp/$bench.bc
     echo "=== $bench ==="
     for i in 1 2 3; do
-        time "$CITY" exec /tmp/$bench.bc > /dev/null
+        time "$JET" exec /tmp/$bench.bc > /dev/null
     done
     echo
 done

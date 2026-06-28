@@ -13,7 +13,7 @@
 #include <string_view>
 #include <vector>
 
-#ifdef CITY_PROFILE
+#ifdef JET_PROFILE
 
 Profile g_profile{};
 
@@ -24,7 +24,7 @@ static std::string_view profile_opcode_name(int op)
 #define X(name, disp)                                                                                        \
 	case static_cast<int>(Opcode::name):                                                                     \
 		return disp;
-		CITY_OPCODES(X)
+		JET_OPCODES(X)
 #undef X
 		default:
 			return "unknown";
@@ -39,7 +39,7 @@ void profile_print()
 		total_ops += g_profile.op_counts[i];
 	}
 
-	std::fprintf(stderr, "\n--- CITY_PROFILE ---\n");
+	std::fprintf(stderr, "\n--- JET_PROFILE ---\n");
 	std::fprintf(stderr, "opcodes dispatched: %llu\n", static_cast<unsigned long long>(total_ops));
 	std::fprintf(stderr, " lambda calls: %llu\n", static_cast<unsigned long long>(g_profile.lambda_calls));
 	std::fprintf(stderr, " primitive calls: %llu\n", static_cast<unsigned long long>(g_profile.prim_calls));
@@ -142,7 +142,7 @@ const char* opcode_name(uint8_t op)
 #define X(name, disp)                                                                                        \
 	case static_cast<uint8_t>(Opcode::name):                                                                 \
 		return disp;
-		CITY_OPCODES(X)
+		JET_OPCODES(X)
 #undef X
 		default:
 			return "?unknown";
@@ -156,7 +156,7 @@ bool is_call_ic_slot_op(uint8_t op)
 	{                                                                                                        \
 		return true;                                                                                         \
 	}
-	CITY_REPLICATE(X, call_ic_slot, "cs")
+	JET_REPLICATE(X, call_ic_slot, "cs")
 #undef X
 	return false;
 }
@@ -168,7 +168,7 @@ bool is_call_ic_slot_local_op(uint8_t op)
 	{                                                                                                        \
 		return true;                                                                                         \
 	}
-	CITY_REPLICATE(X, call_ic_slot_local, "csl")
+	JET_REPLICATE(X, call_ic_slot_local, "csl")
 #undef X
 	return false;
 }
@@ -180,7 +180,7 @@ bool is_call_ic_direct_op(uint8_t op)
 	{                                                                                                        \
 		return true;                                                                                         \
 	}
-	CITY_REPLICATE(X, call_ic_direct, "cd")
+	JET_REPLICATE(X, call_ic_direct, "cd")
 #undef X
 	return false;
 }
@@ -286,7 +286,7 @@ void decode_args(FILE* out, uint8_t op, Code* p)
 	}
 }
 
-#ifdef CITY_TRACE
+#ifdef JET_TRACE
 
 bool g_trace_enabled = false;
 

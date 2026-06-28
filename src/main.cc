@@ -19,7 +19,7 @@ using namespace std;
 
 static string find_prelude(const char* argv0)
 {
-	const char* env = getenv("CITY_PRELUDE");
+	const char* env = getenv("JET_PRELUDE");
 	if (env && *env)
 	{
 		return env;
@@ -85,7 +85,7 @@ static int compile_to_bytecode(const string& source_path, const string& prelude_
 							   Bytecode& out)
 {
 	string source;
-	CITY_DIE_UNLESS(slurp_text(source_path, source), "error: cannot read '%s'", source_path.c_str());
+	JET_DIE_UNLESS(slurp_text(source_path, source), "error: cannot read '%s'", source_path.c_str());
 	if (!prelude_path.empty())
 	{
 		source = "(include \"" + prelude_path + "\")\n" + source;
@@ -115,12 +115,12 @@ static int execute_bytecode(vector<uint8_t>& bytecode, int script_argc, char* sc
 
 static void usage(FILE* o)
 {
-	fprintf(o, "%s", R"(usage: city <command> [args]
-  city <file.ss> [script-args]          shorthand for 'city run <file.ss>'
-  city run <file.ss> [script-args]      compile and execute in one step
-  city compile [file.ss|-]              compile source to bytecode on stdout
-  city exec [file.bc|-] [script-args]   run pre-compiled bytecode
-  city disasm [file.ss|file.bc|-]       compile (if .ss) and disassemble
+	fprintf(o, "%s", R"(usage: jet <command> [args]
+  jet <file.ss> [script-args]          shorthand for 'jet run <file.ss>'
+  jet run <file.ss> [script-args]      compile and execute in one step
+  jet compile [file.ss|-]              compile source to bytecode on stdout
+  jet exec [file.bc|-] [script-args]   run pre-compiled bytecode
+  jet disasm [file.ss|file.bc|-]       compile (if .ss) and disassemble
 
 options for run/compile:
   --no-prelude                          skip the bundled prelude
@@ -129,7 +129,7 @@ options for run/exec (debug build only):
   --trace                               print one trace line per opcode dispatched
 
 env:
-  CITY_PRELUDE=<path>                   override the prelude path
+  JET_PRELUDE=<path>                   override the prelude path
 )");
 }
 
@@ -190,10 +190,10 @@ int main(int argc, char* argv[])
 		}
 		if (strcmp(argv[i], "--trace") == 0)
 		{
-#ifdef CITY_TRACE
+#ifdef JET_TRACE
 			g_trace_enabled = true;
 #else
-			fprintf(stderr, "warning: --trace is only available in debug builds (build/city-debug)\n");
+			fprintf(stderr, "warning: --trace is only available in debug builds (build/jet-debug)\n");
 #endif
 			continue;
 		}
@@ -202,7 +202,7 @@ int main(int argc, char* argv[])
 		break;
 	}
 
-	CITY_DIE_WHEN(cmd == "run" && input_path.empty(), "error: 'city run' requires a source file");
+	JET_DIE_WHEN(cmd == "run" && input_path.empty(), "error: 'jet run' requires a source file");
 	if (input_path.empty())
 	{
 		input_path = "-";
@@ -223,7 +223,7 @@ int main(int argc, char* argv[])
 	}
 	else
 	{
-		CITY_DIE_UNLESS(slurp_bytes(input_path, bc), "error: cannot read '%s'", input_path.c_str());
+		JET_DIE_UNLESS(slurp_bytes(input_path, bc), "error: cannot read '%s'", input_path.c_str());
 	}
 
 	if (want_disasm)

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Head-to-head city benchmark vs lua and python for a single git ref.
+"""Head-to-head jet benchmark vs lua and python for a single git ref.
 
-Builds the city ref in a temp worktree, then for each bench runs city against
+Builds the jet ref in a temp worktree, then for each bench runs jet against
 every comparand (lua, python) that has a sibling source file, interleaving the
-runs per iteration. Reports per-bench median time, ratio, and city's
+runs per iteration. Reports per-bench median time, ratio, and jet's
 wins/ties/losses with a one-sided binomial p-value, plus an overall geomean
 ratio per comparand. A bench whose comparand source is missing is skipped for
 that comparand only; missing .ss is fatal.
@@ -58,7 +58,7 @@ def build_ref(ref, dest):
     if "CXX" in os.environ:
         cmd.append(f"CXX={os.environ['CXX']}")
     run(cmd, cwd=dest, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    bin = dest / "build" / "city"
+    bin = dest / "build" / "jet"
     if not bin.exists():
         die(f"build did not produce {bin}")
     return bin
@@ -112,7 +112,7 @@ def fmt_p(p):
 
 def main():
     ap = argparse.ArgumentParser(
-        description="Head-to-head city benchmark vs lua and python for a single git ref.",
+        description="Head-to-head jet benchmark vs lua and python for a single git ref.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__)
     ap.add_argument("ref", nargs="?", default="HEAD",
@@ -138,11 +138,11 @@ def main():
         die(f"unknown git ref: {args.ref}")
 
     tmp = Path(tempfile.mkdtemp(prefix="ab-cross-"))
-    wt = tmp / "city"
-    bin_city = build_ref(args.ref, wt)
+    wt = tmp / "jet"
+    bin_jet = build_ref(args.ref, wt)
 
     print()
-    print(f"  ref:    {args.ref} ({short(args.ref)})  →  {bin_city}")
+    print(f"  ref:    {args.ref} ({short(args.ref)})  →  {bin_jet}")
     if lua:
         print(f"  lua:    {lua}  ({lua_version(lua)})")
     if py:
@@ -150,14 +150,14 @@ def main():
     print(f"  runs:   {args.runs} per interpreter per bench, interleaved")
     print()
 
-    # Per bench: compile city, record which comparand sources exist.
+    # Per bench: compile jet, record which comparand sources exist.
     bcs = {}
     for b in benches:
         ss_src = HERE / f"{b}.ss"
         if not ss_src.exists():
             die(f"missing scheme source: {ss_src}")
         bc = tmp / f"{b}.bc"
-        compile_bench(bin_city, ss_src, bc)
+        compile_bench(bin_jet, ss_src, bc)
         sources = {}
         if lua and (HERE / f"{b}.lua").exists():
             sources["lua"] = HERE / f"{b}.lua"
@@ -166,7 +166,7 @@ def main():
         bcs[b] = (bc, sources)
 
     name_w = max(len(b) for b in benches)
-    header = (f"  {'bench':<{name_w}}  {'vs':<6} {'city(ms)':>9} {'rival(ms)':>10}  "
+    header = (f"  {'bench':<{name_w}}  {'vs':<6} {'jet(ms)':>9} {'rival(ms)':>10}  "
               f"{'ratio':>6}  {'wins/ties/losses':>17}  {'p':>10}")
     print(header)
     print("  " + "-" * (len(header) - 2))
@@ -183,21 +183,21 @@ def main():
             print(f"  {b:<{name_w}}  (no comparand source)")
             continue
         for lang, src in sources.items():
-            cmd_city = [str(bin_city), "exec", str(bc)]
+            cmd_jet = [str(bin_jet), "exec", str(bc)]
             cmd_rival = cmd_for[lang](src)
             # warmup
-            time_run(cmd_city)
+            time_run(cmd_jet)
             time_run(cmd_rival)
-            city_t, rival_t = [], []
+            jet_t, rival_t = [], []
             wins = ties = losses = 0
             for i in range(args.runs):
                 if i % 2 == 0:
-                    c = time_run(cmd_city)
+                    c = time_run(cmd_jet)
                     r_t = time_run(cmd_rival)
                 else:
                     r_t = time_run(cmd_rival)
-                    c = time_run(cmd_city)
-                city_t.append(c)
+                    c = time_run(cmd_jet)
+                jet_t.append(c)
                 rival_t.append(r_t)
                 if c < r_t:
                     wins += 1
@@ -205,7 +205,7 @@ def main():
                     losses += 1
                 else:
                     ties += 1
-            med_c = statistics.median(city_t)
+            med_c = statistics.median(jet_t)
             med_r = statistics.median(rival_t)
             ratio = med_c / med_r if med_r > 0 else 1.0
             ratios_by_lang[lang].append(ratio)
@@ -217,9 +217,9 @@ def main():
     for lang, ratios in ratios_by_lang.items():
         if len(ratios) >= 2:
             gm = statistics.geometric_mean(ratios)
-            print(f"  geomean ratio (city/{lang}): {gm:.3f}×  ({len(ratios)} benches)")
+            print(f"  geomean ratio (jet/{lang}): {gm:.3f}×  ({len(ratios)} benches)")
         elif len(ratios) == 1:
-            print(f"  ratio (city/{lang}): {ratios[0]:.3f}×  (1 bench)")
+            print(f"  ratio (jet/{lang}): {ratios[0]:.3f}×  (1 bench)")
 
     if not args.keep:
         remove_worktree(wt)

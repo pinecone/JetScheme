@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# Compare CityScheme VM against the Lua interpreter on matched benchmarks.
-# Times child user-time via getrusage, reports min-of-N and city/lua ratio.
+# Compare JetScheme VM against the Lua interpreter on matched benchmarks.
+# Times child user-time via getrusage, reports min-of-N and jet/lua ratio.
 
 import os
 import resource
@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-CITY = Path(os.environ.get("CITY", HERE / ".." / ".." / "build" / "city"))
+JET = Path(os.environ.get("JET", HERE / ".." / ".." / "build" / "jet"))
 LUA = os.environ.get("LUA") or shutil.which("lua")
 
 BENCHES = sorted(p.stem for p in HERE.glob("bench-*.ss"))
@@ -33,14 +33,14 @@ def user_time(cmd, **kw):
 
 
 def main():
-    if not CITY.exists() or not os.access(CITY, os.X_OK):
-        die(f"{CITY} not found or not executable; build it first with 'make'")
+    if not JET.exists() or not os.access(JET, os.X_OK):
+        die(f"{JET} not found or not executable; build it first with 'make'")
     if LUA is None:
         die("no 'lua' on PATH. Install Lua 5.5 (e.g., brew install lua).")
 
     lua_version = subprocess.run([LUA, "-v"], capture_output=True, text=True).stderr.strip() \
         or subprocess.run([LUA, "-v"], capture_output=True, text=True).stdout.strip()
-    print(f"city: {CITY}")
+    print(f"jet: {JET}")
     print(f"lua: {LUA} ({lua_version})")
     print()
 
@@ -51,13 +51,13 @@ def main():
         bc_path = Path("/tmp") / f"{bench}.bc"
         lua_path = HERE / f"{bench}.lua"
         with bc_path.open("wb") as f:
-            subprocess.run([str(CITY), "compile", str(HERE / f"{bench}.ss")],
+            subprocess.run([str(JET), "compile", str(HERE / f"{bench}.ss")],
                            stdout=f, check=True)
 
-        print(f"  {bench:<{name_w}}  city: ", end="", flush=True)
-        city_times = []
+        print(f"  {bench:<{name_w}}  jet: ", end="", flush=True)
+        jet_times = []
         for _ in range(RUNS):
-            city_times.append(user_time([str(CITY), "exec", str(bc_path)]))
+            jet_times.append(user_time([str(JET), "exec", str(bc_path)]))
             print(".", end="", flush=True)
 
         print("  lua: ", end="", flush=True)
@@ -66,12 +66,12 @@ def main():
             lua_times.append(user_time([LUA, str(lua_path)]))
             print(".", end="", flush=True)
 
-        city_min = min(city_times)
+        jet_min = min(jet_times)
         lua_min = min(lua_times)
-        ratio = city_min / lua_min if lua_min > 0 else float("inf")
+        ratio = jet_min / lua_min if lua_min > 0 else float("inf")
         if lua_min > 0:
             ratios.append(ratio)
-        print(f"  {city_min:.3f}s / {lua_min:.3f}s = {ratio:.2f}x", flush=True)
+        print(f"  {jet_min:.3f}s / {lua_min:.3f}s = {ratio:.2f}x", flush=True)
 
     if len(ratios) >= 2:
         gm = statistics.geometric_mean(ratios)

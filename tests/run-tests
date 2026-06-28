@@ -2,12 +2,12 @@
 
 trap exit 2
 
-CITY=${CITY:-../build/city}
-export CITY
+JET=${JET:-../build/jet}
+export JET
 
-if [ ! -e "$CITY" ]
+if [ ! -e "$JET" ]
 then
-    echo "error: city executable '$CITY' not found; build it first."
+    echo "error: jet executable '$JET' not found; build it first."
     exit
 fi
 

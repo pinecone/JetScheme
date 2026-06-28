@@ -350,7 +350,7 @@ inline char decode_char_literal(std::string_view body, SourceLoc loc)
 			return n.value;
 		}
 	}
-	CITY_DIE("%d:%d: unknown character name '#\\%.*s'", loc.line, loc.col,
+	JET_DIE("%d:%d: unknown character name '#\\%.*s'", loc.line, loc.col,
 			 static_cast<int>(body.size()), body.data());
 }
 
@@ -587,7 +587,7 @@ namespace
 				}
 				else
 				{
-					CITY_DIE("%d:%d: invalid boolean", line, col);
+					JET_DIE("%d:%d: invalid boolean", line, col);
 				}
 			}
 			else if (c == '\\')
@@ -614,7 +614,7 @@ namespace
 			}
 			else
 			{
-				CITY_DIE("%d:%d: invalid # syntax", line, col);
+				JET_DIE("%d:%d: invalid # syntax", line, col);
 			}
 		}
 
@@ -712,7 +712,7 @@ namespace
 				return;
 			}
 
-			CITY_DIE("%d:%d: unexpected character '%c'", line, col, c);
+			JET_DIE("%d:%d: unexpected character '%c'", line, col, c);
 		}
 
 		TokenKind classify_ident(std::string_view text)
@@ -916,7 +916,7 @@ namespace
 		{
 			if (peek().kind != kind)
 			{
-				CITY_DIE("%d:%d: expected token %d, got %d", peek().loc.line, peek().loc.col,
+				JET_DIE("%d:%d: expected token %d, got %d", peek().loc.line, peek().loc.col,
 						 static_cast<int>(kind), static_cast<int>(peek().kind));
 			}
 			advance();
@@ -924,7 +924,7 @@ namespace
 
 		std::string_view expect_identifier(const char* what)
 		{
-			CITY_DIE_UNLESS(peek().kind == TokenKind::Variable,
+			JET_DIE_UNLESS(peek().kind == TokenKind::Variable,
 							"%d:%d: expected identifier for %s", peek().loc.line, peek().loc.col, what);
 			return advance().text;
 		}
@@ -1054,7 +1054,7 @@ namespace
 				case TokenKind::LParen:
 					return parse_paren_form();
 				default:
-					CITY_DIE("%d:%d: unexpected token", tok.loc.line, tok.loc.col);
+					JET_DIE("%d:%d: unexpected token", tok.loc.line, tok.loc.col);
 			}
 		}
 
@@ -1152,7 +1152,7 @@ namespace
 			}
 			else
 			{
-				CITY_DIE("%d:%d: expected formals", loc.line, loc.col);
+				JET_DIE("%d:%d: expected formals", loc.line, loc.col);
 			}
 
 			std::vector<Expr*> body;
@@ -1219,7 +1219,7 @@ namespace
 			advance();
 			if (peek().kind != TokenKind::String)
 			{
-				CITY_DIE("%d:%d: %%prim expects a string literal", loc.line, loc.col);
+				JET_DIE("%d:%d: %%prim expects a string literal", loc.line, loc.col);
 			}
 			std::string_view name = process_string_escapes(advance().text);
 			expect(TokenKind::RParen);
@@ -1271,7 +1271,7 @@ namespace
 			expect(TokenKind::LParen);
 			if (peek().kind != TokenKind::Variable || peek().text != "ref")
 			{
-				CITY_DIE("%d:%d: setf! place form must be (ref obj key)", place_loc.line, place_loc.col);
+				JET_DIE("%d:%d: setf! place form must be (ref obj key)", place_loc.line, place_loc.col);
 			}
 			advance();
 			Expr* obj = parse_expr();
@@ -1561,7 +1561,7 @@ namespace
 			advance();
 			if (peek().kind != TokenKind::String)
 			{
-				CITY_DIE("%d:%d: include expects a string path", loc.line, loc.col);
+				JET_DIE("%d:%d: include expects a string path", loc.line, loc.col);
 			}
 			std::string_view raw_path = advance().text;
 			expect(TokenKind::RParen);
@@ -1583,7 +1583,7 @@ namespace
 			FILE* f = fopen(path.c_str(), "rb");
 			if (!f)
 			{
-				CITY_DIE("%d:%d: cannot open '%.*s'", loc.line, loc.col,
+				JET_DIE("%d:%d: cannot open '%.*s'", loc.line, loc.col,
 						 static_cast<int>(path.size()), path.data());
 			}
 			std::string source;
@@ -1726,7 +1726,7 @@ namespace
 					return parse_quoted_vector();
 
 				default:
-					CITY_DIE("%d:%d: unexpected token in datum", tok.loc.line, tok.loc.col);
+					JET_DIE("%d:%d: unexpected token in datum", tok.loc.line, tok.loc.col);
 			}
 		}
 
@@ -1743,10 +1743,10 @@ namespace
 				if (peek().kind == TokenKind::Dot)
 				{
 					advance();
-					CITY_DIE_UNLESS(!elems.empty(), "%d:%d: dotted pair needs a head", peek().loc.line,
+					JET_DIE_UNLESS(!elems.empty(), "%d:%d: dotted pair needs a head", peek().loc.line,
 								peek().loc.col);
 					tail = parse_datum();
-					CITY_DIE_UNLESS(peek().kind == TokenKind::RParen,
+					JET_DIE_UNLESS(peek().kind == TokenKind::RParen,
 									"%d:%d: extra tokens after dot in dotted pair", peek().loc.line,
 								peek().loc.col);
 					break;
@@ -1815,7 +1815,7 @@ namespace
 		std::vector<std::string> pool{};
 		std::unordered_map<std::string, uint16_t> pool_idx{};
 
-		// Rotate among CITY_REPLICATE_N variants so distinct call sites
+		// Rotate among JET_REPLICATE_N variants so distinct call sites
 		// land on distinct asm dispatch tails (Ertl & Gregg 2003).
 		size_t v_call_ic_slot = 0;
 		size_t v_call_ic_slot_local = 0;
@@ -1872,7 +1872,7 @@ namespace
 
 		uint16_t narrow_off(size_t v)
 		{
-			CITY_DIE_WHEN(v > UINT16_MAX, "codegen: frame offset %zu exceeds uint16_t", v);
+			JET_DIE_WHEN(v > UINT16_MAX, "codegen: frame offset %zu exceeds uint16_t", v);
 			return static_cast<uint16_t>(v);
 		}
 
@@ -1891,7 +1891,7 @@ namespace
 
 		void emit_replicated(Opcode base, size_t& counter)
 		{
-			int offset = static_cast<int>(counter++ % CITY_REPLICATE_N);
+			int offset = static_cast<int>(counter++ % JET_REPLICATE_N);
 			emit_opcode(static_cast<Opcode>(static_cast<int>(base) + offset));
 		}
 
@@ -2006,7 +2006,7 @@ namespace
 				case ExprKind::StringLit:
 					return intern_string(ConstTag::String, e->string_lit.value);
 				default:
-					CITY_DIE("intern_literal_key: not a literal Expr (kind %d)", static_cast<int>(e->kind));
+					JET_DIE("intern_literal_key: not a literal Expr (kind %d)", static_cast<int>(e->kind));
 			}
 		}
 
@@ -2114,7 +2114,7 @@ namespace
 				else
 				{
 					uint32_t found = find_upvalue(current, rb.lambda, static_cast<uint32_t>(rb.breadth));
-					CITY_DIE_WHEN(found == UINT32_MAX, "codegen: upvalue not in parent's upvalue list");
+					JET_DIE_WHEN(found == UINT32_MAX, "codegen: upvalue not in parent's upvalue list");
 					cap.src = static_cast<uint8_t>(CaptureSource::Upvalue);
 					cap.idx = static_cast<uint16_t>(found);
 				}
@@ -2204,7 +2204,7 @@ namespace
 				return;
 			}
 			uint32_t found = find_upvalue(current, b.lambda, static_cast<uint32_t>(b.breadth));
-			CITY_DIE_WHEN(found == UINT32_MAX, "codegen: ref to non-local without upvalue entry");
+			JET_DIE_WHEN(found == UINT32_MAX, "codegen: ref to non-local without upvalue entry");
 			uint16_t idx = static_cast<uint16_t>(found);
 			if (is_set)
 			{
@@ -2496,7 +2496,7 @@ namespace
 						{
 							uint32_t found =
 								find_upvalue(current, cb.lambda, static_cast<uint32_t>(cb.breadth));
-							CITY_DIE_WHEN(found == UINT32_MAX,
+							JET_DIE_WHEN(found == UINT32_MAX,
 										  "codegen: cacheable call missing upvalue entry");
 							slot_upvalue_idx = static_cast<uint16_t>(found);
 							ic_kind = IcKind::Slot;
@@ -2513,7 +2513,7 @@ namespace
 							{
 								uint32_t found =
 									find_upvalue(current, cb.lambda, static_cast<uint32_t>(cb.breadth));
-								CITY_DIE_WHEN(found == UINT32_MAX,
+								JET_DIE_WHEN(found == UINT32_MAX,
 											  "codegen: cacheable call missing upvalue entry");
 								direct_src = 1;
 								direct_idx = static_cast<uint16_t>(found);
@@ -2718,7 +2718,7 @@ namespace
 					break;
 
 				default:
-					CITY_DIE("%d:%d: codegen: unhandled ExprKind %d (surface form not expanded?)",
+					JET_DIE("%d:%d: codegen: unhandled ExprKind %d (surface form not expanded?)",
 							 expr->loc.line, expr->loc.col, static_cast<int>(expr->kind));
 			}
 		}
@@ -2744,7 +2744,7 @@ namespace
 			case ExprKind::Call:
 			{
 				Expr* proc = e->call.proc;
-				CITY_DIE_UNLESS(proc->kind == ExprKind::VarRef, "datum_to_atom: bad call proc");
+				JET_DIE_UNLESS(proc->kind == ExprKind::VarRef, "datum_to_atom: bad call proc");
 				std::string_view name = proc->var_ref.name;
 				if (name == "list")
 				{
@@ -2757,7 +2757,7 @@ namespace
 				}
 				if (name == "cons")
 				{
-					CITY_DIE_UNLESS(e->call.args.size() == 2, "datum_to_atom: cons arity");
+					JET_DIE_UNLESS(e->call.args.size() == 2, "datum_to_atom: cons arity");
 					return cons(datum_to_atom(e->call.args[0]), datum_to_atom(e->call.args[1]));
 				}
 				if (name == "vector")
@@ -2769,10 +2769,10 @@ namespace
 					}
 					return box(std::move(v));
 				}
-				CITY_DIE("datum_to_atom: unexpected call proc");
+				JET_DIE("datum_to_atom: unexpected call proc");
 			}
 			default:
-				CITY_DIE("datum_to_atom: unexpected ExprKind %d", static_cast<int>(e->kind));
+				JET_DIE("datum_to_atom: unexpected ExprKind %d", static_cast<int>(e->kind));
 		}
 	}
 
@@ -2865,7 +2865,7 @@ ResolvedBinding Compiler::binding(Expr* expr)
 		return bindings_[expr->id];
 	}
 
-	CITY_DIE("%d:%d: unresolved binding", expr->loc.line, expr->loc.col);
+	JET_DIE("%d:%d: unresolved binding", expr->loc.line, expr->loc.col);
 }
 
 bool Compiler::is_tail(Expr* expr)
@@ -3348,7 +3348,7 @@ void Compiler::record_ref(ResolvedBinding b)
 			sc.upvalues.push_back({b.lambda, bw});
 		}
 	}
-	CITY_DIE("record_ref: owner not in lambdas_");
+	JET_DIE("record_ref: owner not in lambdas_");
 }
 
 void Compiler::record_set(ResolvedBinding b, bool is_init, Expr* value)
@@ -3801,7 +3801,7 @@ void Compiler::resolve_bindings_in(Expr* expr)
 			}
 			else
 			{
-				CITY_DIE("%d:%d: unresolved variable '%.*s'", expr->loc.line, expr->loc.col,
+				JET_DIE("%d:%d: unresolved variable '%.*s'", expr->loc.line, expr->loc.col,
 						 static_cast<int>(expr->var_ref.name.size()), expr->var_ref.name.data());
 			}
 			break;
@@ -3854,7 +3854,7 @@ void Compiler::resolve_bindings_in(Expr* expr)
 			}
 			else
 			{
-				CITY_DIE("%d:%d: unresolved variable '%.*s' in set!", expr->loc.line, expr->loc.col,
+				JET_DIE("%d:%d: unresolved variable '%.*s' in set!", expr->loc.line, expr->loc.col,
 						 static_cast<int>(expr->set_bang.name.size()), expr->set_bang.name.data());
 			}
 			break;
@@ -3883,7 +3883,7 @@ void Compiler::resolve_bindings_in(Expr* expr)
 			break;
 
 		default:
-			CITY_DIE("%d:%d: resolve: unhandled ExprKind %d (surface form not expanded?)",
+			JET_DIE("%d:%d: resolve: unhandled ExprKind %d (surface form not expanded?)",
 					 expr->loc.line, expr->loc.col, static_cast<int>(expr->kind));
 	}
 }
@@ -3959,7 +3959,7 @@ void Compiler::compute_tail(Expr* expr, bool in_tail)
 			break;
 
 		default:
-			CITY_DIE("%d:%d: tail-pass: unhandled ExprKind %d (surface form not expanded?)",
+			JET_DIE("%d:%d: tail-pass: unhandled ExprKind %d (surface form not expanded?)",
 					 expr->loc.line, expr->loc.col, static_cast<int>(expr->kind));
 	}
 }

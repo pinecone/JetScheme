@@ -52,7 +52,7 @@ def build_ref(ref, dest):
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     run(["make", "-j"], cwd=dest,
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    bin = dest / "build" / "city"
+    bin = dest / "build" / "jet"
     if not bin.exists():
         die(f"build did not produce {bin}")
     return bin

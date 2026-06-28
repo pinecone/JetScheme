@@ -7,14 +7,14 @@
 #include <cstddef>
 #include <cstdint>
 
-#define CITY_REPLICATE_N 8
-#define CITY_REPLICATE(X, name, disp)                                                                        \
+#define JET_REPLICATE_N 8
+#define JET_REPLICATE(X, name, disp)                                                                        \
 	X(name##_0, disp "_0") X(name##_1, disp "_1") X(name##_2, disp "_2") X(name##_3, disp "_3")              \
 	X(name##_4, disp "_4") X(name##_5, disp "_5") X(name##_6, disp "_6") X(name##_7, disp "_7")
 
 // X(c++_name, "disasm_name") -- short, RISC-ish display strings keep traces
 // scannable; C++ identifiers stay descriptive for source readability.
-#define CITY_OPCODES(X)                                                                                      \
+#define JET_OPCODES(X)                                                                                      \
 	X(halt,                "halt")                                                                           \
 	X(ret,                 "ret")                                                                            \
 	X(if_then_else,        "if")                                                                             \
@@ -22,9 +22,9 @@
 	X(pop,                 "pop")                                                                            \
 	X(call,                "call")                                                                           \
 	X(recur,               "recur")                                                                          \
-	CITY_REPLICATE(X, call_ic_slot,       "cs")                                                              \
-	CITY_REPLICATE(X, call_ic_slot_local, "csl")                                                             \
-	CITY_REPLICATE(X, call_ic_direct,     "cd")                                                              \
+	JET_REPLICATE(X, call_ic_slot,       "cs")                                                              \
+	JET_REPLICATE(X, call_ic_slot_local, "csl")                                                             \
+	JET_REPLICATE(X, call_ic_direct,     "cd")                                                              \
 	X(apply,               "apply")                                                                          \
 	X(make_closure,        "clos")                                                                           \
 	X(ref_local,           "ldl")                                                                            \
@@ -71,13 +71,13 @@
 enum class Opcode : uint8_t
 {
 #define X(name, disp) name,
-	CITY_OPCODES(X)
+	JET_OPCODES(X)
 #undef X
 };
 
 constexpr int OPCODE_COUNT = 0
 #define X(name, disp) +1
-	CITY_OPCODES(X)
+	JET_OPCODES(X)
 #undef X
 	;
 
@@ -329,15 +329,15 @@ inline size_t opcode_step(uint8_t op, const uint8_t* operands)
 		case Opcode::set_upvalue_slot_field_ck:
 			return OPCODE_SIZE + sizeof(OP_ref_upvalue_field_ck);
 #define X(name, disp) case Opcode::name:
-			CITY_REPLICATE(X, call_ic_slot, "cs")
+			JET_REPLICATE(X, call_ic_slot, "cs")
 #undef X
 			return OPCODE_SIZE + sizeof(OP_call_ic_slot);
 #define X(name, disp) case Opcode::name:
-			CITY_REPLICATE(X, call_ic_slot_local, "csl")
+			JET_REPLICATE(X, call_ic_slot_local, "csl")
 #undef X
 			return OPCODE_SIZE + sizeof(OP_call_ic_slot_local);
 #define X(name, disp) case Opcode::name:
-			CITY_REPLICATE(X, call_ic_direct, "cd")
+			JET_REPLICATE(X, call_ic_direct, "cd")
 #undef X
 			return OPCODE_SIZE + sizeof(OP_call_ic_direct);
 		case Opcode::make_closure:

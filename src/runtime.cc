@@ -17,13 +17,13 @@
 #include <strings.h>
 #include <random>
 
-std::string_view type_name(city::Type type)
+std::string_view type_name(jet::Type type)
 {
 	switch (type)
 	{
 		// clang-format off
-#define X(name, str) case city::Type::name: return str;
-		CITY_ALL_TYPES(X)
+#define X(name, str) case jet::Type::name: return str;
+		JET_ALL_TYPES(X)
 #undef X
 		// clang-format on
 		default:
@@ -55,7 +55,7 @@ Atom cdr(Atom a)
 
 Atom is_list(Atom a)
 {
-	return box(is_type<city::Type::Pair>(a));
+	return box(is_type<jet::Type::Pair>(a));
 }
 
 static Atom set_car(Atom pair, Atom x)
@@ -77,9 +77,9 @@ void init_lists(Env& e)
 	e.bind("car", make_prim<car>());
 	e.bind("cdr", make_prim<cdr>());
 
-	e.bind("pair?", make_prim<is_type<city::Type::Pair>>());
+	e.bind("pair?", make_prim<is_type<jet::Type::Pair>>());
 	e.bind("list?", make_prim<is_list>());
-	e.bind("null?", make_prim<is_type<city::Type::EmptyList>>());
+	e.bind("null?", make_prim<is_type<jet::Type::EmptyList>>());
 	e.bind("set-car!", make_prim<set_car>());
 	e.bind("set-cdr!", make_prim<set_cdr>());
 }
@@ -104,7 +104,7 @@ struct min
 
 static int32_t to_int32(Number x)
 {
-	CITY_DIE_UNLESS(std::isfinite(x), "bitwise op requires a finite number, given %g", x);
+	JET_DIE_UNLESS(std::isfinite(x), "bitwise op requires a finite number, given %g", x);
 	return static_cast<int32_t>(static_cast<int64_t>(x));
 }
 
@@ -126,12 +126,12 @@ struct bit_xor
 	Number operator()(T a, T b) { return static_cast<Number>(to_int32(a) ^ to_int32(b)); }
 };
 
-static Number city_bitwise_not(Number x)
+static Number jet_bitwise_not(Number x)
 {
 	return static_cast<Number>(~to_int32(x));
 }
 
-static Number city_arithmetic_shift(Number x, Number count)
+static Number jet_arithmetic_shift(Number x, Number count)
 {
 	int32_t v = to_int32(x);
 	int32_t c = to_int32(count);
@@ -142,46 +142,46 @@ static Number city_arithmetic_shift(Number x, Number count)
 	return static_cast<Number>(v >> ((-c) & 31));
 }
 
-static Number city_abs(Number x)
+static Number jet_abs(Number x)
 {
 	return fabs(x);
 }
 
-static bool city_is_positive(Number x)
+static bool jet_is_positive(Number x)
 {
 	return x > 0;
 }
 
-static bool city_is_negative(Number x)
+static bool jet_is_negative(Number x)
 {
 	return x < 0;
 }
 
-static bool city_is_even(Number x)
+static bool jet_is_even(Number x)
 {
-	CITY_DIE_UNLESS(is_integer(x), "even? expects an integer, given %g", x);
+	JET_DIE_UNLESS(is_integer(x), "even? expects an integer, given %g", x);
 	return std::fmod(x, 2.0) == 0.0;
 }
 
-static bool city_is_odd(Number x)
+static bool jet_is_odd(Number x)
 {
-	CITY_DIE_UNLESS(is_integer(x), "odd? expects an integer, given %g", x);
+	JET_DIE_UNLESS(is_integer(x), "odd? expects an integer, given %g", x);
 	return std::fmod(x, 2.0) != 0.0;
 }
 
-static Number city_quotient(Number a, Number b)
+static Number jet_quotient(Number a, Number b)
 {
-	CITY_DIE_UNLESS(b != 0, "quotient: division by zero");
+	JET_DIE_UNLESS(b != 0, "quotient: division by zero");
 	return std::trunc(a / b);
 }
 
-static Number city_remainder(Number a, Number b)
+static Number jet_remainder(Number a, Number b)
 {
-	CITY_DIE_UNLESS(b != 0, "remainder: division by zero");
+	JET_DIE_UNLESS(b != 0, "remainder: division by zero");
 	return std::fmod(a, b);
 }
 
-static Number city_square(Number x)
+static Number jet_square(Number x)
 {
 	return x * x;
 }
@@ -215,15 +215,15 @@ void init_number(Env& e)
 	e.bind("asin", make_prim<arith_unary_fun<Number, ::asin>>(exactly(1)));
 	e.bind("acos", make_prim<arith_unary_fun<Number, ::acos>>(exactly(1)));
 	e.bind("atan", make_prim<arith_unary_fun<Number, ::atan>>(exactly(1)));
-	e.bind("abs", make_prim<arith_unary_fun<Number, city_abs>>(exactly(1)));
-	e.bind("square", make_prim<arith_unary_fun<Number, city_square>>(exactly(1)));
-	e.bind("quotient", make_prim<arith_binary_fun<Number, city_quotient>>(exactly(2)));
-	e.bind("remainder", make_prim<arith_binary_fun<Number, city_remainder>>(exactly(2)));
+	e.bind("abs", make_prim<arith_unary_fun<Number, jet_abs>>(exactly(1)));
+	e.bind("square", make_prim<arith_unary_fun<Number, jet_square>>(exactly(1)));
+	e.bind("quotient", make_prim<arith_binary_fun<Number, jet_quotient>>(exactly(2)));
+	e.bind("remainder", make_prim<arith_binary_fun<Number, jet_remainder>>(exactly(2)));
 
-	e.bind("positive?", make_prim<arith_unary_pred<Number, city_is_positive>>(exactly(1)));
-	e.bind("negative?", make_prim<arith_unary_pred<Number, city_is_negative>>(exactly(1)));
-	e.bind("even?", make_prim<arith_unary_pred<Number, city_is_even>>(exactly(1)));
-	e.bind("odd?", make_prim<arith_unary_pred<Number, city_is_odd>>(exactly(1)));
+	e.bind("positive?", make_prim<arith_unary_pred<Number, jet_is_positive>>(exactly(1)));
+	e.bind("negative?", make_prim<arith_unary_pred<Number, jet_is_negative>>(exactly(1)));
+	e.bind("even?", make_prim<arith_unary_pred<Number, jet_is_even>>(exactly(1)));
+	e.bind("odd?", make_prim<arith_unary_pred<Number, jet_is_odd>>(exactly(1)));
 
 	e.bind("=", make_prim<folding_pred<equal_to<Number>>>(at_least(2)));
 	e.bind("<", make_prim<folding_pred<less<Number>>>(at_least(2)));
@@ -239,15 +239,15 @@ void init_number(Env& e)
 	e.bind("bitwise-and", make_prim<folding_op<::bit_and<Number>, -1>>());
 	e.bind("bitwise-ior", make_prim<folding_op<::bit_ior<Number>, 0>>());
 	e.bind("bitwise-xor", make_prim<folding_op<::bit_xor<Number>, 0>>());
-	e.bind("bitwise-not", make_prim<arith_unary_fun<Number, city_bitwise_not>>(exactly(1)));
-	e.bind("arithmetic-shift", make_prim<arith_binary_fun<Number, city_arithmetic_shift>>(exactly(2)));
+	e.bind("bitwise-not", make_prim<arith_unary_fun<Number, jet_bitwise_not>>(exactly(1)));
+	e.bind("arithmetic-shift", make_prim<arith_binary_fun<Number, jet_arithmetic_shift>>(exactly(2)));
 
 	e.bind("exact?", make_prim<arith_unary_pred<Number, is_exact>>(exactly(1)));
 	e.bind("integer?", make_prim<arith_unary_pred<Number, is_integer>>(exactly(1)));
-	e.bind("number?", make_prim<is_type<city::Type::Number>>());
-	e.bind("real?", make_prim<is_type<city::Type::Number>>());
-	e.bind("rational?", make_prim<is_type<city::Type::Number>>());
-	e.bind("complex?", make_prim<is_type<city::Type::Number>>());
+	e.bind("number?", make_prim<is_type<jet::Type::Number>>());
+	e.bind("real?", make_prim<is_type<jet::Type::Number>>());
+	e.bind("rational?", make_prim<is_type<jet::Type::Number>>());
+	e.bind("complex?", make_prim<is_type<jet::Type::Number>>());
 
 	e.bind("random", make_prim<arith_nullary_fun<long, random>>(exactly(0)));
 	e.bind("random-seed", make_prim<random_seed>());
@@ -279,7 +279,7 @@ void init_symbols(Env& e)
 {
 	e.bind("symbol->string", make_prim<symbol_to_string>());
 	e.bind("string->symbol", make_prim<string_to_symbol>());
-	e.bind("symbol?", make_prim<is_type<city::Type::Symbol>>());
+	e.bind("symbol?", make_prim<is_type<jet::Type::Symbol>>());
 }
 
 bool operator==(Vec& v1, Vec& v2)
@@ -294,19 +294,19 @@ Atom vector_ctor(Atom* first, Atom* last)
 
 Atom make_vector(Atom s, Atom f)
 {
-	CITY_DIE_UNLESS(is_positive_integer(s), "make-vector expects positive integer, given %g",
+	JET_DIE_UNLESS(is_positive_integer(s), "make-vector expects positive integer, given %g",
 					unbox<Number>(s));
 	return box(Vec(unbox<Number>(s), f));
 }
 
 Atom vector_ref(Atom v, Atom idx)
 {
-	CITY_DIE_UNLESS(is_positive_integer(idx), "vector-ref expects positive integer, given %g",
+	JET_DIE_UNLESS(is_positive_integer(idx), "vector-ref expects positive integer, given %g",
 					unbox<Number>(idx));
 
 	size_t index = unbox<Number>(idx);
 	Vec& mv = *slow_unbox<Vec>(v);
-	CITY_DIE_UNLESS(index < mv.size(), "vector-ref index %zu out of bounds", index);
+	JET_DIE_UNLESS(index < mv.size(), "vector-ref index %zu out of bounds", index);
 	return mv[index];
 }
 
@@ -317,18 +317,18 @@ Atom vector_length(Atom v)
 
 static Atom vector_set(Atom v, Atom idx, Atom val)
 {
-	CITY_DIE_UNLESS(is_positive_integer(idx), "vector-set! expects positive integer, given %g",
+	JET_DIE_UNLESS(is_positive_integer(idx), "vector-set! expects positive integer, given %g",
 					unbox<Number>(idx));
 	size_t index = unbox<Number>(idx);
 	Vec& mv = *slow_unbox<Vec>(v);
-	CITY_DIE_UNLESS(index < mv.size(), "vector-set! index %zu out of bounds", index);
+	JET_DIE_UNLESS(index < mv.size(), "vector-set! index %zu out of bounds", index);
 	mv[index] = val;
 	return val;
 }
 
 void init_vecs(Env& e)
 {
-	e.bind("vector?", make_prim<is_type<city::Type::Vector>>());
+	e.bind("vector?", make_prim<is_type<jet::Type::Vector>>());
 	e.bind("vector-length", make_prim<vector_length>());
 	e.bind("vector-ref", make_prim<vector_ref>());
 	e.bind("vector-set!", make_prim<vector_set>());
@@ -345,40 +345,40 @@ bool is_eqv(Atom obj1, Atom obj2)
 
 	switch (obj1.type())
 	{
-		case city::Type::Number:
+		case jet::Type::Number:
 			return compare_objects<Number>(obj1, obj2);
-		case city::Type::Boolean:
+		case jet::Type::Boolean:
 			return compare_objects<bool>(obj1, obj2);
-		case city::Type::Procedure:
+		case jet::Type::Procedure:
 			return compare_objects<Lambda>(obj1, obj2);
-		case city::Type::Symbol:
+		case jet::Type::Symbol:
 			return compare_objects<Symbol>(obj1, obj2);
-		case city::Type::Pair:
+		case jet::Type::Pair:
 			return compare_objects<Cons>(obj1, obj2);
-		case city::Type::Vector:
+		case jet::Type::Vector:
 			return compare_objects<Vec>(obj1, obj2);
-		case city::Type::Primitive:
+		case jet::Type::Primitive:
 			return compare_objects<Prim>(obj1, obj2);
-		case city::Type::Character:
+		case jet::Type::Character:
 			return compare_objects<Character>(obj1, obj2);
-		case city::Type::EmptyList:
-		case city::Type::Eof:
+		case jet::Type::EmptyList:
+		case jet::Type::Eof:
 			return true;
-		case city::Type::String:
+		case jet::Type::String:
 			return compare_objects<String>(obj1, obj2);
-		case city::Type::Struct:
+		case jet::Type::Struct:
 			return compare_objects<Struct>(obj1, obj2);
-		case city::Type::StructType:
+		case jet::Type::StructType:
 			return compare_objects<StructType>(obj1, obj2);
-		case city::Type::IPort:
-		case city::Type::OPort:
-		case city::Type::Slot:
+		case jet::Type::IPort:
+		case jet::Type::OPort:
+		case jet::Type::Slot:
 			return obj1.as_ptr() == obj2.as_ptr();
-		case city::Type::Unknown:
-		case city::Type::TypeMax:
-			CITY_DIE("is_eqv: unexpected type %d", static_cast<int>(obj1.type()));
+		case jet::Type::Unknown:
+		case jet::Type::TypeMax:
+			JET_DIE("is_eqv: unexpected type %d", static_cast<int>(obj1.type()));
 	}
-	CITY_DIE("is_eqv: unhandled type %d", static_cast<int>(obj1.type()));
+	JET_DIE("is_eqv: unhandled type %d", static_cast<int>(obj1.type()));
 }
 
 static bool equal(Atom obj1, Atom obj2)
@@ -388,12 +388,12 @@ static bool equal(Atom obj1, Atom obj2)
 		return false;
 	}
 
-	if (obj1.type() == city::Type::Pair)
+	if (obj1.type() == jet::Type::Pair)
 	{
 		return equal(car(obj1), car(obj2)) && equal(cdr(obj1), cdr(obj2));
 	}
 
-	if (obj1.type() == city::Type::Vector)
+	if (obj1.type() == jet::Type::Vector)
 	{
 		Vec& v1 = *unbox<Vec>(obj1);
 		Vec& v2 = *unbox<Vec>(obj2);
@@ -426,14 +426,14 @@ static Atom equal_prim(Atom* first, Atom*)
 
 static bool boolean_eq(Atom a, Atom b)
 {
-	CITY_DIE_UNLESS(is_type<city::Type::Boolean>(a) && is_type<city::Type::Boolean>(b),
+	JET_DIE_UNLESS(is_type<jet::Type::Boolean>(a) && is_type<jet::Type::Boolean>(b),
 					"boolean=? expects booleans");
 	return unbox<bool>(a) == unbox<bool>(b);
 }
 
 static bool symbol_eq(Atom a, Atom b)
 {
-	CITY_DIE_UNLESS(is_type<city::Type::Symbol>(a) && is_type<city::Type::Symbol>(b),
+	JET_DIE_UNLESS(is_type<jet::Type::Symbol>(a) && is_type<jet::Type::Symbol>(b),
 					"symbol=? expects symbols");
 	return *unbox<Symbol>(a) == *unbox<Symbol>(b);
 }
@@ -458,13 +458,13 @@ static void print_list(Cons& v, std::string& out)
 	while (true)
 	{
 		print(x->car, out);
-		if (is_type<city::Type::Pair>(x->cdr))
+		if (is_type<jet::Type::Pair>(x->cdr))
 		{
 			out += ' ';
 			x = unbox<Cons>(x->cdr);
 			continue;
 		}
-		if (!is_type<city::Type::EmptyList>(x->cdr))
+		if (!is_type<jet::Type::EmptyList>(x->cdr))
 		{
 			out += " . ";
 			print(x->cdr, out);
@@ -502,7 +502,7 @@ static Atom display_to(Atom a, std::string& out)
 {
 	switch (a.type())
 	{
-		case city::Type::Number:
+		case jet::Type::Number:
 		{
 			Number n = unbox<Number>(a);
 			char buf[32];
@@ -511,35 +511,35 @@ static Atom display_to(Atom a, std::string& out)
 		}
 		break;
 
-		case city::Type::Boolean:
+		case jet::Type::Boolean:
 			out += (unbox<bool>(a) ? "#t" : "#f");
 			break;
 
-		case city::Type::Character:
+		case jet::Type::Character:
 			out += unbox<Character>(a);
 			break;
 
-		case city::Type::String:
+		case jet::Type::String:
 			out += *unbox<String>(a);
 			break;
 
-		case city::Type::Symbol:
+		case jet::Type::Symbol:
 			out += unbox<Symbol>(a)->str();
 			break;
 
-		case city::Type::Pair:
+		case jet::Type::Pair:
 			print_list<display_to>(*unbox<Cons>(a), out);
 			break;
 
-		case city::Type::Vector:
+		case jet::Type::Vector:
 			print_vector<display_to>(*unbox<Vec>(a), out);
 			break;
 
-		case city::Type::EmptyList:
+		case jet::Type::EmptyList:
 			out += "()";
 			break;
 
-		case city::Type::StructType:
+		case jet::Type::StructType:
 		{
 			StructType* t = unbox<StructType>(a);
 			out += "#<struct-type ";
@@ -551,7 +551,7 @@ static Atom display_to(Atom a, std::string& out)
 			break;
 		}
 
-		case city::Type::Struct:
+		case jet::Type::Struct:
 		{
 			Struct* s = unbox<Struct>(a);
 			out += "#s(";
@@ -597,12 +597,12 @@ Atom write_to(Atom a, std::string& out)
 {
 	switch (a.type())
 	{
-		case city::Type::Character:
+		case jet::Type::Character:
 			out += "#\\";
 			out += unbox<Character>(a);
 			break;
 
-		case city::Type::String:
+		case jet::Type::String:
 		{
 			out += '"';
 			String& s = *unbox<String>(a);
@@ -614,15 +614,15 @@ Atom write_to(Atom a, std::string& out)
 		}
 		break;
 
-		case city::Type::Pair:
+		case jet::Type::Pair:
 			print_list<write_to>(*unbox<Cons>(a), out);
 			break;
 
-		case city::Type::Vector:
+		case jet::Type::Vector:
 			print_vector<write_to>(*unbox<Vec>(a), out);
 			break;
 
-		case city::Type::Struct:
+		case jet::Type::Struct:
 		{
 			Struct* s = unbox<Struct>(a);
 			out += "#s(";
@@ -680,11 +680,11 @@ static Atom string_append(Atom* first, Atom* last)
 
 static size_t string_index(Atom s, Atom k, const char* op)
 {
-	CITY_DIE_UNLESS(is_positive_integer(k), "%s expects positive integer index, given %g", op,
+	JET_DIE_UNLESS(is_positive_integer(k), "%s expects positive integer index, given %g", op,
 					unbox<Number>(k));
 	size_t i = unbox<Number>(k);
 	String& str = *slow_unbox<String>(s);
-	CITY_DIE_UNLESS(i < str.size(), "%s index %zu out of bounds", op, i);
+	JET_DIE_UNLESS(i < str.size(), "%s index %zu out of bounds", op, i);
 	return i;
 }
 
@@ -728,7 +728,7 @@ static Atom substring(Atom* first, Atom* last)
 	size_t n = s.size();
 	size_t start = last - first >= 2 ? static_cast<size_t>(slow_unbox<Number>(first[1])) : 0;
 	size_t end = last - first >= 3 ? static_cast<size_t>(slow_unbox<Number>(first[2])) : n;
-	CITY_DIE_UNLESS(start <= end && end <= n, "substring: bad range [%zu, %zu) for length %zu", start, end, n);
+	JET_DIE_UNLESS(start <= end && end <= n, "substring: bad range [%zu, %zu) for length %zu", start, end, n);
 	return box(s.substr(start, end - start));
 }
 
@@ -738,21 +738,21 @@ static Atom string_copy(Atom* first, Atom* last)
 	size_t n = s.size();
 	size_t start = last - first >= 2 ? static_cast<size_t>(slow_unbox<Number>(first[1])) : 0;
 	size_t end = last - first >= 3 ? static_cast<size_t>(slow_unbox<Number>(first[2])) : n;
-	CITY_DIE_UNLESS(start <= end && end <= n, "string-copy: bad range [%zu, %zu) for length %zu", start, end, n);
+	JET_DIE_UNLESS(start <= end && end <= n, "string-copy: bad range [%zu, %zu) for length %zu", start, end, n);
 	return box(s.substr(start, end - start));
 }
 
 static Atom string_copy_bang(Atom* first, Atom* last)
 {
-	CITY_DIE_UNLESS(last - first >= 3, "string-copy! expects at least 3 arguments");
+	JET_DIE_UNLESS(last - first >= 3, "string-copy! expects at least 3 arguments");
 	String& dst = *slow_unbox<String>(first[0]);
 	size_t at = static_cast<size_t>(slow_unbox<Number>(first[1]));
 	String& src = *slow_unbox<String>(first[2]);
 	size_t n = src.size();
 	size_t s_start = last - first >= 4 ? static_cast<size_t>(slow_unbox<Number>(first[3])) : 0;
 	size_t s_end = last - first >= 5 ? static_cast<size_t>(slow_unbox<Number>(first[4])) : n;
-	CITY_DIE_UNLESS(s_start <= s_end && s_end <= n, "string-copy!: bad source range");
-	CITY_DIE_UNLESS(at + (s_end - s_start) <= dst.size(), "string-copy!: destination too small");
+	JET_DIE_UNLESS(s_start <= s_end && s_end <= n, "string-copy!: bad source range");
+	JET_DIE_UNLESS(at + (s_end - s_start) <= dst.size(), "string-copy!: destination too small");
 	dst.replace(at, s_end - s_start, src, s_start, s_end - s_start);
 	return Atom();
 }
@@ -763,7 +763,7 @@ static Atom string_fill_bang(Atom* first, Atom* last)
 	char c = static_cast<char>(slow_unbox<Character>(first[1]));
 	size_t start = last - first >= 3 ? static_cast<size_t>(slow_unbox<Number>(first[2])) : 0;
 	size_t end = last - first >= 4 ? static_cast<size_t>(slow_unbox<Number>(first[3])) : s.size();
-	CITY_DIE_UNLESS(start <= end && end <= s.size(), "string-fill!: bad range");
+	JET_DIE_UNLESS(start <= end && end <= s.size(), "string-fill!: bad range");
 	std::fill(s.begin() + start, s.begin() + end, c);
 	return Atom();
 }
@@ -771,7 +771,7 @@ static Atom string_fill_bang(Atom* first, Atom* last)
 template <class Op>
 static Atom string_folding_pred(Atom* first, Atom* last)
 {
-	CITY_DIE_UNLESS(last - first >= 2, "string comparison expects at least 2 arguments");
+	JET_DIE_UNLESS(last - first >= 2, "string comparison expects at least 2 arguments");
 	bool result = true;
 	String* prev = slow_unbox<String>(*first++);
 	while (first != last)
@@ -825,7 +825,7 @@ static Atom string_to_list(Atom* first, Atom* last)
 	String& s = *slow_unbox<String>(first[0]);
 	size_t start = last - first >= 2 ? static_cast<size_t>(slow_unbox<Number>(first[1])) : 0;
 	size_t end = last - first >= 3 ? static_cast<size_t>(slow_unbox<Number>(first[2])) : s.size();
-	CITY_DIE_UNLESS(start <= end && end <= s.size(), "string->list: bad range");
+	JET_DIE_UNLESS(start <= end && end <= s.size(), "string->list: bad range");
 	Atom result = box(EmptyList{});
 	for (size_t i = end; i > start; --i)
 	{
@@ -837,7 +837,7 @@ static Atom string_to_list(Atom* first, Atom* last)
 static Atom list_to_string(Atom lst)
 {
 	String out;
-	for (Atom x = lst; !is_type<city::Type::EmptyList>(x); x = cdr(x))
+	for (Atom x = lst; !is_type<jet::Type::EmptyList>(x); x = cdr(x))
 	{
 		out += static_cast<char>(slow_unbox<Character>(car(x)));
 	}
@@ -849,7 +849,7 @@ static Atom string_to_vector(Atom* first, Atom* last)
 	String& s = *slow_unbox<String>(first[0]);
 	size_t start = last - first >= 2 ? static_cast<size_t>(slow_unbox<Number>(first[1])) : 0;
 	size_t end = last - first >= 3 ? static_cast<size_t>(slow_unbox<Number>(first[2])) : s.size();
-	CITY_DIE_UNLESS(start <= end && end <= s.size(), "string->vector: bad range");
+	JET_DIE_UNLESS(start <= end && end <= s.size(), "string->vector: bad range");
 	Vec v;
 	v.reserve(end - start);
 	for (size_t i = start; i < end; ++i)
@@ -864,7 +864,7 @@ static Atom vector_to_string(Atom* first, Atom* last)
 	Vec& v = *slow_unbox<Vec>(first[0]);
 	size_t start = last - first >= 2 ? static_cast<size_t>(slow_unbox<Number>(first[1])) : 0;
 	size_t end = last - first >= 3 ? static_cast<size_t>(slow_unbox<Number>(first[2])) : v.size();
-	CITY_DIE_UNLESS(start <= end && end <= v.size(), "vector->string: bad range");
+	JET_DIE_UNLESS(start <= end && end <= v.size(), "vector->string: bad range");
 	String out;
 	out.reserve(end - start);
 	for (size_t i = start; i < end; ++i)
@@ -893,7 +893,7 @@ static Atom string_to_number(Atom* first, Atom* last)
 		}
 		return box<Number>(v);
 	}
-	CITY_DIE_UNLESS(radix == 2 || radix == 8 || radix == 16,
+	JET_DIE_UNLESS(radix == 2 || radix == 8 || radix == 16,
 					"string->number: radix must be 2, 8, 10, or 16, got %d", radix);
 	const char* p = s.c_str();
 	char* end = nullptr;
@@ -915,12 +915,12 @@ static Atom number_to_string(Atom* first, Atom* last)
 		display_to(first[0], os);
 		return box(std::move(os));
 	}
-	CITY_DIE_UNLESS(radix == 2 || radix == 8 || radix == 16,
+	JET_DIE_UNLESS(radix == 2 || radix == 8 || radix == 16,
 					"number->string: radix must be 2, 8, 10, or 16, got %d", radix);
-	CITY_DIE_UNLESS(is_integer(n), "number->string: non-decimal radix needs integer, got %g", n);
+	JET_DIE_UNLESS(is_integer(n), "number->string: non-decimal radix needs integer, got %g", n);
 	char buf[72];
 	std::to_chars_result r = std::to_chars(buf, buf + sizeof(buf), static_cast<long long>(n), radix);
-	CITY_DIE_UNLESS(r.ec == std::errc{}, "number->string: conversion failed");
+	JET_DIE_UNLESS(r.ec == std::errc{}, "number->string: conversion failed");
 	return box(std::string(buf, r.ptr));
 }
 
@@ -964,14 +964,14 @@ static Number char_to_integer(Atom c)
 static Atom integer_to_char(Atom n)
 {
 	Number v = slow_unbox<Number>(n);
-	CITY_DIE_UNLESS(is_integer(v) && v >= 0 && v <= 255, "integer->char: out of range %g", v);
+	JET_DIE_UNLESS(is_integer(v) && v >= 0 && v <= 255, "integer->char: out of range %g", v);
 	return box(static_cast<Character>(static_cast<uint8_t>(v)));
 }
 
 template <class Op>
 static Atom char_folding_pred(Atom* first, Atom* last)
 {
-	CITY_DIE_UNLESS(last - first >= 2, "char comparison expects at least 2 arguments");
+	JET_DIE_UNLESS(last - first >= 2, "char comparison expects at least 2 arguments");
 	bool result = true;
 	Character prev = slow_unbox<Character>(*first++);
 	while (first != last)
@@ -1073,8 +1073,8 @@ static Atom write_char(Atom c, Atom p)
 
 void init_port(Env& e)
 {
-	e.bind("input-port?", make_prim<is_type<city::Type::IPort>>());
-	e.bind("output-port?", make_prim<is_type<city::Type::OPort>>());
+	e.bind("input-port?", make_prim<is_type<jet::Type::IPort>>());
+	e.bind("output-port?", make_prim<is_type<jet::Type::OPort>>());
 
 	e.bind("close-input-port", make_prim<close_input_port>());
 	e.bind("close-output-port", make_prim<close_output_port>());
@@ -1083,17 +1083,17 @@ void init_port(Env& e)
 
 	e.bind("write-char", make_prim<write_char>());
 
-	e.bind("eof-object?", make_prim<is_type<city::Type::Eof>>());
+	e.bind("eof-object?", make_prim<is_type<jet::Type::Eof>>());
 }
 
 Atom make_eof()
 {
-	return Atom::make_immediate(city_tag::eof_tag);
+	return Atom::make_immediate(jet_tag::eof_tag);
 }
 
 IPortFile::IPortFile(std::string_view name) : f_(fopen(std::string(name).c_str(), "rb"))
 {
-	CITY_DIE_UNLESS(f_, "cannot open file `%.*s' for reading", static_cast<int>(name.size()), name.data());
+	JET_DIE_UNLESS(f_, "cannot open file `%.*s' for reading", static_cast<int>(name.size()), name.data());
 }
 
 IPortFile::~IPortFile()
@@ -1159,7 +1159,7 @@ size_t IPortMem::read_bytes(char* p, size_t n)
 
 OPortFile::OPortFile(std::string_view name) : f_(fopen(std::string(name).c_str(), "wb"))
 {
-	CITY_DIE_UNLESS(f_, "cannot open file `%.*s' for writing", static_cast<int>(name.size()), name.data());
+	JET_DIE_UNLESS(f_, "cannot open file `%.*s' for writing", static_cast<int>(name.size()), name.data());
 }
 
 OPortFile::~OPortFile()
@@ -1203,7 +1203,7 @@ void init_port_file(Env& e)
 static Atom slow_ref_field(Atom obj, Atom key)
 {
 	ObjShape* sh = shape_of(obj);
-	CITY_DIE_UNLESS(sh, "ref: unsupported receiver type");
+	JET_DIE_UNLESS(sh, "ref: unsupported receiver type");
 	return sh->slow_ref(obj, key);
 }
 
@@ -1211,7 +1211,7 @@ static Atom struct_ctor(Atom name, Atom names_list)
 {
 	std::string type_name = slow_unbox<Symbol>(name)->str();
 	std::vector<std::string> field_names;
-	for (Atom x = names_list; !is_type<city::Type::EmptyList>(x); x = cdr(x))
+	for (Atom x = names_list; !is_type<jet::Type::EmptyList>(x); x = cdr(x))
 	{
 		field_names.push_back(slow_unbox<Symbol>(car(x))->str());
 	}
@@ -1220,7 +1220,7 @@ static Atom struct_ctor(Atom name, Atom names_list)
 
 static Atom isa(Atom value, Atom type)
 {
-	if (!is_type<city::Type::Struct>(value) || !is_type<city::Type::StructType>(type))
+	if (!is_type<jet::Type::Struct>(value) || !is_type<jet::Type::StructType>(type))
 	{
 		return box(false);
 	}
@@ -1235,7 +1235,7 @@ void init_structs(Env& e)
 
 static bool is_procedure(Atom a)
 {
-	return is_type<city::Type::Procedure>(a) || is_type<city::Type::Primitive>(a);
+	return is_type<jet::Type::Procedure>(a) || is_type<jet::Type::Primitive>(a);
 }
 
 static Atom prim_check(Atom* first, Atom*)
@@ -1247,7 +1247,7 @@ static Atom prim_check(Atom* first, Atom*)
 		String& file = *unbox<String>(first[1]);
 		Number line = unbox<Number>(first[2]);
 		Number col = unbox<Number>(first[3]);
-		CITY_DIE("FAIL %s:%g:%g", file.c_str(), line, col);
+		JET_DIE("FAIL %s:%g:%g", file.c_str(), line, col);
 	}
 	return Atom{};
 }
@@ -1268,9 +1268,9 @@ void init_primitives(Env& e)
 	init_chars(e);
 	init_structs(e);
 	e.bind("ref", make_prim<slow_ref_field>());
-	e.bind("boolean?", make_prim<is_type<city::Type::Boolean>>());
-	e.bind("string?", make_prim<is_type<city::Type::String>>());
-	e.bind("char?", make_prim<is_type<city::Type::Character>>());
+	e.bind("boolean?", make_prim<is_type<jet::Type::Boolean>>());
+	e.bind("string?", make_prim<is_type<jet::Type::String>>());
+	e.bind("char?", make_prim<is_type<jet::Type::Character>>());
 	e.bind("procedure?", make_prim<is_procedure>());
 	e.bind("%check", make_prim<prim_check>(exactly(4)));
 }

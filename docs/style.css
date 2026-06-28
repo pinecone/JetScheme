@@ -27,7 +27,7 @@
   :root { color-scheme: dark; }
 }
 
-/* Tokyo Night (night variant) palette + CityScheme tokens */
+/* Tokyo Night (night variant) palette + JetScheme tokens */
 :root {
   color-scheme: dark;
   --bg-darkest:     #0c0e14;
@@ -130,13 +130,6 @@ h1 {
   margin: 0 0 var(--sp-7) 0;
   text-align: center;
   animation: h1-pulse 3.4s ease-in-out infinite alternate;
-}
-
-.glyph {
-  text-align: center;
-  font-size: clamp(7rem, 18vw, 11rem);
-  line-height: 1;
-  margin: 0 0 var(--sp-3) 0;
 }
 
 @keyframes h1-pulse {
@@ -258,11 +251,11 @@ li {
 }
 
 li::before {
-  content: "🌃";
+  content: "▸";
+  color: var(--blue);
   position: absolute;
   left: 0;
-  top: 0.28em;
-  font-size: 0.78em;
+  top: 0;
 }
 
 #optimizations li::before {

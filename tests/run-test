@@ -2,5 +2,5 @@
 
 file=$1
 shift
-CITY=${CITY:-../build/city}
-"$CITY" run $file $@ > /dev/null 2>&1
+JET=${JET:-../build/jet}
+"$JET" run $file $@ > /dev/null 2>&1

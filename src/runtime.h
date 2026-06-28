@@ -35,7 +35,7 @@ void init_lists(Env& e);
 template <class Out>
 Out list_to_args(Atom list, Out out)
 {
-	for (Atom x = list; !is_type<city::Type::EmptyList>(x); x = cdr(x))
+	for (Atom x = list; !is_type<jet::Type::EmptyList>(x); x = cdr(x))
 	{
 		*out++ = car(x);
 	}
@@ -115,7 +115,7 @@ struct Struct
 	static Struct* alloc(StructType* type, uint32_t n_fields)
 	{
 		size_t total = sizeof(Struct) + static_cast<size_t>(n_fields) * sizeof(Atom);
-		void* mem = g_gc->alloc(total, city_tag::struct_);
+		void* mem = g_gc->alloc(total, jet_tag::struct_);
 		Struct* obj = static_cast<Struct*>(mem);
 		new (obj) Struct(type, n_fields);
 		return obj;
@@ -136,7 +136,7 @@ struct box_unbox_t<Struct>
 {
 	static Atom box(StructType* type, uint32_t n_fields)
 	{
-		return Atom::make_tagged(city_tag::struct_, Struct::alloc(type, n_fields));
+		return Atom::make_tagged(jet_tag::struct_, Struct::alloc(type, n_fields));
 	}
 
 	static Struct* unbox(Atom x) { return static_cast<Struct*>(x.as_ptr()); }
@@ -161,12 +161,12 @@ inline void check_arity(Arity a, size_t actual)
 {
 	if (Arity::Exactly == a.how)
 	{
-		CITY_DIE_UNLESS(actual == a.expected, "procedure expects exactly %zu argument(s), given %zu",
+		JET_DIE_UNLESS(actual == a.expected, "procedure expects exactly %zu argument(s), given %zu",
 						a.expected, actual);
 	}
 	else if (Arity::AtLeast == a.how)
 	{
-		CITY_DIE_UNLESS(actual >= a.expected, "procedure expects at least %zu argument(s), given %zu",
+		JET_DIE_UNLESS(actual >= a.expected, "procedure expects at least %zu argument(s), given %zu",
 						a.expected, actual);
 	}
 }
@@ -182,9 +182,9 @@ struct PrimTraits<R (*)(A...)>
 };
 
 template <auto fn>
-CITY_PRESERVE_NONE inline void prim_stub_varargs(VM_OP_PARAMS)
+JET_PRESERVE_NONE inline void prim_stub_varargs(VM_OP_PARAMS)
 {
-	CITY_PROFILE_PRIM;
+	JET_PROFILE_PRIM;
 	Atom result = fn(args, stack_top);
 	stack_top = stack_base + result_slot;
 	*stack_top++ = result;
@@ -192,9 +192,9 @@ CITY_PRESERVE_NONE inline void prim_stub_varargs(VM_OP_PARAMS)
 }
 
 template <auto fn>
-CITY_PRESERVE_NONE inline void prim_stub_typed(VM_OP_PARAMS)
+JET_PRESERVE_NONE inline void prim_stub_typed(VM_OP_PARAMS)
 {
-	CITY_PROFILE_PRIM;
+	JET_PROFILE_PRIM;
 	using T = PrimTraits<decltype(fn)>;
 	Atom result = [&]<size_t... Is>(std::index_sequence<Is...>)
 	{
@@ -257,7 +257,7 @@ inline bool is_positive_integer(Atom num)
 void init_number(Env& env);
 
 template <class op_t>
-CITY_ALWAYS_INLINE inline Atom fold(Atom* first, Atom* last, Number result)
+JET_ALWAYS_INLINE inline Atom fold(Atom* first, Atom* last, Number result)
 {
 	while (first != last)
 	{
@@ -267,21 +267,21 @@ CITY_ALWAYS_INLINE inline Atom fold(Atom* first, Atom* last, Number result)
 }
 
 template <class op_t>
-CITY_ALWAYS_INLINE inline Atom folding_op(Atom* first, Atom* last)
+JET_ALWAYS_INLINE inline Atom folding_op(Atom* first, Atom* last)
 {
 	Number result = slow_unbox<Number>(*first++);
 	return fold<op_t>(first, last, result);
 }
 
 template <class op_t, int init>
-CITY_ALWAYS_INLINE inline Atom folding_op(Atom* first, Atom* last)
+JET_ALWAYS_INLINE inline Atom folding_op(Atom* first, Atom* last)
 {
 	Number result = last - first < 2 ? init : slow_unbox<Number>(*first++);
 	return fold<op_t>(first, last, result);
 }
 
 template <class op_t>
-CITY_ALWAYS_INLINE inline Atom folding_pred(Atom* first, Atom* last)
+JET_ALWAYS_INLINE inline Atom folding_pred(Atom* first, Atom* last)
 {
 	bool result = true;
 	while (first != last)
@@ -354,7 +354,7 @@ void init_sys(Env& e);
 
 inline bool is_true(Atom a)
 {
-	return is_type<city::Type::Boolean>(a) ? unbox<bool>(a) : true;
+	return is_type<jet::Type::Boolean>(a) ? unbox<bool>(a) : true;
 }
 
 class Port

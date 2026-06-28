@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="dark">
-<title>CityScheme</title>
+<title>JetScheme</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8C%83%3C/text%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -15,13 +15,12 @@
 <main>
 
 <header class="hero">
-  <div class="glyph">🌃</div>
-  <h1>CityScheme</h1>
+  <h1>JetScheme</h1>
   <nav class="hero-nav">
-    <a href="https://github.com/pinecone/CityScheme">source ↗</a><span class="sep">|</span><a href="#docs">docs ↓</a>
+    <a href="https://github.com/pinecone/JetScheme">source ↗</a><span class="sep">|</span><a href="#docs">docs ↓</a>
   </nav>
   <p class="tagline">A <a href="https://en.wikipedia.org/wiki/Scheme_(programming_language)">Scheme</a> interpreter
-    written in C++ that <a href="#benchmarks">tries to go fast</a>. (The "C" in "City" may be pronounced "sh" as needed.)</p>
+    written in C++ that <a href="#benchmarks">tries to go fast</a>.</p>
 </header>
 
 <section id="language">
@@ -35,10 +34,10 @@
 <section id="usage">
   <h2>How to run</h2>
   <p>Needs <code>make</code> and a C++20 <code>clang</code>.</p>
-<pre><code><span class="cmd">git</span> clone https://github.com/pinecone/CityScheme.git
-<span class="cmd">cd</span> CityScheme
+<pre><code><span class="cmd">git</span> clone https://github.com/pinecone/JetScheme.git
+<span class="cmd">cd</span> JetScheme
 <span class="cmd">make</span> test                   <span class="c"># build &amp; run tests</span>
-<span class="cmd">build/city</span> &lt;file.ss&gt;        <span class="c"># run file.ss</span></code></pre>
+<span class="cmd">build/jet</span> &lt;file.ss&gt;        <span class="c"># run file.ss</span></code></pre>
   <p>Benchmarks:</p>
 <pre><code><span class="cmd">make</span> bench                  <span class="c"># in-language microbenchmarks</span>
 <span class="cmd">make</span> cross-bench            <span class="c"># cross-language benchmarks</span></code></pre>
@@ -65,7 +64,7 @@
       <tr><td>splay</td><td>1.56×</td><td>1.30×</td><td class="sep">1.93×</td><td>1.00×</td></tr>
     </tbody>
     <tfoot>
-      <tr><th>overall city is…</th><td>1.41× faster</td><td>2.07× faster</td><td class="sep">1.44× faster</td><td>1.59× faster</td></tr>
+      <tr><th>overall jet is…</th><td>1.41× faster</td><td>2.07× faster</td><td class="sep">1.44× faster</td><td>1.59× faster</td></tr>
     </tfoot>
   </table>
   </div>
@@ -73,7 +72,7 @@
 
 <section id="optimizations">
   <h2>Impl</h2>
-  <p><strong>CityScheme</strong> leans heavily on techniques described in:</p>
+  <p><strong>JetScheme</strong> leans heavily on techniques described in:</p>
   <ul>
     <li><strong>Tail-threaded dispatch</strong> <a class="cite" href="https://dl.acm.org/doi/10.1145/362248.362270">(Bell, 1973)</a> — each opcode is its own small function; each function ends by tail-calling the next opcode's function directly. There's no central dispatch loop and no callee-save spills between opcodes; hot VM state stays in registers across the whole run.</li>
     <li><strong>Inline caching</strong> <a class="cite" href="https://dl.acm.org/doi/10.1145/800017.800542">(Deutsch &amp; Schiffman, 1984)</a> — on the first time through a call site, the slow path patches the opcode in place to point at a specialized fast version of itself. Subsequent passes through the same site skip the lookup, key compare, and type check entirely.</li>
@@ -88,12 +87,12 @@
   <h2>Docs</h2>
 
   <h3>Synopsis</h3>
-<pre><code><span class="cmd">city</span> &lt;file.ss&gt; [args...]
-<span class="cmd">city</span> run &lt;file.ss&gt; [args...]
-<span class="cmd">city</span> compile [&lt;file.ss&gt; | -]
-<span class="cmd">city</span> exec [&lt;file.bc&gt; | -] [args...]
-<span class="cmd">city</span> disasm [&lt;file.ss&gt; | &lt;file.bc&gt; | -]
-<span class="cmd">city</span> --help</code></pre>
+<pre><code><span class="cmd">jet</span> &lt;file.ss&gt; [args...]
+<span class="cmd">jet</span> run &lt;file.ss&gt; [args...]
+<span class="cmd">jet</span> compile [&lt;file.ss&gt; | -]
+<span class="cmd">jet</span> exec [&lt;file.bc&gt; | -] [args...]
+<span class="cmd">jet</span> disasm [&lt;file.ss&gt; | &lt;file.bc&gt; | -]
+<span class="cmd">jet</span> --help</code></pre>
 
   <h3>Deviations from R7RS-small</h3>
   <p>The language tracks R7RS-small with the following deviations.</p>
@@ -117,7 +116,7 @@
   <p><strong><code>argv</code>.</strong> Vector of strings holding the script's command-line arguments (excluding the binary and script path).</p>
 
   <h3>Files</h3>
-  <p><code>$CITY_PRELUDE/lib/prelude.ss</code> is the bundled prelude, auto-loaded unless <code>--no-prelude</code> is given.</p>
+  <p><code>$JET_PRELUDE/lib/prelude.ss</code> is the bundled prelude, auto-loaded unless <code>--no-prelude</code> is given.</p>
 </section>
 
 </main>

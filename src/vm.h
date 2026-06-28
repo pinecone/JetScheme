@@ -17,29 +17,29 @@
 #include <vector>
 
 #if __has_cpp_attribute(clang::preserve_none)
-#define CITY_PRESERVE_NONE [[clang::preserve_none]]
+#define JET_PRESERVE_NONE [[clang::preserve_none]]
 #else
-#define CITY_PRESERVE_NONE
+#define JET_PRESERVE_NONE
 #endif
 
 #if __has_cpp_attribute(gnu::always_inline)
-#define CITY_ALWAYS_INLINE [[gnu::always_inline]]
+#define JET_ALWAYS_INLINE [[gnu::always_inline]]
 #else
-#define CITY_ALWAYS_INLINE
+#define JET_ALWAYS_INLINE
 #endif
 
 #if __has_cpp_attribute(gnu::noinline)
-#define CITY_NOINLINE [[gnu::noinline]]
+#define JET_NOINLINE [[gnu::noinline]]
 #else
-#define CITY_NOINLINE
+#define JET_NOINLINE
 #endif
 
 #if __has_cpp_attribute(clang::musttail)
-#define CITY_MUSTTAIL [[clang::musttail]]
+#define JET_MUSTTAIL [[clang::musttail]]
 #elif __has_cpp_attribute(gnu::musttail)
-#define CITY_MUSTTAIL [[gnu::musttail]]
+#define JET_MUSTTAIL [[gnu::musttail]]
 #else
-#define CITY_MUSTTAIL
+#define JET_MUSTTAIL
 #endif
 
 struct Arity
@@ -90,7 +90,7 @@ struct Gc
 	std::vector<ObjEntry> objects;
 	uint64_t* live_bits;
 	uint64_t* mark_bits;
-	void* freelist[city_tag::TAG_MAX][N_BUCKETS] = {};
+	void* freelist[jet_tag::TAG_MAX][N_BUCKETS] = {};
 	uint32_t alloc_since_gc = 0;
 	uint32_t gc_threshold = 256;
 
@@ -125,18 +125,18 @@ T* gc_alloc(int tag, Args&&... args)
 	return obj;
 }
 
-constexpr int type_to_tag(city::Type t)
+constexpr int type_to_tag(jet::Type t)
 {
 	switch (t)
 	{
 		// clang-format off
-#define X(name, tag, _cpp) case city::Type::name: return city_tag::tag;
-		CITY_IMM_TYPES(X)
-		CITY_HEAP_TYPES(X)
+#define X(name, tag, _cpp) case jet::Type::name: return jet_tag::tag;
+		JET_IMM_TYPES(X)
+		JET_HEAP_TYPES(X)
 #undef X
 		// clang-format on
-		case city::Type::Eof:
-			return city_tag::eof_tag;
+		case jet::Type::Eof:
+			return jet_tag::eof_tag;
 		default:
 			return 0;
 	}
@@ -267,7 +267,7 @@ struct Lambda
 	static Lambda* alloc(Code* code, Arity arity, uint16_t n_locals, uint16_t n_captures)
 	{
 		size_t total = sizeof(Lambda) + static_cast<size_t>(n_captures) * sizeof(Atom);
-		void* mem = g_gc->alloc(total, city_tag::procedure);
+		void* mem = g_gc->alloc(total, jet_tag::procedure);
 		Lambda* obj = static_cast<Lambda*>(mem);
 		new (obj) Lambda(code, arity, n_locals, n_captures);
 		return obj;
@@ -288,7 +288,7 @@ struct box_unbox_t<Lambda>
 {
 	static Atom box(Code* code, Arity arity, uint16_t n_locals, uint16_t n_captures)
 	{
-		return Atom::make_tagged(city_tag::procedure, Lambda::alloc(code, arity, n_locals, n_captures));
+		return Atom::make_tagged(jet_tag::procedure, Lambda::alloc(code, arity, n_locals, n_captures));
 	}
 
 	static Lambda* unbox(Atom x) { return static_cast<Lambda*>(x.as_ptr()); }
@@ -307,7 +307,7 @@ struct VmState
 #define VM_OP_PARAMS                                                                                         \
 	VmState &s, Frame *frame, Code *pc, Atom *stack_top, Atom callee, Atom *args, size_t result_slot,        \
 		Atom *stack_base, size_t frame_base
-using VmOp = void (*)(VM_OP_PARAMS) CITY_PRESERVE_NONE;
+using VmOp = void (*)(VM_OP_PARAMS) JET_PRESERVE_NONE;
 static_assert(sizeof(VmOp) == VM_OP_SLOT_SIZE);
 
 #define VM_OP_ARGS s, frame, pc, stack_top, callee, args, result_slot, stack_base, frame_base
@@ -336,17 +336,17 @@ inline ObjShape* shape_of(Atom a)
 	{                                                                                                        \
 		VmOp h = *reinterpret_cast<VmOp*>(pc);                                                               \
 		pc += OPCODE_SIZE;                                                                                   \
-		CITY_PROFILE_OP(pc[-1]);                                                                             \
-		CITY_TRACE_STEP(s, frame, pc, stack_top);                                                            \
-		CITY_MUSTTAIL return h(VM_OP_ARGS);                                                                  \
+		JET_PROFILE_OP(pc[-1]);                                                                             \
+		JET_TRACE_STEP(s, frame, pc, stack_top);                                                            \
+		JET_MUSTTAIL return h(VM_OP_ARGS);                                                                  \
 	} while (0)
 
-#define CITY_GC_CHECK()                                                                                      \
+#define JET_GC_CHECK()                                                                                      \
 	do                                                                                                       \
 	{                                                                                                        \
 		if (g_gc->should_collect()) [[unlikely]]                                                             \
 		{                                                                                                    \
-			CITY_MUSTTAIL return gc_then_dispatch(VM_OP_ARGS);                                               \
+			JET_MUSTTAIL return gc_then_dispatch(VM_OP_ARGS);                                               \
 		}                                                                                                    \
 	} while (0)
 
