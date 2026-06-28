@@ -70,15 +70,15 @@ constexpr bool is_nary(Arity& a)
 	return Arity::NAry == a.how;
 }
 
-struct ObjEntry
-{
-	uint32_t cell_idx;
-	uint32_t n_cells;
-	uint8_t tag;
-};
-
 struct Gc
 {
+	struct ObjEntry
+	{
+		uint32_t cell_idx;
+		uint32_t n_cells;
+		uint8_t tag;
+	};
+
 	static constexpr size_t CELL_SIZE = 16;
 	static constexpr size_t ARENA_SIZE = 1ULL << 30;
 	static constexpr size_t TOTAL_CELLS = ARENA_SIZE / CELL_SIZE;
