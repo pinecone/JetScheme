@@ -414,11 +414,15 @@ struct Compiler
 	std::vector<std::unordered_map<std::string_view, size_t>> lambda_name_index_;
 	Expr* toplevel_lambda_ = nullptr;
 
-	// Lambdas in resolution order; freeze runs after the inliner mutates
-	// upvalue/capture state, so freeze is deferred to a single bulk pass.
+	// Lambdas in resolution order; freeze walks this list to materialize each
+	// lambda's capture and upvalue slices.
 	std::vector<Expr*> all_lambdas_;
-	std::vector<Expr*> inline_decisions_;
-	std::vector<Expr*> const_fold_decisions_;
+
+	// Var/set nodes synthesized by the inline rewrite whose name must bind to a
+	// top-level slot regardless of any same-named local in scope at the splice
+	// site. Inlined bodies come from top-level lambdas, so their free variables
+	// are all top-level; forcing the lookup keeps inlining hygienic.
+	std::unordered_set<Expr*> force_toplevel_;
 
 	bool no_inline_ = false;
 
@@ -446,6 +450,7 @@ struct Compiler
 	Expr* expand_begin(Expr* expr);
 
 	std::optional<ResolvedBinding> lookup_name(std::string_view name);
+	std::optional<ResolvedBinding> lookup_ref(Expr* node, std::string_view name);
 	void push_lambda_scope(Expr* lambda);
 	void pop_lambda_scope();
 	Expr* binding_lambda(ResolvedBinding b);
@@ -453,9 +458,10 @@ struct Compiler
 	void record_ref(ResolvedBinding b);
 	void record_set(ResolvedBinding b, bool is_init, Expr* value);
 	void resolve_bindings(Program& program);
+	void resolve_pass(Program& program);
 	void resolve_bindings_in(Expr* expr);
 	void freeze_lambda(Expr* lambda);
-	void run_inliner();
+	void run_inline_rewrite(Program& program);
 
 	void compute_tail(Expr* expr, bool in_tail);
 
@@ -2263,11 +2269,6 @@ namespace
 
 				case ExprKind::VarRef:
 				{
-					if (Expr* fold = db.const_fold_decisions_[expr->id])
-					{
-						emit_expr(fold);
-						break;
-					}
 					emit_var_ref_or_set(db.binding(expr), false);
 					break;
 				}
@@ -2311,24 +2312,6 @@ namespace
 						}
 					}
 
-					Expr* inlined_callee = db.inline_decisions_[expr->id];
-					if (inlined_callee)
-					{
-						bool already_inlining = false;
-						for (InlineCtx& c : inline_ctxs)
-						{
-							if (c.inner_lambda == inlined_callee)
-							{
-								already_inlining = true;
-								break;
-							}
-						}
-						if (!already_inlining)
-						{
-							emit_call_inline(inlined_callee, expr->call.args, tail);
-							break;
-						}
-					}
 					if (proc->kind == ExprKind::Lambda && !proc->lambda.is_variadic &&
 						proc->lambda.params.size() == expr->call.args.size())
 					{
@@ -2399,7 +2382,7 @@ namespace
 							Expr* obj_expr = expr->call.args[0];
 							Expr* key_expr = expr->call.args[1];
 							bool ck = is_literal_key(key_expr);
-							if (obj_expr->kind == ExprKind::VarRef && !db.const_fold_decisions_[obj_expr->id])
+							if (obj_expr->kind == ExprKind::VarRef)
 							{
 								Expr* current = outer_lambdas.back();
 								ResolvedBinding ob = db.binding(obj_expr);
@@ -2609,7 +2592,7 @@ namespace
 					Expr* key_expr = expr->set_ref.key;
 					Expr* val_expr = expr->set_ref.value;
 					bool ck = is_literal_key(key_expr);
-					if (obj_expr->kind == ExprKind::VarRef && !db.const_fold_decisions_[obj_expr->id])
+					if (obj_expr->kind == ExprKind::VarRef)
 					{
 						Expr* current = outer_lambdas.back();
 						ResolvedBinding ob = db.binding(obj_expr);
@@ -3391,6 +3374,23 @@ std::optional<ResolvedBinding> Compiler::lookup_name(std::string_view name)
 	return std::nullopt;
 }
 
+// Like lookup_name, but nodes the inline rewrite marked must bind to the
+// top-level scope, skipping any same-named local at the splice site.
+std::optional<ResolvedBinding> Compiler::lookup_ref(Expr* node, std::string_view name)
+{
+	if (force_toplevel_.count(node))
+	{
+		std::unordered_map<std::string_view, size_t>& idx = lambda_name_index_[0];
+		std::unordered_map<std::string_view, size_t>::iterator it = idx.find(name);
+		if (it != idx.end())
+		{
+			return ResolvedBinding{.lambda = toplevel_lambda_, .breadth = it->second};
+		}
+		return std::nullopt;
+	}
+	return lookup_name(name);
+}
+
 void Compiler::push_lambda_scope(Expr* lambda)
 {
 	lambdas_.push_back(lambda);
@@ -3508,138 +3508,184 @@ namespace
 		return n;
 	}
 
-	struct InlinerWalk
+	// Produces a rewritten copy of the AST: a call to an inlinable top-level
+	// lambda becomes an immediately-applied copy of that lambda --
+	// ((lambda (params) body) args) -- which the IIFE codegen path then splices.
+	// A reference to a const-bound top-level slot becomes the literal. Every
+	// node is a fresh deep copy with a new id; the caller re-resolves the
+	// result, so captures, upvalues, and tail position are computed normally.
+	struct InlinePass
 	{
 		Compiler& db;
 		std::vector<Expr*>& lambda_candidates;
 		std::vector<Expr*>& const_candidates;
-		std::vector<std::vector<Expr*>>& caller_outer_lambdas;
-		std::vector<Expr*> outer_lambdas;
+		std::unordered_set<Expr*>& candidate_lambdas;
+		std::unordered_set<Expr*> active;
 
-		void walk(Expr* e)
+		Slice<Expr*> clone_slice(Slice<Expr*> src)
 		{
-			if (!e)
+			Expr** data = db.arena.alloc_array<Expr*>(src.size());
+			for (uint32_t i = 0; i < src.size(); ++i)
 			{
-				return;
+				data[i] = clone(src[i]);
 			}
-			switch (e->kind)
+			return {data, src.size()};
+		}
+
+		Slice<std::string_view> copy_params(Slice<std::string_view> src)
+		{
+			std::string_view* data = db.arena.alloc_array<std::string_view>(src.size());
+			for (uint32_t i = 0; i < src.size(); ++i)
 			{
-				case ExprKind::Lambda:
-				{
-					outer_lambdas.push_back(e);
-					for (uint32_t i = 0; i < e->lambda.body.size(); ++i)
-					{
-						walk(e->lambda.body[i]);
-					}
-					outer_lambdas.pop_back();
+				data[i] = src[i];
+			}
+			return {data, src.size()};
+		}
+
+		Expr* clone(Expr* orig)
+		{
+			Expr* e = db.arena.alloc<Expr>();
+			e->kind = orig->kind;
+			e->id = db.next_expr_id_++;
+			e->loc = orig->loc;
+			switch (orig->kind)
+			{
+				case ExprKind::NumberLit:
+					e->number_lit = orig->number_lit;
 					break;
-				}
+				case ExprKind::StringLit:
+					e->string_lit = orig->string_lit;
+					break;
+				case ExprKind::BooleanLit:
+					e->boolean_lit = orig->boolean_lit;
+					break;
+				case ExprKind::CharacterLit:
+					e->character_lit = orig->character_lit;
+					break;
+				case ExprKind::SymbolLit:
+					e->symbol_lit = orig->symbol_lit;
+					break;
+				case ExprKind::UnknownLit:
+					e->unknown_lit = orig->unknown_lit;
+					break;
+				case ExprKind::PrimRef:
+					e->prim_ref = orig->prim_ref;
+					break;
 				case ExprKind::VarRef:
 				{
-					ResolvedBinding rb = db.bindings_[e->id];
-					if (rb.lambda == nullptr)
+					ResolvedBinding rb = db.bindings_[orig->id];
+					if (rb.lambda == db.toplevel_lambda_ && rb.breadth < const_candidates.size() &&
+						const_candidates[rb.breadth])
 					{
-						break;
+						return clone(const_candidates[rb.breadth]);
 					}
-					if (rb.lambda != db.toplevel_lambda_)
+					e->var_ref.name = orig->var_ref.name;
+					if (rb.lambda == db.toplevel_lambda_)
 					{
-						break;
+						db.force_toplevel_.insert(e);
 					}
-					if (rb.breadth >= const_candidates.size())
-					{
-						break;
-					}
-					Expr* lit = const_candidates[rb.breadth];
-					if (!lit)
-					{
-						break;
-					}
-					db.const_fold_decisions_[e->id] = lit;
 					break;
 				}
 				case ExprKind::Call:
 				{
-					walk(e->call.proc);
-					for (uint32_t i = 0; i < e->call.args.size(); ++i)
+					Expr* callee = inline_target(orig);
+					if (callee)
 					{
-						walk(e->call.args[i]);
-					}
-					Expr* proc = e->call.proc;
-					if (proc->kind != ExprKind::VarRef)
-					{
+						// Clone the callee lambda (its body is cloned with the
+						// callee marked active, so recursive calls stay calls).
+						e->call.args = clone_slice(orig->call.args);
+						e->call.proc = clone(callee);
 						break;
 					}
-					ResolvedBinding rb = db.bindings_[proc->id];
-					if (rb.lambda == nullptr)
-					{
-						break;
-					}
-					if (rb.lambda != db.toplevel_lambda_)
-					{
-						break;
-					}
-					if (rb.breadth >= lambda_candidates.size())
-					{
-						break;
-					}
-					Expr* callee = lambda_candidates[rb.breadth];
-					if (!callee)
-					{
-						break;
-					}
-					if (callee->lambda.params.size() != e->call.args.size())
-					{
-						break;
-					}
-					bool on_outer_lambdas = false;
-					for (Expr* lam : outer_lambdas)
-					{
-						if (lam == callee)
-						{
-							on_outer_lambdas = true;
-							break;
-						}
-					}
-					if (on_outer_lambdas)
-					{
-						break;
-					}
-					db.inline_decisions_[e->id] = callee;
-					caller_outer_lambdas[e->id] = outer_lambdas;
+					e->call.proc = clone(orig->call.proc);
+					e->call.args = clone_slice(orig->call.args);
 					break;
 				}
 				case ExprKind::Apply:
-					walk(e->apply.proc);
-					walk(e->apply.args);
+					e->apply.proc = clone(orig->apply.proc);
+					e->apply.args = clone(orig->apply.args);
 					break;
-				case ExprKind::If:
-					walk(e->if_.test);
-					walk(e->if_.consequent);
-					walk(e->if_.alternate);
-					break;
-				case ExprKind::Begin:
-					for (uint32_t i = 0; i < e->begin.body.size(); ++i)
+				case ExprKind::Lambda:
+				{
+					bool is_candidate = candidate_lambdas.count(orig) != 0;
+					if (is_candidate)
 					{
-						walk(e->begin.body[i]);
+						active.insert(orig);
+					}
+					e->lambda.params = copy_params(orig->lambda.params);
+					e->lambda.is_variadic = orig->lambda.is_variadic;
+					e->lambda.names = {};
+					e->lambda.captured_locals = {};
+					e->lambda.mutated_locals = {};
+					e->lambda.reassigned_after_init_locals = {};
+					e->lambda.upvalues = {};
+					e->lambda.body = clone_slice(orig->lambda.body);
+					if (is_candidate)
+					{
+						active.erase(orig);
 					}
 					break;
+				}
 				case ExprKind::SetBang:
-					walk(e->set_bang.value);
+				{
+					e->set_bang.name = orig->set_bang.name;
+					e->set_bang.is_init = orig->set_bang.is_init;
+					e->set_bang.value = clone(orig->set_bang.value);
+					ResolvedBinding rb = db.bindings_[orig->id];
+					if (rb.lambda == db.toplevel_lambda_)
+					{
+						db.force_toplevel_.insert(e);
+					}
 					break;
+				}
 				case ExprKind::SetRef:
-					walk(e->set_ref.obj);
-					walk(e->set_ref.key);
-					walk(e->set_ref.value);
+					e->set_ref.obj = clone(orig->set_ref.obj);
+					e->set_ref.key = clone(orig->set_ref.key);
+					e->set_ref.value = clone(orig->set_ref.value);
+					break;
+				case ExprKind::If:
+					e->if_.test = clone(orig->if_.test);
+					e->if_.consequent = clone(orig->if_.consequent);
+					e->if_.alternate = orig->if_.alternate ? clone(orig->if_.alternate) : nullptr;
+					break;
+				case ExprKind::Begin:
+					e->begin.body = clone_slice(orig->begin.body);
 					break;
 				default:
-					break;
+					JET_DIE("inline rewrite: unhandled ExprKind %d", static_cast<int>(orig->kind));
 			}
+			return e;
+		}
+
+		// Returns the candidate lambda this call should be inlined to, or null.
+		Expr* inline_target(Expr* call)
+		{
+			Expr* proc = call->call.proc;
+			if (proc->kind != ExprKind::VarRef)
+			{
+				return nullptr;
+			}
+			ResolvedBinding rb = db.bindings_[proc->id];
+			if (rb.lambda != db.toplevel_lambda_ || rb.breadth >= lambda_candidates.size())
+			{
+				return nullptr;
+			}
+			Expr* callee = lambda_candidates[rb.breadth];
+			if (!callee || callee->lambda.params.size() != call->call.args.size())
+			{
+				return nullptr;
+			}
+			if (active.count(callee))
+			{
+				return nullptr;
+			}
+			return callee;
 		}
 	};
 
 } // namespace
 
-void Compiler::run_inliner()
+void Compiler::run_inline_rewrite(Program& program)
 {
 	LambdaScope& tl = lambda_scopes_[toplevel_lambda_];
 	uint32_t n_top = toplevel_lambda_->lambda.names.size();
@@ -3676,76 +3722,51 @@ void Compiler::run_inliner()
 		}
 	}
 
-	std::vector<std::vector<Expr*>> caller_outer_lambdas(next_expr_id_ + 1);
-	InlinerWalk w{
+	std::unordered_set<Expr*> candidate_lambdas;
+	for (Expr* cand : lambda_candidates)
+	{
+		if (cand)
+		{
+			candidate_lambdas.insert(cand);
+		}
+	}
+
+	InlinePass pass{
 		.db = *this,
 		.lambda_candidates = lambda_candidates,
 		.const_candidates = const_candidates,
-		.caller_outer_lambdas = caller_outer_lambdas,
-		.outer_lambdas = {},
+		.candidate_lambdas = candidate_lambdas,
+		.active = {},
 	};
-	w.outer_lambdas.push_back(toplevel_lambda_);
-	for (Expr* form : ast_->forms)
+	for (uint32_t i = 0; i < program.forms.size(); ++i)
 	{
-		w.walk(form);
+		program.forms[i] = pass.clone(program.forms[i]);
 	}
-	w.outer_lambdas.pop_back();
+}
 
-	bool changed = true;
-	while (changed)
+// One full binding-resolution sweep over the program: fills bindings_ and
+// rebuilds the per-lambda scopes. Called again after the inline rewrite to
+// resolve the freshly cloned nodes.
+void Compiler::resolve_pass(Program& program)
+{
+	bindings_.assign(next_expr_id_ + 1, ResolvedBinding{});
+	lambda_scopes_.clear();
+	all_lambdas_.clear();
+
+	push_lambda_scope(toplevel_lambda_);
+	for (Expr* form : program.forms)
 	{
-		changed = false;
-		for (ExprId call_id = 0; call_id < inline_decisions_.size(); ++call_id)
-		{
-			Expr* callee = inline_decisions_[call_id];
-			if (!callee)
-			{
-				continue;
-			}
-			std::vector<Expr*>& caller_outers = caller_outer_lambdas[call_id];
-			std::vector<UpvalueRef>& callee_ups = lambda_scopes_[callee].upvalues;
-			for (UpvalueRef u : callee_ups)
-			{
-				std::vector<bool>& cap = lambda_scopes_[u.owner].captured;
-				if (cap.size() <= u.breadth)
-				{
-					cap.resize(u.breadth + 1, false);
-				}
-				if (!cap[u.breadth])
-				{
-					cap[u.breadth] = true;
-					changed = true;
-				}
-				uint64_t key = (static_cast<uint64_t>(u.owner->id) << 32) | u.breadth;
-				for (size_t i = caller_outers.size(); i-- > 0;)
-				{
-					Expr* lam = caller_outers[i];
-					if (lam == u.owner)
-					{
-						break;
-					}
-					LambdaScope& sc = lambda_scopes_[lam];
-					if (sc.upvalue_keys.insert(key).second)
-					{
-						sc.upvalues.push_back(u);
-						changed = true;
-					}
-				}
-			}
-		}
+		resolve_bindings_in(form);
 	}
+	pop_lambda_scope();
+	all_lambdas_.push_back(toplevel_lambda_);
 }
 
 void Compiler::resolve_bindings(Program& program)
 {
-	bindings_.assign(next_expr_id_ + 1, ResolvedBinding{});
-	tail_cache_.assign(next_expr_id_ + 1, false);
-	inline_decisions_.assign(next_expr_id_ + 1, nullptr);
-	const_fold_decisions_.assign(next_expr_id_ + 1, nullptr);
-
 	// Synthesize a toplevel lambda. Its names are the hoisted top-level
 	// binding names, in source order; nested lambdas reach those bindings as
-	// upvalues just like any other.
+	// upvalues just like any other. It is reused across both resolve passes.
 	toplevel_lambda_ = arena.alloc<Expr>();
 	toplevel_lambda_->kind = ExprKind::Lambda;
 	toplevel_lambda_->id = next_expr_id_++;
@@ -3755,17 +3776,12 @@ void Compiler::resolve_bindings(Program& program)
 	toplevel_lambda_->lambda.body = {};
 	toplevel_lambda_->lambda.names = make_names_slice(arena, toplevel_names_.ordered);
 
-	push_lambda_scope(toplevel_lambda_);
-	for (Expr* form : program.forms)
-	{
-		resolve_bindings_in(form);
-	}
-	pop_lambda_scope();
-	all_lambdas_.push_back(toplevel_lambda_);
+	resolve_pass(program);
 
 	if (!no_inline_)
 	{
-		run_inliner();
+		run_inline_rewrite(program);
+		resolve_pass(program);
 	}
 
 	for (Expr* L : all_lambdas_)
@@ -3773,6 +3789,7 @@ void Compiler::resolve_bindings(Program& program)
 		freeze_lambda(L);
 	}
 
+	tail_cache_.assign(next_expr_id_ + 1, false);
 	for (Expr* form : program.forms)
 	{
 		compute_tail(form, false);
@@ -3793,7 +3810,7 @@ void Compiler::resolve_bindings_in(Expr* expr)
 
 		case ExprKind::VarRef:
 		{
-			std::optional<ResolvedBinding> b = lookup_name(expr->var_ref.name);
+			std::optional<ResolvedBinding> b = lookup_ref(expr, expr->var_ref.name);
 			if (b)
 			{
 				bindings_[expr->id] = *b;
@@ -3845,7 +3862,7 @@ void Compiler::resolve_bindings_in(Expr* expr)
 		case ExprKind::SetBang:
 		{
 			resolve_bindings_in(expr->set_bang.value);
-			std::optional<ResolvedBinding> b = lookup_name(expr->set_bang.name);
+			std::optional<ResolvedBinding> b = lookup_ref(expr, expr->set_bang.name);
 			if (b)
 			{
 				bindings_[expr->id] = *b;
