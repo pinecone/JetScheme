@@ -1582,6 +1582,7 @@ JET_PRESERVE_NONE static void op_label(VM_OP_PARAMS)
 void collect(VmState& s)
 {
 	JET_PROFILE_GC;
+	JET_PROFILE_GC_TIMER;
 	Gc& gc = *g_gc;
 	gc.begin_mark();
 

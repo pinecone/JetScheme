@@ -66,6 +66,35 @@ void profile_print()
 					 static_cast<unsigned long long>(n), pct);
 	}
 
+	uint64_t total_ticks = g_profile.gc_ticks;
+	for (int i = 0; i < 256; ++i)
+	{
+		total_ticks += g_profile.op_ticks[i];
+	}
+	if (total_ticks > 0)
+	{
+		std::sort(idx, idx + 256,
+				  [](int a, int b) { return g_profile.op_ticks[a] > g_profile.op_ticks[b]; });
+		std::fprintf(stderr, "\nopcode time histogram (sorted by ticks; gc excluded from op rows):\n");
+		std::fprintf(stderr, " %-14s %14s %6s %10s\n", "opcode", "ticks", "time%", "ticks/op");
+		for (int i = 0; i < 256; ++i)
+		{
+			uint64_t t = g_profile.op_ticks[idx[i]];
+			if (t == 0)
+			{
+				break;
+			}
+			uint64_t n = g_profile.op_counts[idx[i]];
+			double pct = 100.0 * static_cast<double>(t) / static_cast<double>(total_ticks);
+			double per = n ? static_cast<double>(t) / static_cast<double>(n) : 0.0;
+			std::fprintf(stderr, " %-14s %14llu %5.1f%% %10.2f\n", profile_opcode_name(idx[i]).data(),
+						 static_cast<unsigned long long>(t), pct, per);
+		}
+		double gc_pct = 100.0 * static_cast<double>(g_profile.gc_ticks) / static_cast<double>(total_ticks);
+		std::fprintf(stderr, " %-14s %14llu %5.1f%%\n", "(gc)",
+					 static_cast<unsigned long long>(g_profile.gc_ticks), gc_pct);
+	}
+
 	uint64_t total_ic_misses = 0;
 	for (int i = 0; i < 256; ++i)
 	{

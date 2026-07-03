@@ -56,11 +56,14 @@ void trace_step(VmState& s, Frame* frame, Code* pc, Atom* stack_top);
 struct Profile
 {
 	uint64_t op_counts[256];
+	uint64_t op_ticks[256];
 	uint64_t ic_misses[256];
 	uint64_t pair_after[256][256];
 	uint64_t lambda_calls;
 	uint64_t prim_calls;
 	uint64_t gc_collections;
+	uint64_t gc_ticks;
+	uint64_t last_stamp;
 	uint8_t last_op;
 };
 
@@ -68,9 +71,30 @@ struct Profile
 
 extern Profile g_profile;
 
+inline uint64_t profile_ticks()
+{
+#if defined(__aarch64__)
+	uint64_t t;
+	__asm__ __volatile__("mrs %0, cntvct_el0" : "=r"(t));
+	return t;
+#elif defined(__x86_64__)
+	return __builtin_ia32_rdtsc();
+#else
+#error "profile_ticks: unsupported architecture"
+#endif
+}
+
+// The interval since the previous dispatch is the duration of the
+// handler that just ran (last_op).
 #define JET_PROFILE_OP(op)                                                                                  \
 	do                                                                                                       \
 	{                                                                                                        \
+		uint64_t _jet_now = profile_ticks();                                                                \
+		if (g_profile.last_stamp != 0) [[likely]]                                                           \
+		{                                                                                                    \
+			g_profile.op_ticks[g_profile.last_op] += _jet_now - g_profile.last_stamp;                       \
+		}                                                                                                    \
+		g_profile.last_stamp = _jet_now;                                                                    \
 		uint8_t _jet_op = (op);                                                                             \
 		++g_profile.op_counts[_jet_op];                                                                     \
 		++g_profile.pair_after[g_profile.last_op][_jet_op];                                                 \
@@ -81,6 +105,21 @@ extern Profile g_profile;
 #define JET_PROFILE_GC (++g_profile.gc_collections)
 #define JET_PROFILE_IC_MISS(op) (++g_profile.ic_misses[static_cast<uint8_t>(op)])
 
+struct ProfileGcTimer
+{
+	uint64_t t0{profile_ticks()};
+
+	~ProfileGcTimer()
+	{
+		uint64_t d = profile_ticks() - t0;
+		g_profile.gc_ticks += d;
+		// Excludes the collection from the charge to the opcode that
+		// triggered it.
+		g_profile.last_stamp += d;
+	}
+};
+#define JET_PROFILE_GC_TIMER ProfileGcTimer _jet_gc_timer{}
+
 void profile_print();
 
 #else
@@ -90,6 +129,7 @@ void profile_print();
 #define JET_PROFILE_PRIM ((void)0)
 #define JET_PROFILE_GC ((void)0)
 #define JET_PROFILE_IC_MISS(op) ((void)0)
+#define JET_PROFILE_GC_TIMER ((void)0)
 
 inline void profile_print() {}
 
