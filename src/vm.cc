@@ -543,6 +543,15 @@ JET_PRESERVE_NONE static void op_set_local(VM_OP_PARAMS)
 	DISPATCH();
 }
 
+JET_PRESERVE_NONE static void op_set_local_pop(VM_OP_PARAMS)
+{
+	OP_set_local* op = reinterpret_cast<OP_set_local*>(pc);
+	pc += sizeof(*op);
+	--stack_top;
+	stack_base[frame_base + op->off] = *stack_top;
+	DISPATCH();
+}
+
 JET_PRESERVE_NONE static void op_ref_downvalue(VM_OP_PARAMS)
 {
 	OP_ref_downvalue* op = reinterpret_cast<OP_ref_downvalue*>(pc);

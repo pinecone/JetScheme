@@ -270,6 +270,7 @@ void decode_args(FILE* out, uint8_t op, Code* p)
 		}
 		case Opcode::ref_local:
 		case Opcode::set_local:
+		case Opcode::set_local_pop:
 		case Opcode::ref_downvalue:
 		case Opcode::set_downvalue:
 		case Opcode::box_local:

@@ -4501,8 +4501,7 @@ namespace
 					for (uint32_t i = 0; i < n; ++i)
 					{
 						emit_expr(expr->let.vals[i]);
-						emit_local(Opcode::set_local, narrow_off(sb + i));
-						emit_op(Opcode::pop);
+						emit_local(Opcode::set_local_pop, narrow_off(sb + i));
 					}
 					for (uint32_t i = 0; i < n; ++i)
 					{
@@ -4790,6 +4789,7 @@ namespace
 
 				case Opcode::ref_local:
 				case Opcode::set_local:
+				case Opcode::set_local_pop:
 				case Opcode::ref_downvalue:
 				case Opcode::set_downvalue:
 				case Opcode::box_local:

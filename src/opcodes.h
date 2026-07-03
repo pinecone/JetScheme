@@ -29,6 +29,7 @@
 	X(make_closure,        "clos")                                                                           \
 	X(ref_local,           "ldl")                                                                            \
 	X(set_local,           "stl")                                                                            \
+	X(set_local_pop,       "stlp")                                                                           \
 	X(ref_downvalue,       "ldd")                                                                            \
 	X(set_downvalue,       "std")                                                                            \
 	X(box_local,           "boxl")                                                                           \
@@ -295,6 +296,7 @@ inline size_t opcode_step(uint8_t op, const uint8_t* operands)
 		case Opcode::ref_local:
 			return OPCODE_SIZE + sizeof(OP_ref_local);
 		case Opcode::set_local:
+		case Opcode::set_local_pop:
 			return OPCODE_SIZE + sizeof(OP_set_local);
 		case Opcode::ref_downvalue:
 			return OPCODE_SIZE + sizeof(OP_ref_downvalue);
