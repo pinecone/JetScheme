@@ -2907,14 +2907,12 @@ void Compiler::select_call_op(Expr* expr, Expr* current)
 
 	// Self-tail-call: recur.
 	if (is_tail(expr)
-		&& proc_binding.lambda == toplevel_lambda_
-		&& current != toplevel_lambda_
 		&& !current->lambda.is_variadic
 		&& current->lambda.params.size() == expr->call.args.size())
 	{
-		LambdaBindings& tl = lambda_bindings_[toplevel_lambda_];
-		if (!get(tl.reassigned_after_init, proc_binding.breadth)
-			&& get(tl.bound_init, proc_binding.breadth) == current)
+		LambdaBindings& lb = lambda_bindings_[proc_binding.lambda];
+		if (!get(lb.reassigned_after_init, proc_binding.breadth)
+			&& get(lb.bound_init, proc_binding.breadth) == current)
 		{
 			sel.op = Opcode::recur;
 			return;
