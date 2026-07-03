@@ -3545,6 +3545,11 @@ namespace
 		return name == "+" || name == "-" || name == "*" || name == "/";
 	}
 
+	bool is_pure_prim(std::string_view name)
+	{
+		return name == "+" || name == "-" || name == "*" || name == "/";
+	}
+
 	struct BinarizeArith
 	{
 		Compiler& db;
@@ -3682,10 +3687,32 @@ namespace
 			}
 		}
 
-		Expr** scan_operand(Expr** op, uint64_t target, bool allow_atom_skip, bool& done)
+		bool is_pure_call(Expr* e)
+		{
+			if (e->kind != ExprKind::Call || e->call.proc->kind != ExprKind::VarRef)
+			{
+				return false;
+			}
+			std::string_view name = e->call.proc->var_ref.name;
+			if (!is_pure_prim(name) || !db.prim_binding_lowerable(db.binding(e->call.proc), name))
+			{
+				return false;
+			}
+			for (Expr* arg : e->call.args)
+			{
+				if (!is_anf_atom(arg) && !is_pure_call(arg))
+				{
+					return false;
+				}
+			}
+			return true;
+		}
+
+		Expr** scan_operand(Expr** op, uint64_t target, bool allow_skip, bool& done)
 		{
 			// A complex operand evaluates before everything scanned after it, so
-			// reaching one means the target must be inside it or nowhere.
+			// unless it is effect-free, reaching one means the target must be
+			// inside it or nowhere.
 			if ((*op)->kind == ExprKind::VarRef)
 			{
 				if (binding_key(get(db.bindings_, (*op)->id)) == target)
@@ -3693,19 +3720,20 @@ namespace
 					done = true;
 					return op;
 				}
-				done = !allow_atom_skip;
+				done = !allow_skip;
 				return nullptr;
 			}
 			if (is_anf_atom(*op))
 			{
-				done = !allow_atom_skip;
+				done = !allow_skip;
 				return nullptr;
 			}
-			done = true;
-			return find_first_use(op, target, allow_atom_skip);
+			Expr** r = find_first_use(op, target, allow_skip);
+			done = r != nullptr || !(allow_skip && is_pure_call(*op));
+			return r;
 		}
 
-		Expr** find_first_use(Expr** site, uint64_t target, bool allow_atom_skip)
+		Expr** find_first_use(Expr** site, uint64_t target, bool allow_skip)
 		{
 			// Returns the location holding the target's use if that use is the
 			// first thing *site evaluates, else null.
@@ -3715,29 +3743,29 @@ namespace
 				case ExprKind::VarRef:
 					return binding_key(get(db.bindings_, e->id)) == target ? site : nullptr;
 
-				// A let sequences its vals before its body: no atom skips
+				// A let sequences its vals before its body: no skips
 				// across that boundary, so drill without scanning.
 				case ExprKind::Let:
 					return find_first_use(e->let.names.size() ? &e->let.vals[0] : &e->let.body[0],
-										  target, allow_atom_skip);
+										  target, allow_skip);
 
 				case ExprKind::If:
-					return find_first_use(&e->if_.test, target, allow_atom_skip);
+					return find_first_use(&e->if_.test, target, allow_skip);
 
 				case ExprKind::SetBang:
-					return find_first_use(&e->set_bang.value, target, allow_atom_skip);
+					return find_first_use(&e->set_bang.value, target, allow_skip);
 
 				case ExprKind::Call:
 				{
 					bool done = false;
-					Expr** r = scan_operand(&e->call.proc, target, allow_atom_skip, done);
+					Expr** r = scan_operand(&e->call.proc, target, allow_skip, done);
 					if (done)
 					{
 						return r;
 					}
 					for (uint32_t i = 0; i < e->call.args.size(); ++i)
 					{
-						r = scan_operand(&e->call.args[i], target, allow_atom_skip, done);
+						r = scan_operand(&e->call.args[i], target, allow_skip, done);
 						if (done)
 						{
 							return r;
@@ -3749,29 +3777,29 @@ namespace
 				case ExprKind::Apply:
 				{
 					bool done = false;
-					Expr** r = scan_operand(&e->apply.proc, target, allow_atom_skip, done);
+					Expr** r = scan_operand(&e->apply.proc, target, allow_skip, done);
 					if (done)
 					{
 						return r;
 					}
-					r = scan_operand(&e->apply.args, target, allow_atom_skip, done);
+					r = scan_operand(&e->apply.args, target, allow_skip, done);
 					return done ? r : nullptr;
 				}
 
 				case ExprKind::SetRef:
 				{
 					bool done = false;
-					Expr** r = scan_operand(&e->set_ref.obj, target, allow_atom_skip, done);
+					Expr** r = scan_operand(&e->set_ref.obj, target, allow_skip, done);
 					if (done)
 					{
 						return r;
 					}
-					r = scan_operand(&e->set_ref.key, target, allow_atom_skip, done);
+					r = scan_operand(&e->set_ref.key, target, allow_skip, done);
 					if (done)
 					{
 						return r;
 					}
-					r = scan_operand(&e->set_ref.value, target, allow_atom_skip, done);
+					r = scan_operand(&e->set_ref.value, target, allow_skip, done);
 					return done ? r : nullptr;
 				}
 
@@ -3879,10 +3907,11 @@ namespace
 						{
 							break;
 						}
-						// A temp's val may hop over sibling atom reads: a combination's
-						// operand order is unspecified, so the reorder just restores the
-						// source's order. A user-written let promises its val runs before
-						// the whole body, so it gets no skips.
+						// A temp's val may hop over sibling atom reads and effect-free
+						// prim calls: a combination's operand order is unspecified, so
+						// the reorder just restores the source's order. A user-written
+						// let promises its val runs before the whole body, so it gets
+						// no skips.
 						Expr** site = find_first_use(&e->let.body[0], target, is_temp(e->let.names[idx]));
 						if (!site)
 						{
