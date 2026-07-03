@@ -17,12 +17,27 @@ local KIND_WORK   = 1
 local DATA_SIZE = 4
 local COUNT     = 100000
 
+local band, bor, bnot, rshift, bxor
+do
+  local ok, bitlib = pcall(require, "bit")   -- LuaJIT / LuaBitOp
+  if ok then
+    band, bor, bnot, rshift, bxor =
+      bitlib.band, bitlib.bor, bitlib.bnot, bitlib.rshift, bitlib.bxor
+  else                                        -- Lua 5.3+: native operators
+    band   = load("return function(a, b) return a & b end")()
+    bor    = load("return function(a, b) return a | b end")()
+    bnot   = load("return function(a) return ~a end")()
+    rshift = load("return function(a, n) return a >> n end")()
+    bxor   = load("return function(a, b) return a ~ b end")()
+  end
+end
+
 local STATE_RUNNING            = 0
 local STATE_RUNNABLE           = 1
 local STATE_SUSPENDED          = 2
 local STATE_HELD               = 4
 local STATE_SUSPENDED_RUNNABLE = 3
-local STATE_NOT_HELD           = ~STATE_HELD
+local STATE_NOT_HELD           = bnot(STATE_HELD)
 
 local EXPECTED_QUEUE_COUNT = 232625
 local EXPECTED_HOLD_COUNT  = 93050
@@ -67,13 +82,13 @@ local function tcb_new(link, id, priority, queue, task)
 end
 
 local function tcb_held_or_suspended(t)
-  return (t.state & STATE_HELD) ~= 0 or t.state == STATE_SUSPENDED
+  return band(t.state, STATE_HELD) ~= 0 or t.state == STATE_SUSPENDED
 end
 
 local function tcb_check_priority_add(t, task, packet)
   if t.queue == nil then
     t.queue = packet
-    t.state = t.state | STATE_RUNNABLE
+    t.state = bor(t.state, STATE_RUNNABLE)
     if t.priority > task.priority then return t end
   else
     t.queue = pkt_addto(packet, t.queue)
@@ -110,19 +125,19 @@ end
 sched_release = function(id)
   local tcb = blocks[id]
   if tcb == nil then return tcb end
-  tcb.state = tcb.state & STATE_NOT_HELD
+  tcb.state = band(tcb.state, STATE_NOT_HELD)
   if tcb.priority > currentTcb.priority then return tcb end
   return currentTcb
 end
 
 sched_hold_current = function()
   holdCount = holdCount + 1
-  currentTcb.state = currentTcb.state | STATE_HELD
+  currentTcb.state = bor(currentTcb.state, STATE_HELD)
   return currentTcb.link
 end
 
 sched_suspend_current = function()
-  currentTcb.state = currentTcb.state | STATE_SUSPENDED
+  currentTcb.state = bor(currentTcb.state, STATE_SUSPENDED)
   return currentTcb
 end
 
@@ -139,11 +154,11 @@ end
 local function idle_run(t, packet)
   t.count = t.count - 1
   if t.count == 0 then return sched_hold_current() end
-  if (t.v1 & 1) == 0 then
-    t.v1 = t.v1 >> 1
+  if band(t.v1, 1) == 0 then
+    t.v1 = rshift(t.v1, 1)
     return sched_release(ID_DEVICE_A)
   else
-    t.v1 = (t.v1 >> 1) ~ 0xD008
+    t.v1 = bxor(rshift(t.v1, 1), 0xD008)
     return sched_release(ID_DEVICE_B)
   end
 end

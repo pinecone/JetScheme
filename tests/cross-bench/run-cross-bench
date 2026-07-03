@@ -4,6 +4,7 @@
 
 import os
 import resource
+import shlex
 import shutil
 import statistics
 import subprocess
@@ -12,7 +13,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 JET = Path(os.environ.get("JET", HERE / ".." / ".." / "build" / "jet"))
-LUA = os.environ.get("LUA") or shutil.which("lua")
+LUA_CMD = shlex.split(os.environ.get("LUA", "")) or ([shutil.which("lua")] if shutil.which("lua") else [])
 
 BENCHES = sorted(p.stem for p in HERE.glob("bench-*.ss"))
 RUNS = 5
@@ -35,13 +36,13 @@ def user_time(cmd, **kw):
 def main():
     if not JET.exists() or not os.access(JET, os.X_OK):
         die(f"{JET} not found or not executable; build it first with 'make'")
-    if LUA is None:
+    if not LUA_CMD:
         die("no 'lua' on PATH. Install Lua 5.5 (e.g., brew install lua).")
 
-    lua_version = subprocess.run([LUA, "-v"], capture_output=True, text=True).stderr.strip() \
-        or subprocess.run([LUA, "-v"], capture_output=True, text=True).stdout.strip()
+    lua_version = subprocess.run(LUA_CMD + ["-v"], capture_output=True, text=True).stderr.strip() \
+        or subprocess.run(LUA_CMD + ["-v"], capture_output=True, text=True).stdout.strip()
     print(f"jet: {JET}")
-    print(f"lua: {LUA} ({lua_version})")
+    print(f"lua: {' '.join(LUA_CMD)} ({lua_version})")
     print()
 
     name_w = max(len(b) for b in BENCHES)
@@ -63,7 +64,7 @@ def main():
         print("  lua: ", end="", flush=True)
         lua_times = []
         for _ in range(RUNS):
-            lua_times.append(user_time([LUA, str(lua_path)]))
+            lua_times.append(user_time(LUA_CMD + [str(lua_path)]))
             print(".", end="", flush=True)
 
         jet_min = min(jet_times)
