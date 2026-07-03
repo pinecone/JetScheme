@@ -3166,14 +3166,14 @@ namespace
 		Compiler& db;
 		// A hit means the binding provably holds this init wherever it is
 		// referenced, so a call may splice it and a reference may become it.
-		std::unordered_map<uint64_t, Expr*> lambda_cands;
-		std::unordered_map<uint64_t, Expr*> const_cands;
-		std::unordered_set<Expr*> candidate_lambdas;
+		std::unordered_map<uint64_t, Expr*> lambda_cands{};
+		std::unordered_map<uint64_t, Expr*> const_cands{};
+		std::unordered_set<Expr*> candidate_lambdas{};
 		// Candidates being spliced or walked at their own definition: calls
 		// to them stay calls, so splicing terminates and a recursive body is
 		// never unrolled into itself.
-		std::unordered_set<Expr*> active;
-		std::vector<Expr*> hosts;
+		std::unordered_set<Expr*> active{};
+		std::vector<Expr*> hosts{};
 		// Ids at or above this are clones this pass made. A cloned Let has no
 		// row in the pre-pass analysis, so its slots' mutated flags are
 		// unknowable and it never registers candidates.
@@ -3616,7 +3616,7 @@ namespace
 	struct Stackify
 	{
 		Compiler& db;
-		std::unordered_map<uint64_t, uint32_t> use_counts;
+		std::unordered_map<uint64_t, uint32_t> use_counts{};
 
 		static bool is_temp(std::string_view name)
 		{
