@@ -13,43 +13,28 @@
 <body>
 <main>
 
-<header class="hero">
-  <h1>JetScheme</h1>
-  <nav class="hero-nav">
-    <a href="https://github.com/pinecone/JetScheme">source ↗</a><span class="sep">|</span><a href="#docs">docs ↓</a>
-  </nav>
-  <p class="tagline">A <a href="https://en.wikipedia.org/wiki/Scheme_(programming_language)">Scheme</a> interpreter
-    written in C++ that <a href="#benchmarks">tries to go fast</a>.</p>
-</header>
-
-<section id="language">
-  <h2>Features</h2>
-  <ul>
-    <li>Forms: <code>define</code>, <code>lambda</code>, <code>if</code>, <code>cond</code>, <code>when</code>, <code>unless</code>, <code>and</code>, <code>or</code>, <code>set!</code>, <code>begin</code>, <code>quote</code>, <code>let</code> (incl. named), <code>let*</code>, <code>letrec</code>/<code>letrec*</code>, <code>apply</code></li>
-    <li>Library: pairs and lists, strings, vectors, characters, booleans, symbols, numbers (IEEE 754 doubles), procedures, ports; list and vector operations, string/character predicates and conversions, arithmetic and bit ops, <code>eq?</code>/<code>eqv?</code>/<code>equal?</code>, <code>read</code>, file IO</li>
-  </ul>
-</section>
-
 <section id="usage">
-  <h2>How to run</h2>
-  <p>Needs <code>make</code> and a C++20 <code>clang</code>.</p>
+  <div class="title-row">
+    <h2>JetScheme</h2>
+    <nav class="top-nav">
+      <a href="https://github.com/pinecone/JetScheme">source ↗</a><span class="sep">|</span><a href="#docs">docs ↓</a>
+    </nav>
+  </div>
+  <p class="tagline">&hellip; is a <a href="#benchmarks">fast</a> <a href="https://en.wikipedia.org/wiki/Scheme_(programming_language)">R7RS-small Scheme</a> interpreter.</p>
 <pre><code><span class="cmd">git</span> clone https://github.com/pinecone/JetScheme.git
 <span class="cmd">cd</span> JetScheme
 <span class="cmd">make</span> test                                        <span class="c"># build &amp; run tests</span>
 <span class="cmd">build/jet</span> &lt;file.ss&gt;                              <span class="c"># run file.ss</span></code></pre>
-  <p>Benchmarks:</p>
-<pre><code><span class="cmd">make</span> bench                                       <span class="c"># in-language microbenchmarks</span>
-<span class="cmd">make</span> cross-bench                                 <span class="c"># cross-language benchmarks</span></code></pre>
 </section>
 
 <section id="benchmarks">
-  <h2>Cross-language benchmarks</h2>
-  <p>Latest <code>make cross-bench</code>; all binaries built with <code>-O2</code>.</p>
+  <h2>Benchmarks</h2>
+  <p>Latest <code>make ab-cross-bench</code>; all binaries built with <code>-O2</code>.</p>
 
   <div class="table-wrap">
   <table>
     <thead>
-      <tr><th rowspan="2">bench</th><th colspan="2">🍎 MacBook Air (Apple M5)</th><th colspan="2" class="sep">🎮 Steam Deck OG (AMD Zen 2)</th></tr>
+      <tr><th rowspan="2" class="hint">(higher is better)</th><th colspan="2">🍎 MacBook Air (Apple M5)</th><th colspan="2" class="sep">🎮 Steam Deck OG (AMD Zen 2)</th></tr>
       <tr><th>vs lua5.5</th><th>vs python3.14</th><th class="sep">vs lua5.5</th><th>vs python3.14</th></tr>
     </thead>
     <tbody>
@@ -67,19 +52,6 @@
     </tfoot>
   </table>
   </div>
-</section>
-
-<section id="optimizations">
-  <h2>Impl</h2>
-  <p><strong>JetScheme</strong> leans heavily on techniques described in:</p>
-  <ul>
-    <li><strong>Tail-threaded dispatch</strong> <a class="cite" href="https://dl.acm.org/doi/10.1145/362248.362270">(Bell, 1973)</a> — each opcode is its own small function; each function ends by tail-calling the next opcode's function directly. There's no central dispatch loop and no callee-save spills between opcodes; hot VM state stays in registers across the whole run.</li>
-    <li><strong>Inline caching</strong> <a class="cite" href="https://dl.acm.org/doi/10.1145/800017.800542">(Deutsch &amp; Schiffman, 1984)</a> — on the first time through a call site, the slow path patches the opcode in place to point at a specialized fast version of itself. Subsequent passes through the same site skip the lookup, key compare, and type check entirely.</li>
-    <li><strong>Flat closures</strong> <a class="cite" href="https://www.cs.unc.edu/xcms/wpfiles/dissertations/dybvig.pdf">(Dybvig, 1987)</a> — captures live in an inline array on the closure; immutable captures by value, mutated <em>and</em> shared ones get a heap indirection.</li>
-    <li><strong>NaN-boxing</strong> <a class="cite" href="https://www.cs.arizona.edu/sites/default/files/TR93-27.pdf">(Gudeman, 1993)</a> — every value fits in 8 bytes: numbers are raw doubles; immediates (bool, char, empty list) and tagged heap pointers all hide in the IEEE 754 quiet-NaN payload. Type tests are cheap bit ops and any value passes in a single register.</li>
-    <li><strong>Superinstructions</strong> <a class="cite" href="https://dl.acm.org/doi/10.1145/199448.199526">(Proebsting, 1995)</a> — common back-to-back opcode pairs are emitted as a single fused opcode: one chain step instead of two, and the body can skip the intermediate push and pop on the value stack.</li>
-    <li><strong>Opcode replication for ICs</strong> <a class="cite" href="https://dl.acm.org/doi/10.1145/781131.781162">(Ertl &amp; Gregg, 2003)</a> — each cached opcode has several near-identical copies that rotate per call site, so distinct sites land on distinct branch-target-predictor entries instead of all colliding on one.</li>
-  </ul>
 </section>
 
 <section id="docs">
@@ -109,6 +81,20 @@
   <h3>OS env</h3>
   <p><strong><code>argv</code>.</strong> Vector of strings holding the script's command-line arguments (excluding the binary and script path).</p>
   <p><code>$JET_PRELUDE/lib/prelude.ss</code> is the bundled prelude, auto-loaded unless <code>--no-prelude</code> is given.</p>
+</section>
+
+<section id="optimizations">
+  <h2>Impl</h2>
+  <p><strong>JetScheme</strong> leans heavily on techniques described in:</p>
+  <ul>
+    <li><strong>Tail-threaded dispatch</strong> <a class="cite" href="https://dl.acm.org/doi/10.1145/362248.362270">(Bell, 1973)</a> — each opcode is its own small function; each function ends by tail-calling the next opcode's function directly. There's no central dispatch loop and no callee-save spills between opcodes; hot VM state stays in registers across the whole run.</li>
+    <li><strong>Inline caching</strong> <a class="cite" href="https://dl.acm.org/doi/10.1145/800017.800542">(Deutsch &amp; Schiffman, 1984)</a> — on the first time through a call site, the slow path patches the opcode in place to point at a specialized fast version of itself. Subsequent passes through the same site skip the lookup, key compare, and type check entirely.</li>
+    <li><strong>Flat closures</strong> <a class="cite" href="https://www.cs.unc.edu/xcms/wpfiles/dissertations/dybvig.pdf">(Dybvig, 1987)</a> — captures live in an inline array on the closure; immutable captures by value, mutated <em>and</em> shared ones get a heap indirection.</li>
+    <li><strong>A-normal form</strong> <a class="cite" href="https://dl.acm.org/doi/10.1145/155090.155113">(Flanagan et al., 1993)</a> — every operand is a variable or a literal and every intermediate result gets an explicit name, so the later passes (inlining, stackification, instruction selection) rewrite one flat shape instead of arbitrary nested trees.</li>
+    <li><strong>NaN-boxing</strong> <a class="cite" href="https://www.cs.arizona.edu/sites/default/files/TR93-27.pdf">(Gudeman, 1993)</a> — every value fits in 8 bytes: numbers are raw doubles; immediates (bool, char, empty list) and tagged heap pointers all hide in the IEEE 754 quiet-NaN payload. Type tests are cheap bit ops and any value passes in a single register.</li>
+    <li><strong>Superinstructions</strong> <a class="cite" href="https://dl.acm.org/doi/10.1145/199448.199526">(Proebsting, 1995)</a> — common back-to-back opcode pairs are emitted as a single fused opcode: one chain step instead of two, and the body can skip the intermediate push and pop on the value stack.</li>
+    <li><strong>Opcode replication for ICs</strong> <a class="cite" href="https://dl.acm.org/doi/10.1145/781131.781162">(Ertl &amp; Gregg, 2003)</a> — each cached opcode has several near-identical copies that rotate per call site, so distinct sites land on distinct branch-target-predictor entries instead of all colliding on one.</li>
+  </ul>
 </section>
 
 </main>

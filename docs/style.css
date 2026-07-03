@@ -69,6 +69,7 @@
   --fs-lead:   1.25rem;
   --fs-h3:     1rem;
   --fs-h2:     1.2rem;
+  --fs-title:  2.5rem;
   --fs-h1-min: 2rem;
   --fs-h1-max: 3rem;
 
@@ -105,7 +106,7 @@ body {
 main {
   max-width: 53.75rem;
   margin: 0 auto;
-  padding: var(--sp-8) var(--sp-5);
+  padding: var(--sp-6) var(--sp-5) var(--sp-8);
 }
 
 ::selection {
@@ -118,40 +119,6 @@ h1, h2, h3 {
   margin: 0;
   font-weight: 700;
   line-height: 1.2;
-}
-
-h1 {
-  font-family: var(--font-display);
-  color: var(--h1);
-  font-size: clamp(2rem, 5vw, 3rem);
-  font-weight: 400;
-  letter-spacing: 0.01em;
-  line-height: 1.05;
-  margin: 0 0 var(--sp-7) 0;
-  text-align: center;
-  animation: h1-pulse 3.4s ease-in-out infinite alternate;
-}
-
-@keyframes h1-pulse {
-  from {
-    text-shadow:
-      0 0  5px rgba(187,154,247,0.75),
-      0 0 16px rgba(187,154,247,0.55),
-      0 0 36px rgba(187,154,247,0.40),
-      0 0 70px rgba(255,0,124,0.30);
-  }
-  to {
-    text-shadow:
-      0 0  8px rgba(187,154,247,1.00),
-      0 0 28px rgba(187,154,247,0.90),
-      0 0 60px rgba(187,154,247,0.75),
-      0 0 120px rgba(255,0,124,0.65);
-  }
-}
-
-
-@media (prefers-reduced-motion: reduce) {
-  h1 { animation: none; }
 }
 
 h2 {
@@ -172,9 +139,29 @@ h3 {
   margin: var(--sp-6) 0 var(--sp-3) 0;
 }
 
-/* Hero */
-.hero {
-  margin: 0 0 var(--sp-7) 0;
+.title-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-3);
+  margin: 0 0 var(--sp-4) 0;
+}
+
+.title-row h2 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--fs-title);
+  color: var(--green);
+  text-transform: none;
+  letter-spacing: 0.02em;
+  font-weight: 400;
+}
+
+#benchmarks h2 {
+  margin-top: var(--sp-5);
+}
+
+#usage pre {
+  margin-top: var(--sp-5);
 }
 
 .tagline {
@@ -184,24 +171,27 @@ h3 {
   margin: 0;
 }
 
-.hero-nav {
-  text-align: center;
+.top-nav {
+  margin-left: auto;
   font-family: var(--font-heading);
   font-size: var(--fs-small);
   letter-spacing: 0.04em;
-  margin: calc(-1 * var(--sp-6)) 0 var(--sp-5) 0;
 }
 
-.hero-nav a {
+.top-nav a:last-child {
+  padding-right: 0;
+}
+
+.top-nav a {
   color: var(--fg-muted);
   border-bottom: 0;
   padding: 0 var(--sp-3);
   transition: color 0.15s ease;
 }
 
-.hero-nav a:hover { color: var(--fg); border-bottom: 0; }
+.top-nav a:hover { color: var(--fg); border-bottom: 0; }
 
-.hero-nav .sep { color: var(--fg-gutter); }
+.top-nav .sep { color: var(--fg-gutter); }
 
 .tagline strong {
   color: var(--cyan-pale);
@@ -287,21 +277,15 @@ code {
 }
 
 p code, li code, td code {
-  background: var(--bg-dark);
   color: var(--magenta);
-  padding: 0.05rem 0.36rem;
-  border-radius: 4px;
   font-size: var(--fs-small);
-  border: 1px solid var(--bg-highlight);
 }
 
 /* Code blocks */
 pre {
   font-family: var(--font-mono);
-  background: var(--bg-dark);
-  border: 1px solid var(--bg-highlight);
-  border-radius: 8px;
-  padding: var(--sp-4) 1.1rem;
+  border-left: 2px solid var(--bg-highlight);
+  padding: var(--sp-2) 0 var(--sp-2) var(--sp-4);
   overflow-x: auto;
   margin: 0 0 var(--sp-5) 0;
   font-size: var(--fs-small);
@@ -333,27 +317,26 @@ table {
   border-collapse: collapse;
   width: 100%;
   font-size: var(--fs-base);
-  background: var(--bg-dark);
-  border: 1px solid var(--bg-highlight);
-  border-radius: 8px;
-  overflow: hidden;
 }
 
 thead th {
-  background: var(--bg-line);
   color: var(--cyan-pale);
   font-weight: 600;
   text-align: left;
-  padding: var(--sp-3) var(--sp-4);
+  padding: var(--sp-2) var(--sp-4);
   border-bottom: 1px solid var(--bg-highlight);
   font-family: var(--font-mono);
   font-size: var(--fs-small);
   letter-spacing: 0.02em;
 }
 
+thead th.hint {
+  color: var(--fg-muted);
+  font-weight: 400;
+}
+
 tbody td {
   padding: var(--sp-2) var(--sp-4);
-  border-bottom: 1px solid var(--bg-highlight);
   color: var(--fg-dark);
 }
 
@@ -376,13 +359,11 @@ p.caption {
   margin-top: calc(-1 * var(--sp-3));
 }
 
-tbody tr:last-child td { border-bottom: 0; }
 tbody tr:hover td { background: rgba(122,162,247,0.04); }
 
 tfoot th, tfoot td {
-  padding: var(--sp-4) var(--sp-4);
+  padding: var(--sp-2) var(--sp-4);
   border-top: 1px solid var(--bg-highlight);
-  background: var(--bg-line);
   font-family: var(--font-mono);
   font-size: var(--fs-small);
 }
