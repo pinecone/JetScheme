@@ -335,6 +335,13 @@ thead th.hint {
   font-weight: 400;
 }
 
+thead th.hint a {
+  display: block;
+  text-align: center;
+  font-size: var(--fs-micro);
+  border-bottom: 0;
+}
+
 tbody td {
   padding: var(--sp-2) var(--sp-4);
   color: var(--fg-dark);
