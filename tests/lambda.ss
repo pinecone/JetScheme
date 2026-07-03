@@ -39,3 +39,12 @@
     (lambda (y) (+ x y))))
 (define add10 ((make-adder-maker) 10))
 ($check (= 15 (add10 5)))
+
+;; User-written variadic IIFE: stays a real closure call (never contracted).
+($check (equal? '(1 2 3) ((lambda args args) 1 2 3)))
+($check (= 6 (apply + ((lambda args args) 1 2 3))))
+($check (null? ((lambda args args))))
+
+;; Arity-matched IIFEs contract to lets, including nested and shadowing forms.
+($check (= 11 ((lambda (x) ((lambda (x) (+ x 1)) (* x 2))) 5)))
+($check (= 42 ((lambda () 42))))

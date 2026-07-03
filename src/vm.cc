@@ -29,9 +29,10 @@ namespace
 	} gc_init;
 } // namespace
 
-// Op tag at p[VM_OP_SLOT_SIZE] is left in place so trace/profile can recover it.
 static void link_opcode_handlers(Code* begin, Code* end)
 {
+	// The op tag at p[VM_OP_SLOT_SIZE] is left in place so trace/profile can
+	// recover it.
 	Code* p = begin;
 	while (p < end)
 	{
@@ -335,6 +336,12 @@ LoadedProgram load_program(Code* bytecode, size_t bytecode_size, Env& primitives
 	return prog;
 }
 
+constexpr size_t STACK_CAPACITY = 1 << 20;
+// Operand pushes within a frame are unchecked; the slack below the true end
+// absorbs them, so the only guard needed is the frame-extension check in
+// the call handlers.
+constexpr size_t STACK_SLACK = 4096;
+
 static Atom* pass_results(VmState& s, Atom* stack_top, Atom* stack_base, size_t frame_base)
 {
 	Atom retval = stack_top[-1];
@@ -397,6 +404,10 @@ JET_NOINLINE JET_PRESERVE_NONE static void slow_call_lambda(VM_OP_PARAMS)
 	}
 	frame_base = base;
 	stack_top = stack_base + base + la.n_locals;
+	if (stack_top > s.stack_end - STACK_SLACK) [[unlikely]]
+	{
+		JET_DIE("stack overflow (too much recursion?)");
+	}
 	pc = la.code;
 	DISPATCH();
 }
@@ -437,6 +448,10 @@ JET_PRESERVE_NONE static void fast_call_lambda(VM_OP_PARAMS)
 	frame_base = base;
 
 	stack_top = stack_base + base + la.n_locals;
+	if (stack_top > s.stack_end - STACK_SLACK) [[unlikely]]
+	{
+		JET_DIE("stack overflow (too much recursion?)");
+	}
 	pc = la.code;
 	DISPATCH();
 }
@@ -1199,9 +1214,6 @@ JET_PRESERVE_NONE static void op_ldc(VM_OP_PARAMS)
 	DISPATCH();
 }
 
-// Binary number ops on top-two stack values. Skips the cs_N/prim-stub call
-// machinery for the most common arith/cmp shape in numeric kernels.
-
 JET_ALWAYS_INLINE static Atom sub_op(Atom a, Atom b)
 {
 	JET_DIE_UNLESS(is_type<jet::Type::Number>(a) && is_type<jet::Type::Number>(b), "-: expected numbers");
@@ -1562,6 +1574,11 @@ JET_PRESERVE_NONE static void op_unknown(VM_OP_PARAMS)
 	JET_DIE("unknown opcode 0x%02x. it could be anything", pc[-1]);
 }
 
+JET_PRESERVE_NONE static void op_label(VM_OP_PARAMS)
+{
+	JET_DIE("label pseudo-op reached the VM; LIR emit failed to strip it");
+}
+
 void collect(VmState& s)
 {
 	JET_PROFILE_GC;
@@ -1592,8 +1609,9 @@ void collect(VmState& s)
 
 void eval(Frame& init_frame, Atom* constants, size_t n_constants, size_t initial_stack_size)
 {
-	constexpr size_t STACK_CAPACITY = 1 << 16;
 	std::unique_ptr<Atom[]> stack_buffer{new Atom[STACK_CAPACITY]};
+	JET_DIE_WHEN(initial_stack_size > STACK_CAPACITY - STACK_SLACK,
+				  "stack overflow: %zu toplevel slots", initial_stack_size);
 
 	VmState s{};
 	s.stack_base = stack_buffer.get();

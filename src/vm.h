@@ -142,10 +142,10 @@ constexpr int type_to_tag(jet::Type t)
 	}
 }
 
-// Type-erased destructor: call T's destructor (but don't free -- GC handles that).
 template <class T>
 void gc_destroy(void* p)
 {
+	// No free -- GC owns the memory.
 	static_cast<T*>(p)->~T();
 }
 
@@ -170,13 +170,11 @@ inline uint64_t next_slot_version()
 	return ++g_slot_version_counter;
 }
 
-// Heap-allocated single-Atom box. Backs every captured binding so multiple
-// closures can share one mutable cell. `version` is a globally unique tag
-// stamped on every allocation and every mutation, so an IC keying on
-// (Slot*, version) cannot ABA when GC reuses a slot's memory.
 struct Slot
 {
 	Atom value;
+	// Globally unique, stamped on every allocation and every mutation, so an
+	// IC keying on (Slot*, version) cannot ABA when GC reuses a slot's memory.
 	uint64_t version;
 
 	Slot() : value{}, version{next_slot_version()} {}

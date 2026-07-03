@@ -57,3 +57,68 @@
 ;; A candidate used as a value (not called) still works
 (define (dbl x) (* x 2))
 ($check (equal? '(2 4 6 8) (map dbl (list 1 2 3 4))))
+
+;; --- ANF-inliner (B3) additions: let-bound candidates ---
+
+;; A let-bound lambda inlines; its free variable must read the
+;; definition-site binding, not a same-named shadow at the call site.
+(define r-hyg
+  (let ((free 3))
+    (let ((f (lambda (x) (+ x free))))
+      (let ((free 99))
+        (f 100)))))
+($check (= 103 r-hyg))
+
+;; Let-bound candidate called through another let-bound candidate,
+;; both capturing an enclosing local.
+(define (deep)
+  (let ((k 7))
+    (let ((add-k (lambda (x) (+ x k))))
+      (let ((g (lambda (y) (add-k (* y 2)))))
+        (g 10)))))
+($check (= 27 (deep)))
+
+;; A set! anywhere in scope disqualifies a let binding from candidacy;
+;; the reference must see the mutation, not the init.
+(define r-mut
+  (let ((v 1))
+    (set! v 2)
+    v))
+($check (= 2 r-mut))
+
+;; Mutating a captured local through an inlined closure body: the slot is
+;; boxed, and both the splices and the surviving closure share the box.
+(define (counter-test)
+  (let ((n 0))
+    (let ((bump! (lambda () (set! n (+ n 1)))))
+      (bump!) (bump!) (bump!)
+      n)))
+($check (= 3 (counter-test)))
+
+;; Named-let loop: the entry call splices, the recursive call stays a call.
+(define (sum-to n)
+  (let loop ((i 0) (acc 0))
+    (if (> i n) acc (loop (+ i 1) (+ acc i)))))
+($check (= 15 (sum-to 5)))
+
+;; Internal define is a candidate inside its enclosing lambda.
+(define (outer x)
+  (define (inner y) (* y y))
+  (+ (inner x) (inner (+ x 1))))
+($check (= 25 (outer 3)))
+
+;; Variadic bindings never splice.
+(define var-sum (lambda xs (apply + xs)))
+($check (= 6 (var-sum 1 2 3)))
+
+;; A let-bound literal propagates as a constant...
+(define r-konst (let ((c 40)) (+ c 2)))
+($check (= 42 r-konst))
+
+;; ...but not past a same-named call-site shadow.
+(define r-konst2
+  (let ((c 1))
+    (let ((f (lambda (x) (+ x c))))
+      (let ((c 500))
+        (+ (f 0) c)))))
+($check (= 501 r-konst2))

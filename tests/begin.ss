@@ -72,4 +72,16 @@
   (set! trace (cons 'three trace)))
 ($check (equal? '(three two one) trace))
 
+
+;; Non-final exprs that are calls for effect: their values are let-bound to
+;; unreferenced temps by the ANF pass, and the effects still fire in order.
+(define blog '())
+(define (bpush! v) (set! blog (cons v blog)) v)
+($check (= 9 (begin (bpush! 1) (bpush! 2) 9)))
+($check (equal? '(2 1) blog))
+
+;; Non-final complex exprs (nested calls, ifs) sequence correctly too.
+(set! blog '())
+($check (eq? 'end (begin (bpush! (+ 1 2)) (if #t (bpush! 'yes) (bpush! 'no)) 'end)))
+($check (equal? '(yes 3) blog))
 (displayn "begin ok")

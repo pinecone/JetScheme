@@ -9,7 +9,14 @@
 
 using Bytecode = std::vector<uint8_t>;
 
-Bytecode compile(std::string source, std::string filename = "<stdin>", bool no_inline = false);
+struct CompileFlags
+{
+	bool inlining = true;
+	bool stackify = true;
+	bool specialize_ops = true;
+};
+
+Bytecode compile(std::string source, std::string filename = "<stdin>", CompileFlags flags = {});
 
 class Env;
 void init_reader(Env& e);

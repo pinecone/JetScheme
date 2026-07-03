@@ -66,7 +66,8 @@
 	X(div2sc,              "div2sc")                                                                         \
 	X(eq2sc,               "eq2sc")                                                                          \
 	X(lt2sc,               "lt2sc")                                                                          \
-	X(ldc,                 "ldc")
+	X(ldc,                 "ldc")                                                                            \
+	X(label,               "label")
 
 enum class Opcode : uint8_t
 {
@@ -263,6 +264,7 @@ inline size_t opcode_step(uint8_t op, const uint8_t* operands)
 		case Opcode::ret:
 		case Opcode::pop:
 		case Opcode::apply:
+		case Opcode::label:
 		case Opcode::sub2ss:
 		case Opcode::add2ss:
 		case Opcode::mul2ss:

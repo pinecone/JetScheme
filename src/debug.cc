@@ -328,9 +328,9 @@ void trace_step(VmState& s, Frame* /*frame*/, Code* pc, Atom* stack_top)
 
 #endif
 
-// Static disassembler: walks a raw .bc buffer; doesn't require
-// link_opcode_handlers to have run -- reads only the 1-byte opcode tag at
-// +VM_OP_SLOT_SIZE and the operand bytes; handler slots are ignored.
+// The static disassembler doesn't require link_opcode_handlers to have run:
+// it reads only the 1-byte opcode tag at +VM_OP_SLOT_SIZE and the operand
+// bytes; handler slots are ignored.
 
 namespace
 {
@@ -378,7 +378,6 @@ const char* const_tag_name(ConstTag t)
 	return "?";
 }
 
-// If the entry is a Lambda, captures its embedded code block in `lambdas`.
 Code* disasm_pool_entry(FILE* out, Code* p, uint32_t idx, std::vector<LambdaBlock>& lambdas)
 {
 	ConstTag tag = static_cast<ConstTag>(*p++);
@@ -401,7 +400,7 @@ Code* disasm_pool_entry(FILE* out, Code* p, uint32_t idx, std::vector<LambdaBloc
 		}
 		case ConstTag::Character:
 		{
-			uint32_t c;
+			Character c;
 			std::memcpy(&c, p, sizeof(c));
 			std::fprintf(out, "U+%04x\n", c);
 			return p + sizeof(c);

@@ -7,7 +7,6 @@
 #include <cstddef>
 #include <cstdint>
 
-// Printf-style debug log; compiled out unless JET_DEBUG is defined.
 // clang-format off
 #ifdef JET_DEBUG
 #  include <cstdio>

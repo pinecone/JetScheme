@@ -81,7 +81,7 @@ static bool slurp_bytes(const string& path, vector<uint8_t>& out)
 	return true;
 }
 
-static int compile_to_bytecode(const string& source_path, const string& prelude_path, bool no_inline,
+static int compile_to_bytecode(const string& source_path, const string& prelude_path, CompileFlags flags,
 							   Bytecode& out)
 {
 	string source;
@@ -91,7 +91,7 @@ static int compile_to_bytecode(const string& source_path, const string& prelude_
 		source = "(include \"" + prelude_path + "\")\n" + source;
 	}
 	string filename = source_path != "-" ? source_path : "<stdin>";
-	out = compile(std::move(source), std::move(filename), no_inline);
+	out = compile(std::move(source), std::move(filename), flags);
 	return 0;
 }
 
@@ -124,7 +124,11 @@ static void usage(FILE* o)
 
 options for run/compile:
   --no-prelude                          skip the bundled prelude
-  --no-inline                           disable the function inliner
+
+optimization options (generated code is slower):
+  --no-inline                           disable the inliner
+  --no-stackify                         disable operand-stack contraction of locals
+  --no-specialize-ops                   emit generic opcodes only
 options for run/exec (debug build only):
   --trace                               print one trace line per opcode dispatched
 
@@ -173,7 +177,7 @@ int main(int argc, char* argv[])
 	}
 
 	bool no_prelude = false;
-	bool no_inline = false;
+	CompileFlags flags;
 	string input_path;
 	int script_arg_start = argc;
 	for (int i = args_start; i < argc; ++i)
@@ -185,7 +189,17 @@ int main(int argc, char* argv[])
 		}
 		if (strcmp(argv[i], "--no-inline") == 0)
 		{
-			no_inline = true;
+			flags.inlining = false;
+			continue;
+		}
+		if (strcmp(argv[i], "--no-stackify") == 0)
+		{
+			flags.stackify = false;
+			continue;
+		}
+		if (strcmp(argv[i], "--no-specialize-ops") == 0)
+		{
+			flags.specialize_ops = false;
 			continue;
 		}
 		if (strcmp(argv[i], "--trace") == 0)
@@ -210,13 +224,12 @@ int main(int argc, char* argv[])
 
 	vector<uint8_t> bc;
 
-	// disasm: if input is .bc, treat as compiled bytecode; otherwise compile.
 	bool input_is_bc = want_disasm && ends_with(input_path, ".bc");
 
 	if (want_compile && !input_is_bc)
 	{
 		string prelude = no_prelude ? string{} : find_prelude(argv[0]);
-		if (compile_to_bytecode(input_path, prelude, no_inline, bc) != 0)
+		if (compile_to_bytecode(input_path, prelude, flags, bc) != 0)
 		{
 			return 1;
 		}

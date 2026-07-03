@@ -45,3 +45,15 @@
 (define (or3 v) (or v v v))
 ($check (eq? 'x (or3 'x)))
 ($check (not (or3 #f)))
+
+;; or evaluates each subform exactly once, left to right, stopping at the
+;; first truthy one.
+(define oe '())
+(define (otick x) (set! oe (cons x oe)) x)
+($check (eq? 2 (or (otick #f) (otick 2) (otick 3))))
+($check (equal? '(2 #f) oe))
+
+;; Nested or: each level's %or-tmp claims its own slot, so the inner value is
+;; not clobbered by the outer.
+($check (eq? 1 (or (or #f 1) 2)))
+($check (eq? 7 (or #f (or #f 7))))

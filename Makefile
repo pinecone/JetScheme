@@ -73,7 +73,7 @@ DEPS := $(ALL_OBJ:.o=.d)
 				test test-debug test-profile \
 				bench bench-debug bench-profile \
 				cross-bench cross-bench-debug cross-bench-profile \
-				clean
+				ab-cross-bench clean
 .DEFAULT_GOAL := all
 
 all: $(JET_BIN)
@@ -120,6 +120,10 @@ cross-bench-debug: debug
 
 cross-bench-profile: profile
 	cd tests/cross-bench && JET=../../build/jet-profile ./run-cross-bench
+
+# Builds its own worktree of REF (default HEAD), so no build dependency.
+ab-cross-bench:
+	cd tests/cross-bench && ./ab-cross $(REF)
 
 clean:
 	rm -rf $(BUILD)

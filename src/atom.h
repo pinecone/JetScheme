@@ -302,10 +302,10 @@ Atom box(Args&&... args)
 	return box_unbox_t<T>::box(static_cast<Args&&>(args)...);
 }
 
-// Unchecked. Caller has proven the type.
 template <class T>
 decltype(auto) unbox(Atom a)
 {
+	// Unchecked. Caller has proven the type.
 	return box_unbox_t<T>::unbox(a);
 }
 
