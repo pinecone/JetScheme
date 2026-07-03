@@ -503,8 +503,8 @@ struct Compiler
 	void resolve_bindings(Program& program);
 	void compute_binding_addresses(Program& program);
 	void compute_binding_addresses_in(Expr* expr);
-	void compute_lambda_bindings(Program& program);
-	void compute_lambda_bindings_in(Expr* expr);
+	void recompute_lambda_bindings(Program& program);
+	void recompute_lambda_bindings_in(Expr* expr);
 	void freeze_lambda(Expr* lambda);
 	void compute_tail(Expr* expr, bool in_tail);
 
@@ -527,6 +527,7 @@ struct Compiler
 	void select_var_op(Expr* expr, Expr* current, bool is_set);
 
 	void run_anf_inline(Program& program);
+	void run_binarize_arith(Program& program);
 	void run_stackify(Program& program);
 
 	Bytecode compile();
@@ -2574,7 +2575,7 @@ void Compiler::compute_binding_addresses(Program& program)
 	pop_lambda_scope();
 }
 
-void Compiler::compute_lambda_bindings(Program& program)
+void Compiler::recompute_lambda_bindings(Program& program)
 {
 	lambda_bindings_.clear();
 	all_lambdas_.clear();
@@ -2582,7 +2583,7 @@ void Compiler::compute_lambda_bindings(Program& program)
 	push_lambda_scope(toplevel_lambda_);
 	for (Expr* form : program.forms)
 	{
-		compute_lambda_bindings_in(form);
+		recompute_lambda_bindings_in(form);
 	}
 	pop_lambda_scope();
 	all_lambdas_.push_back(toplevel_lambda_);
@@ -2597,12 +2598,18 @@ void Compiler::resolve_bindings(Program& program)
 	toplevel_lambda_->lambda.names = arena.copy_slice(toplevel_names_.ordered);
 
 	compute_binding_addresses(program);
-	compute_lambda_bindings(program);
+	recompute_lambda_bindings(program);
 
 	if (flags_.inlining)
 	{
 		run_anf_inline(program);
-		compute_lambda_bindings(program);
+		recompute_lambda_bindings(program);
+	}
+
+	if (flags_.specialize_ops)
+	{
+		run_binarize_arith(program);
+		recompute_lambda_bindings(program);
 	}
 
 	if (flags_.stackify)
@@ -2724,7 +2731,7 @@ void Compiler::compute_binding_addresses_in(Expr* expr)
 	}
 }
 
-void Compiler::compute_lambda_bindings_in(Expr* expr)
+void Compiler::recompute_lambda_bindings_in(Expr* expr)
 {
 	switch (expr->kind)
 	{
@@ -2734,14 +2741,14 @@ void Compiler::compute_lambda_bindings_in(Expr* expr)
 
 		case ExprKind::Lambda:
 			push_lambda_scope(expr);
-			walk_children(expr, [&](Expr* e) { compute_lambda_bindings_in(e); });
+			walk_children(expr, [&](Expr* e) { recompute_lambda_bindings_in(e); });
 			pop_lambda_scope();
 			all_lambdas_.push_back(expr);
 			break;
 
 		case ExprKind::SetBang:
 		{
-			compute_lambda_bindings_in(expr->set_bang.value);
+			recompute_lambda_bindings_in(expr->set_bang.value);
 			ResolvedBinding b = bindings_[expr->id];
 			record_ref(b);
 			record_set(b, expr->set_bang.is_init, expr->set_bang.value);
@@ -2749,7 +2756,7 @@ void Compiler::compute_lambda_bindings_in(Expr* expr)
 		}
 
 		default:
-			walk_children(expr, [&](Expr* e) { compute_lambda_bindings_in(e); });
+			walk_children(expr, [&](Expr* e) { recompute_lambda_bindings_in(e); });
 			break;
 	}
 }
@@ -3503,7 +3510,7 @@ namespace
 
 void Compiler::run_anf_inline(Program& program)
 {
-	// Needs current compute_lambda_bindings results, and the caller must rerun
+	// Needs current recompute_lambda_bindings results, and the caller must rerun
 	// that pass afterwards: splices change captures and upvalues.
 	AnfInline pass{.db = *this, .first_clone_id = next_expr_id_};
 	pass.hosts.push_back(toplevel_lambda_);
@@ -3525,6 +3532,76 @@ void Compiler::run_anf_inline(Program& program)
 	{
 		program.forms[i] = pass.walk(program.forms[i]);
 		verify_anf(program.forms[i]);
+	}
+}
+
+namespace
+{
+
+	bool is_nary_arith(std::string_view name)
+	{
+		// Must stay a subset of select_call_op's fused names: a binarized chain
+		// of calls selection cannot fuse is strictly worse than one n-ary call.
+		return name == "+" || name == "-" || name == "*" || name == "/";
+	}
+
+	struct BinarizeArith
+	{
+		Compiler& db;
+
+		bool lowerable(Expr* e)
+		{
+			if (e->call.args.size() < 3 || e->call.proc->kind != ExprKind::VarRef)
+			{
+				return false;
+			}
+			std::string_view name = e->call.proc->var_ref.name;
+			return is_nary_arith(name) && db.prim_binding_lowerable(db.binding(e->call.proc), name);
+		}
+
+		Expr* make_binary(Expr* proc, Expr* lhs, Expr* rhs, SourceLoc loc)
+		{
+			Expr* e = db.make_expr(ExprKind::Call, loc);
+			e->call.proc = proc;
+			e->call.args = db.arena.copy_slice({lhs, rhs});
+			return e;
+		}
+
+		Expr* clone_proc(Expr* proc)
+		{
+			Expr* e = db.make_expr(ExprKind::VarRef, proc->loc);
+			e->var_ref.name = proc->var_ref.name;
+			get(db.bindings_, e->id) = get(db.bindings_, proc->id);
+			return e;
+		}
+
+		void walk(Expr* e)
+		{
+			walk_children(e, [&](Expr* c) { walk(c); });
+			if (e->kind != ExprKind::Call || !lowerable(e))
+			{
+				return;
+			}
+			// (op a b c) -> (op (op a b) c), leftward like the prim's fold, so
+			// the lowering is bit-identical for doubles.
+			Slice<Expr*> args = e->call.args;
+			Expr* acc = args[0];
+			for (uint32_t i = 1; i + 1 < args.size(); ++i)
+			{
+				acc = make_binary(clone_proc(e->call.proc), acc, args[i], e->loc);
+			}
+			e->call.args = db.arena.copy_slice({acc, args.back()});
+		}
+	};
+
+} // namespace
+
+void Compiler::run_binarize_arith(Program& program)
+{
+	BinarizeArith pass{.db = *this};
+	for (Expr* form : program.forms)
+	{
+		pass.walk(form);
 	}
 }
 
@@ -3837,8 +3914,6 @@ namespace
 
 void Compiler::run_stackify(Program& program)
 {
-	// Needs current compute_lambda_bindings results; the tree need not stay
-	// ANF afterwards.
 	Stackify pass{.db = *this};
 	for (Expr* form : program.forms)
 	{
