@@ -178,137 +178,160 @@ const char* opcode_name(uint8_t op)
 	}
 }
 
-bool is_call_ic_slot_op(uint8_t op)
+bool is_cs_op(uint8_t op)
 {
 #define X(name, disp)                                                                                        \
 	if (op == static_cast<uint8_t>(Opcode::name))                                                            \
 	{                                                                                                        \
 		return true;                                                                                         \
 	}
-	JET_REPLICATE(X, call_ic_slot, "cs")
+	JET_REPLICATE(X, cs, "cs")
+	JET_REPLICATE(X, cst, "cst")
 #undef X
 	return false;
 }
 
-bool is_call_ic_slot_local_op(uint8_t op)
+bool is_cd_op(uint8_t op)
 {
 #define X(name, disp)                                                                                        \
 	if (op == static_cast<uint8_t>(Opcode::name))                                                            \
 	{                                                                                                        \
 		return true;                                                                                         \
 	}
-	JET_REPLICATE(X, call_ic_slot_local, "csl")
-#undef X
-	return false;
-}
-
-bool is_call_ic_direct_op(uint8_t op)
-{
-#define X(name, disp)                                                                                        \
-	if (op == static_cast<uint8_t>(Opcode::name))                                                            \
-	{                                                                                                        \
-		return true;                                                                                         \
-	}
-	JET_REPLICATE(X, call_ic_direct, "cd")
+	JET_REPLICATE(X, cd, "cd")
+	JET_REPLICATE(X, cdt, "cdt")
 #undef X
 	return false;
 }
 
 void decode_args(FILE* out, uint8_t op, Code* p)
 {
-	if (is_call_ic_slot_op(op))
+	if (is_cs_op(op))
 	{
-		OP_call_ic_slot* o = reinterpret_cast<OP_call_ic_slot*>(p);
-		std::fprintf(out, " upvalue=%u tail=%d nargs=%zu", o->upvalue_idx, o->tail, o->nargs);
+		OP_cs* o = reinterpret_cast<OP_cs*>(p);
+		std::fprintf(out, " w=%u upvalue=%u nargs=%u", o->w, o->upvalue_idx, o->nargs);
 		return;
 	}
-	if (is_call_ic_slot_local_op(op))
+	if (is_cd_op(op))
 	{
-		OP_call_ic_slot_local* o = reinterpret_cast<OP_call_ic_slot_local*>(p);
-		std::fprintf(out, " local_off=%u upvalue=%u tail=%d nargs=%zu", o->local_off, o->upvalue_idx, o->tail,
+		OP_cd* o = reinterpret_cast<OP_cd*>(p);
+		std::fprintf(out, " w=%u src=%s idx=%u nargs=%u", o->w, o->src == 0 ? "local" : "upvalue", o->idx,
 					 o->nargs);
-		return;
-	}
-	if (is_call_ic_direct_op(op))
-	{
-		OP_call_ic_direct* o = reinterpret_cast<OP_call_ic_direct*>(p);
-		std::fprintf(out, " src=%s idx=%u tail=%d nargs=%zu", o->src == 0 ? "local" : "upvalue", o->idx,
-					 o->tail, o->nargs);
 		return;
 	}
 	switch (static_cast<Opcode>(op))
 	{
-		case Opcode::ldc:
-			std::fprintf(out, " idx=%u", reinterpret_cast<OP_ldc*>(p)->idx);
-			break;
-		case Opcode::sub2sc:
-		case Opcode::add2sc:
-		case Opcode::eq2sc:
-		case Opcode::lt2sc:
-			std::fprintf(out, " idx=%u", reinterpret_cast<OP_binop_sc*>(p)->idx);
-			break;
-		case Opcode::if_then_else:
-			std::fprintf(out, " size=%zu", reinterpret_cast<OP_if_then_else*>(p)->consequent_size);
-			break;
 		case Opcode::skip:
 			std::fprintf(out, " size=%zu", reinterpret_cast<OP_skip*>(p)->size);
 			break;
-		case Opcode::call:
+		case Opcode::mov:
 		{
-			OP_call* o = reinterpret_cast<OP_call*>(p);
-			std::fprintf(out, " tail=%d nargs=%zu", o->tail, o->nargs);
+			OP_mov* o = reinterpret_cast<OP_mov*>(p);
+			std::fprintf(out, " dst=%u src=%u", o->dst, o->src);
 			break;
 		}
-		case Opcode::recur:
-			std::fprintf(out, " nargs=%u", reinterpret_cast<OP_recur*>(p)->nargs);
-			break;
-		case Opcode::make_closure:
+		case Opcode::ldk:
 		{
-			OP_make_closure* o = reinterpret_cast<OP_make_closure*>(p);
-			std::fprintf(out, " idx=%u n_captures=%u", o->pool_idx, o->n_captures);
+			OP_ldk* o = reinterpret_cast<OP_ldk*>(p);
+			std::fprintf(out, " dst=%u k=%u", o->dst, o->idx);
 			break;
 		}
-		case Opcode::ref_local:
-		case Opcode::set_local:
-		case Opcode::set_local_pop:
-		case Opcode::ref_downvalue:
-		case Opcode::set_downvalue:
-		case Opcode::box_local:
-			std::fprintf(out, " off=%d", reinterpret_cast<OP_ref_local*>(p)->off);
-			break;
-		case Opcode::ref_upvalue_direct:
-		case Opcode::ref_upvalue_slot:
-		case Opcode::set_upvalue:
-			std::fprintf(out, " idx=%u", reinterpret_cast<OP_ref_upvalue_direct*>(p)->idx);
-			break;
-		case Opcode::ref_local_field:
-		case Opcode::set_local_field:
-			std::fprintf(out, " off=%d", reinterpret_cast<OP_ref_local_field*>(p)->off);
-			break;
-		case Opcode::ref_upvalue_direct_field:
-		case Opcode::set_upvalue_direct_field:
-		case Opcode::ref_upvalue_slot_field:
-		case Opcode::set_upvalue_slot_field:
-			std::fprintf(out, " idx=%u", reinterpret_cast<OP_ref_upvalue_field*>(p)->idx);
-			break;
-		case Opcode::ref_field_ck:
-		case Opcode::set_field_ck:
-			std::fprintf(out, " key=%u", reinterpret_cast<OP_ref_field_ck*>(p)->key_idx);
-			break;
-		case Opcode::ref_local_field_ck:
-		case Opcode::set_local_field_ck:
+		case Opcode::ldu:
+		case Opcode::ldus:
+		case Opcode::ldd:
 		{
-			OP_ref_local_field_ck* o = reinterpret_cast<OP_ref_local_field_ck*>(p);
-			std::fprintf(out, " off=%d key=%u", o->off, o->key_idx);
+			OP_ldu* o = reinterpret_cast<OP_ldu*>(p);
+			std::fprintf(out, " dst=%u idx=%u", o->dst, o->idx);
 			break;
 		}
-		case Opcode::ref_upvalue_direct_field_ck:
-		case Opcode::set_upvalue_direct_field_ck:
-		case Opcode::ref_upvalue_slot_field_ck:
-		case Opcode::set_upvalue_slot_field_ck:
+		case Opcode::stu:
+		case Opcode::std:
 		{
-			OP_ref_upvalue_field_ck* o = reinterpret_cast<OP_ref_upvalue_field_ck*>(p);
-			std::fprintf(out, " idx=%u key=%u", o->idx, o->key_idx);
+			OP_stu* o = reinterpret_cast<OP_stu*>(p);
+			std::fprintf(out, " idx=%u src=%u", o->idx, o->src);
+			break;
+		}
+		case Opcode::box:
+			std::fprintf(out, " reg=%u", reinterpret_cast<OP_box*>(p)->reg);
+			break;
+		case Opcode::clos:
+		{
+			OP_clos* o = reinterpret_cast<OP_clos*>(p);
+			std::fprintf(out, " dst=%u idx=%u n_captures=%u", o->dst, o->pool_idx, o->n_captures);
+			break;
+		}
+		case Opcode::add:
+		case Opcode::sub:
+		case Opcode::mul:
+		case Opcode::div:
+		case Opcode::eq:
+		case Opcode::lt:
+		case Opcode::le:
+		case Opcode::gt:
+		case Opcode::ge:
+		{
+			OP_binop_rr* o = reinterpret_cast<OP_binop_rr*>(p);
+			std::fprintf(out, " dst=%u a=%u b=%u", o->dst, o->a, o->b);
+			break;
+		}
+		case Opcode::addk:
+		case Opcode::subk:
+		case Opcode::mulk:
+		case Opcode::divk:
+		case Opcode::eqk:
+		case Opcode::ltk:
+		{
+			OP_binop_rk* o = reinterpret_cast<OP_binop_rk*>(p);
+			std::fprintf(out, " dst=%u a=%u k=%u", o->dst, o->a, o->b);
+			break;
+		}
+		case Opcode::if_false:
+		{
+			OP_if_false* o = reinterpret_cast<OP_if_false*>(p);
+			std::fprintf(out, " src=%u size=%u", o->src, o->size);
+			break;
+		}
+		case Opcode::retv:
+			std::fprintf(out, " src=%u", reinterpret_cast<OP_retv*>(p)->src);
+			break;
+		case Opcode::callw:
+		case Opcode::tcall:
+		{
+			OP_callw* o = reinterpret_cast<OP_callw*>(p);
+			std::fprintf(out, " w=%u callee=%u nargs=%u", o->w, o->callee, o->nargs);
+			break;
+		}
+		case Opcode::recurw:
+		{
+			OP_recurw* o = reinterpret_cast<OP_recurw*>(p);
+			std::fprintf(out, " w=%u nargs=%u", o->w, o->nargs);
+			break;
+		}
+		case Opcode::applyw:
+			std::fprintf(out, " w=%u", reinterpret_cast<OP_applyw*>(p)->w);
+			break;
+		case Opcode::ldf:
+		{
+			OP_ldf* o = reinterpret_cast<OP_ldf*>(p);
+			std::fprintf(out, " dst=%u obj=%u key=%u", o->dst, o->obj, o->key);
+			break;
+		}
+		case Opcode::stf:
+		{
+			OP_stf* o = reinterpret_cast<OP_stf*>(p);
+			std::fprintf(out, " obj=%u key=%u val=%u", o->obj, o->key, o->val);
+			break;
+		}
+		case Opcode::ldfk:
+		{
+			OP_ldfk* o = reinterpret_cast<OP_ldfk*>(p);
+			std::fprintf(out, " dst=%u obj=%u k=%u", o->dst, o->obj, o->key_idx);
+			break;
+		}
+		case Opcode::stfk:
+		{
+			OP_stfk* o = reinterpret_cast<OP_stfk*>(p);
+			std::fprintf(out, " obj=%u k=%u val=%u", o->obj, o->key_idx, o->val);
 			break;
 		}
 		default:

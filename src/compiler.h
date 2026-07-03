@@ -12,7 +12,6 @@ using Bytecode = std::vector<uint8_t>;
 struct CompileFlags
 {
 	bool inlining = true;
-	bool stackify = true;
 	bool specialize_ops = true;
 };
 

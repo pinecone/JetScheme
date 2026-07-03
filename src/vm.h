@@ -200,7 +200,7 @@ enum class ConstTag : uint8_t
 	Unknown,
 	GlobalName,
 	// Pool entry encoding a lambda body. Decodes to a template Lambda atom
-	// (captures empty); make_closure clones it with a populated captures vec.
+	// (captures empty); clos clones it with a populated captures vec.
 	// A zero-upvalue lambda is reached via ldc -- the template is the closure.
 	Lambda
 };
@@ -225,6 +225,7 @@ struct Frame
 	Code* code;
 	Lambda* closure;
 	size_t base;
+	size_t top;
 };
 
 class Env
@@ -298,6 +299,11 @@ struct VmState
 	Atom* stack_base;
 	Atom* stack_end;
 	Atom* stack_top;
+	// High-water mark of stack_top since the last collect. Slots above it hold no
+	// heap atoms; collect() re-zeroes everything between the scanned region and the
+	// watermark so the mark scan never reads an atom whose referent a sweep freed
+	// while the slot sat unscanned.
+	Atom* stack_watermark;
 	Atom* constants;
 	size_t n_constants;
 };
@@ -314,10 +320,10 @@ void collect(VmState& s);
 
 struct ObjShape
 {
-	VmOp ref_handler;
-	VmOp set_handler;
-	VmOp ref_handler_ck;
-	VmOp set_handler_ck;
+	VmOp ldf_handler;
+	VmOp stf_handler;
+	VmOp ldfk_handler;
+	VmOp stfk_handler;
 	Atom (*slow_ref)(Atom, Atom);
 };
 
@@ -326,7 +332,7 @@ extern ObjShape g_shape_by_tag[16];
 inline ObjShape* shape_of(Atom a)
 {
 	ObjShape* sh = &g_shape_by_tag[a.tag()];
-	return sh->ref_handler ? sh : nullptr;
+	return sh->ldf_handler ? sh : nullptr;
 }
 
 #define DISPATCH()                                                                                           \

@@ -513,9 +513,8 @@ struct Compiler
 		Opcode op;
 		union
 		{
-			struct { uint16_t addr; } field;   // local off / upvalue idx of addressed field forms
-			struct { uint16_t addr; } var;     // local off / upvalue idx of ref/set
-			struct { uint16_t upvalue_idx; uint16_t local_off; } call_ic_slot;
+			struct { uint16_t addr; } var;     // register / upvalue idx of ref/set
+			struct { uint16_t upvalue_idx; } call_ic_slot;
 			struct { uint8_t src; uint16_t idx; } call_ic_direct;
 		} u;
 	};
@@ -528,7 +527,6 @@ struct Compiler
 
 	void run_anf_inline(Program& program);
 	void run_binarize_arith(Program& program);
-	void run_stackify(Program& program);
 
 	Bytecode compile();
 };
@@ -2170,6 +2168,12 @@ std::string_view Compiler::gensym()
 	return {buf, static_cast<size_t>(n)};
 }
 
+// ANF hoist temps are single-use by construction.
+static bool is_anf_temp(std::string_view name)
+{
+	return name.starts_with("%t ");
+}
+
 Expr* Compiler::anf_wrap(AnfBindings& bindings, Expr* body)
 {
 	// bindings[0] becomes the outermost Let: vals evaluate in the order they
@@ -2465,7 +2469,7 @@ bool Compiler::prim_binding_lowerable(ResolvedBinding b, std::string_view prim)
 
 void Compiler::record_ref(ResolvedBinding b)
 {
-	// Codegen wires each transit lambda's make_closure to forward the Slot, so
+	// Codegen wires each transit lambda's clos to forward the Slot, so
 	// every lambda between owner and the current scope needs an upvalue entry.
 	if (lambdas_.back() == b.lambda)
 	{
@@ -2610,11 +2614,6 @@ void Compiler::resolve_bindings(Program& program)
 	{
 		run_binarize_arith(program);
 		recompute_lambda_bindings(program);
-	}
-
-	if (flags_.stackify)
-	{
-		run_stackify(program);
 	}
 
 	for (Expr* L : all_lambdas_)
@@ -2898,7 +2897,7 @@ void Compiler::select_call_op(Expr* expr, Expr* current)
 {
 	Expr* proc = expr->call.proc;
 	OpSelection& sel = selected_ops_[expr->id].emplace();
-	sel.op = Opcode::call;
+	sel.op = Opcode::callw;
 
 	if (!flags_.specialize_ops)
 	{
@@ -2921,40 +2920,40 @@ void Compiler::select_call_op(Expr* expr, Expr* current)
 		if (!get(lb.reassigned_after_init, proc_binding.breadth)
 			&& get(lb.bound_init, proc_binding.breadth) == current)
 		{
-			sel.op = Opcode::recur;
+			sel.op = Opcode::recurw;
 			return;
 		}
 	}
 
-	// Fused two-arg arithmetic: ss, or sc when the rhs is a number literal.
+	// Two-arg arithmetic: rr, or rk when the rhs is a number literal.
 	if (expr->call.args.size() == 2)
 	{
 		std::string_view name = proc->var_ref.name;
 		Opcode op;
-		bool fused = true;
-		if (name == "-")       op = Opcode::sub2ss;
-		else if (name == "+")  op = Opcode::add2ss;
-		else if (name == "*")  op = Opcode::mul2ss;
-		else if (name == "/")  op = Opcode::div2ss;
-		else if (name == "=")  op = Opcode::eq2ss;
-		else if (name == "<")  op = Opcode::lt2ss;
-		else if (name == "<=") op = Opcode::le2ss;
-		else if (name == ">")  op = Opcode::gt2ss;
-		else if (name == ">=") op = Opcode::ge2ss;
-		else                   fused = false;
-		if (fused && prim_binding_lowerable(proc_binding, name))
+		bool lowered = true;
+		if (name == "-")       op = Opcode::sub;
+		else if (name == "+")  op = Opcode::add;
+		else if (name == "*")  op = Opcode::mul;
+		else if (name == "/")  op = Opcode::div;
+		else if (name == "=")  op = Opcode::eq;
+		else if (name == "<")  op = Opcode::lt;
+		else if (name == "<=") op = Opcode::le;
+		else if (name == ">")  op = Opcode::gt;
+		else if (name == ">=") op = Opcode::ge;
+		else                   lowered = false;
+		if (lowered && prim_binding_lowerable(proc_binding, name))
 		{
 			if (expr->call.args[1]->kind == ExprKind::NumberLit)
 			{
 				switch (op)
 				{
-					case Opcode::sub2ss: op = Opcode::sub2sc; break;
-					case Opcode::add2ss: op = Opcode::add2sc; break;
-					case Opcode::mul2ss: op = Opcode::mul2sc; break;
-					case Opcode::div2ss: op = Opcode::div2sc; break;
-					case Opcode::eq2ss:  op = Opcode::eq2sc;  break;
-					case Opcode::lt2ss:  op = Opcode::lt2sc;  break;
-					default:             break;   // no sc form for le/gt/ge
+					case Opcode::sub: op = Opcode::subk; break;
+					case Opcode::add: op = Opcode::addk; break;
+					case Opcode::mul: op = Opcode::mulk; break;
+					case Opcode::div: op = Opcode::divk; break;
+					case Opcode::eq:  op = Opcode::eqk;  break;
+					case Opcode::lt:  op = Opcode::ltk;  break;
+					default:          break;   // no rk form for le/gt/ge
 				}
 			}
 			sel.op = op;
@@ -2972,31 +2971,21 @@ void Compiler::select_call_op(Expr* expr, Expr* current)
 
 	bool slot = needs_slot(proc_binding.lambda, static_cast<uint32_t>(proc_binding.breadth));
 
-	// Callee in a boxed binding: slot IC, local variant when the last arg is
-	// a plain local.
+	// Callee in a boxed binding: slot IC.
 	if (proc_binding.lambda != current && slot)
 	{
 		std::optional<uint16_t> found = find_upvalue(current, proc_binding.lambda,
 													 static_cast<uint32_t>(proc_binding.breadth));
 		JET_DIE_UNLESS(found, "codegen: cacheable call missing upvalue entry");
-		sel.op = Opcode::call_ic_slot_0;
+		sel.op = Opcode::cs_0;
 		sel.u.call_ic_slot.upvalue_idx = *found;
-		if (!expr->call.args.empty() && expr->call.args.back()->kind == ExprKind::VarRef)
-		{
-			ResolvedBinding lb = binding(expr->call.args.back());
-			if (lb.lambda == current && !needs_slot(lb.lambda, static_cast<uint32_t>(lb.breadth)))
-			{
-				sel.op = Opcode::call_ic_slot_local_0;
-				sel.u.call_ic_slot.local_off = narrow_off(lb.breadth);
-			}
-		}
 		return;
 	}
 
 	// Callee in an unboxed binding: direct IC.
 	if (!slot)
 	{
-		sel.op = Opcode::call_ic_direct_0;
+		sel.op = Opcode::cd_0;
 		if (proc_binding.lambda == current)
 		{
 			sel.u.call_ic_direct.src = 0;
@@ -3016,63 +3005,16 @@ void Compiler::select_call_op(Expr* expr, Expr* current)
 
 void Compiler::select_field_op(Expr* expr, Expr* current, Expr* receiver, Expr* key, bool is_set)
 {
-	struct FieldOps
-	{
-		Opcode ref, ref_ck, set, set_ck;
-	};
-	constexpr FieldOps LOCAL_FIELD_OPS = {Opcode::ref_local_field, Opcode::ref_local_field_ck,
-										  Opcode::set_local_field, Opcode::set_local_field_ck};
-	constexpr FieldOps UPVALUE_SLOT_FIELD_OPS = {Opcode::ref_upvalue_slot_field,
-												 Opcode::ref_upvalue_slot_field_ck,
-												 Opcode::set_upvalue_slot_field,
-												 Opcode::set_upvalue_slot_field_ck};
-	constexpr FieldOps UPVALUE_DIRECT_FIELD_OPS = {Opcode::ref_upvalue_direct_field,
-												   Opcode::ref_upvalue_direct_field_ck,
-												   Opcode::set_upvalue_direct_field,
-												   Opcode::set_upvalue_direct_field_ck};
-	constexpr FieldOps GENERIC_FIELD_OPS = {Opcode::ref_field, Opcode::ref_field_ck,
-											Opcode::set_field, Opcode::set_field_ck};
-	bool ck = is_literal_key(key);
-	auto&& pick_field_op = [&](const FieldOps& ops)
-	{
-		if (is_set)
-		{
-			return ck ? ops.set_ck : ops.set;
-		}
-		return ck ? ops.ref_ck : ops.ref;
-	};
-
 	OpSelection& sel = selected_ops_[expr->id].emplace();
 
 	if (!flags_.specialize_ops)
 	{
-		sel.op = is_set ? Opcode::set_field : Opcode::ref_field;
+		sel.op = is_set ? Opcode::stf : Opcode::ldf;
 		return;
 	}
 
-	if (receiver->kind == ExprKind::VarRef)
-	{
-		ResolvedBinding rb = binding(receiver);
-		bool slot = needs_slot(rb.lambda, static_cast<uint32_t>(rb.breadth));
-		if (rb.lambda == current && !slot)
-		{
-			sel.op = pick_field_op(LOCAL_FIELD_OPS);
-			sel.u.field.addr = narrow_off(rb.breadth);
-			return;
-		}
-		if (rb.lambda != current)
-		{
-			std::optional<uint16_t> upv = find_upvalue(current, rb.lambda, static_cast<uint32_t>(rb.breadth));
-			if (upv)
-			{
-				sel.op = pick_field_op(slot ? UPVALUE_SLOT_FIELD_OPS : UPVALUE_DIRECT_FIELD_OPS);
-				sel.u.field.addr = *upv;
-				return;
-			}
-		}
-	}
-
-	sel.op = pick_field_op(GENERIC_FIELD_OPS);
+	bool ck = is_literal_key(key);
+	sel.op = is_set ? (ck ? Opcode::stfk : Opcode::stf) : (ck ? Opcode::ldfk : Opcode::ldf);
 }
 
 void Compiler::select_var_op(Expr* expr, Expr* current, bool is_set)
@@ -3082,15 +3024,15 @@ void Compiler::select_var_op(Expr* expr, Expr* current, bool is_set)
 	OpSelection& sel = selected_ops_[expr->id].emplace();
 	if (b.lambda == current)
 	{
-		sel.op = is_set ? (slot ? Opcode::set_downvalue : Opcode::set_local)
-						: (slot ? Opcode::ref_downvalue : Opcode::ref_local);
+		// mov marks a plain register access: refs read the register directly
+		// (no code), sets write it.
+		sel.op = slot ? (is_set ? Opcode::std : Opcode::ldd) : Opcode::mov;
 		sel.u.var.addr = narrow_off(b.breadth);
 		return;
 	}
 	std::optional<uint16_t> found = find_upvalue(current, b.lambda, static_cast<uint32_t>(b.breadth));
 	JET_DIE_UNLESS(found, "select-pass: ref to non-local without upvalue entry");
-	sel.op = is_set ? Opcode::set_upvalue
-					: (slot ? Opcode::ref_upvalue_slot : Opcode::ref_upvalue_direct);
+	sel.op = is_set ? Opcode::stu : (slot ? Opcode::ldus : Opcode::ldu);
 	sel.u.var.addr = *found;
 }
 
@@ -3545,11 +3487,6 @@ namespace
 		return name == "+" || name == "-" || name == "*" || name == "/";
 	}
 
-	bool is_pure_prim(std::string_view name)
-	{
-		return name == "+" || name == "-" || name == "*" || name == "/";
-	}
-
 	struct BinarizeArith
 	{
 		Compiler& db;
@@ -3613,350 +3550,6 @@ void Compiler::run_binarize_arith(Program& program)
 namespace
 {
 
-	struct Stackify
-	{
-		Compiler& db;
-		std::unordered_map<uint64_t, uint32_t> use_counts{};
-
-		static bool is_temp(std::string_view name)
-		{
-			return name.size() > 3 && name[0] == '%' && name[1] == 't' && name[2] == ' ';
-		}
-
-		void count_uses(Expr* e)
-		{
-			switch (e->kind)
-			{
-				case ExprKind::NumberLit:
-				case ExprKind::StringLit:
-				case ExprKind::BooleanLit:
-				case ExprKind::CharacterLit:
-				case ExprKind::SymbolLit:
-				case ExprKind::UnknownLit:
-				case ExprKind::PrimRef:
-					break;
-				case ExprKind::VarRef:
-					++use_counts[binding_key(get(db.bindings_, e->id))];
-					break;
-				case ExprKind::Call:
-					count_uses(e->call.proc);
-					for (Expr* arg : e->call.args)
-					{
-						count_uses(arg);
-					}
-					break;
-				case ExprKind::Apply:
-					count_uses(e->apply.proc);
-					count_uses(e->apply.args);
-					break;
-				case ExprKind::Lambda:
-					for (Expr* form : e->lambda.body)
-					{
-						count_uses(form);
-					}
-					break;
-				case ExprKind::Let:
-					for (Expr* val : e->let.vals)
-					{
-						count_uses(val);
-					}
-					for (Expr* form : e->let.body)
-					{
-						count_uses(form);
-					}
-					break;
-				case ExprKind::SetBang:
-					count_uses(e->set_bang.value);
-					break;
-				case ExprKind::SetRef:
-					count_uses(e->set_ref.obj);
-					count_uses(e->set_ref.key);
-					count_uses(e->set_ref.value);
-					break;
-				case ExprKind::If:
-					count_uses(e->if_.test);
-					count_uses(e->if_.consequent);
-					if (e->if_.alternate)
-					{
-						count_uses(e->if_.alternate);
-					}
-					break;
-				default:
-					JET_DIE("%d:%d: stackify: unhandled ExprKind %d", e->loc.line, e->loc.col,
-							 static_cast<int>(e->kind));
-			}
-		}
-
-		bool is_pure_call(Expr* e)
-		{
-			if (e->kind != ExprKind::Call || e->call.proc->kind != ExprKind::VarRef)
-			{
-				return false;
-			}
-			std::string_view name = e->call.proc->var_ref.name;
-			if (!is_pure_prim(name) || !db.prim_binding_lowerable(db.binding(e->call.proc), name))
-			{
-				return false;
-			}
-			for (Expr* arg : e->call.args)
-			{
-				if (!is_anf_atom(arg) && !is_pure_call(arg))
-				{
-					return false;
-				}
-			}
-			return true;
-		}
-
-		Expr** scan_operand(Expr** op, uint64_t target, bool allow_skip, bool& done)
-		{
-			// A complex operand evaluates before everything scanned after it, so
-			// unless it is effect-free, reaching one means the target must be
-			// inside it or nowhere.
-			if ((*op)->kind == ExprKind::VarRef)
-			{
-				if (binding_key(get(db.bindings_, (*op)->id)) == target)
-				{
-					done = true;
-					return op;
-				}
-				done = !allow_skip;
-				return nullptr;
-			}
-			if (is_anf_atom(*op))
-			{
-				done = !allow_skip;
-				return nullptr;
-			}
-			Expr** r = find_first_use(op, target, allow_skip);
-			done = r != nullptr || !(allow_skip && is_pure_call(*op));
-			return r;
-		}
-
-		Expr** find_first_use(Expr** site, uint64_t target, bool allow_skip)
-		{
-			// Returns the location holding the target's use if that use is the
-			// first thing *site evaluates, else null.
-			Expr* e = *site;
-			switch (e->kind)
-			{
-				case ExprKind::VarRef:
-					return binding_key(get(db.bindings_, e->id)) == target ? site : nullptr;
-
-				// A let sequences its vals before its body: no skips
-				// across that boundary, so drill without scanning.
-				case ExprKind::Let:
-					return find_first_use(e->let.names.size() ? &e->let.vals[0] : &e->let.body[0],
-										  target, allow_skip);
-
-				case ExprKind::If:
-					return find_first_use(&e->if_.test, target, allow_skip);
-
-				case ExprKind::SetBang:
-					return find_first_use(&e->set_bang.value, target, allow_skip);
-
-				case ExprKind::Call:
-				{
-					bool done = false;
-					Expr** r = scan_operand(&e->call.proc, target, allow_skip, done);
-					if (done)
-					{
-						return r;
-					}
-					for (uint32_t i = 0; i < e->call.args.size(); ++i)
-					{
-						r = scan_operand(&e->call.args[i], target, allow_skip, done);
-						if (done)
-						{
-							return r;
-						}
-					}
-					return nullptr;
-				}
-
-				case ExprKind::Apply:
-				{
-					bool done = false;
-					Expr** r = scan_operand(&e->apply.proc, target, allow_skip, done);
-					if (done)
-					{
-						return r;
-					}
-					r = scan_operand(&e->apply.args, target, allow_skip, done);
-					return done ? r : nullptr;
-				}
-
-				case ExprKind::SetRef:
-				{
-					bool done = false;
-					Expr** r = scan_operand(&e->set_ref.obj, target, allow_skip, done);
-					if (done)
-					{
-						return r;
-					}
-					r = scan_operand(&e->set_ref.key, target, allow_skip, done);
-					if (done)
-					{
-						return r;
-					}
-					r = scan_operand(&e->set_ref.value, target, allow_skip, done);
-					return done ? r : nullptr;
-				}
-
-				default:
-					return nullptr;
-			}
-		}
-
-		Expr* walk(Expr* e)
-		{
-			switch (e->kind)
-			{
-				case ExprKind::NumberLit:
-				case ExprKind::StringLit:
-				case ExprKind::BooleanLit:
-				case ExprKind::CharacterLit:
-				case ExprKind::SymbolLit:
-				case ExprKind::UnknownLit:
-				case ExprKind::PrimRef:
-				case ExprKind::VarRef:
-					return e;
-
-				case ExprKind::Call:
-					e->call.proc = walk(e->call.proc);
-					for (uint32_t i = 0; i < e->call.args.size(); ++i)
-					{
-						e->call.args[i] = walk(e->call.args[i]);
-					}
-					return e;
-
-				case ExprKind::Apply:
-					e->apply.proc = walk(e->apply.proc);
-					e->apply.args = walk(e->apply.args);
-					return e;
-
-				case ExprKind::Lambda:
-					for (uint32_t i = 0; i < e->lambda.body.size(); ++i)
-					{
-						e->lambda.body[i] = walk(e->lambda.body[i]);
-					}
-					return e;
-
-				case ExprKind::SetBang:
-					e->set_bang.value = walk(e->set_bang.value);
-					return e;
-
-				case ExprKind::SetRef:
-					e->set_ref.obj = walk(e->set_ref.obj);
-					e->set_ref.key = walk(e->set_ref.key);
-					e->set_ref.value = walk(e->set_ref.value);
-					return e;
-
-				case ExprKind::If:
-					e->if_.test = walk(e->if_.test);
-					e->if_.consequent = walk(e->if_.consequent);
-					if (e->if_.alternate)
-					{
-						e->if_.alternate = walk(e->if_.alternate);
-					}
-					return e;
-
-				case ExprKind::Let:
-				{
-					for (uint32_t i = 0; i < e->let.vals.size(); ++i)
-					{
-						e->let.vals[i] = walk(e->let.vals[i]);
-					}
-					for (uint32_t i = 0; i < e->let.body.size(); ++i)
-					{
-						e->let.body[i] = walk(e->let.body[i]);
-					}
-
-					uint32_t n = e->let.names.size();
-					Compiler::LambdaBindings& lb = db.lambda_bindings_[e->let.owner];
-					// Only trailing bindings contract: an earlier binding's val
-					// may not move past a later binding's.
-					while (n > 0)
-					{
-						uint32_t idx = n - 1;
-						uint32_t breadth = e->let.slot_base + idx;
-						if (get(lb.captured, breadth) || get(lb.mutated, breadth))
-						{
-							break;
-						}
-						uint64_t target = binding_key({e->let.owner, breadth});
-						Expr* val = e->let.vals[idx];
-						auto it = use_counts.find(target);
-						uint32_t uses = it == use_counts.end() ? 0 : it->second;
-						if (uses == 0)
-						{
-							if (!is_anf_atom(val))
-							{
-								Expr** data = db.arena.alloc_array<Expr*>(e->let.body.size() + 1);
-								data[0] = val;
-								for (uint32_t i = 0; i < e->let.body.size(); ++i)
-								{
-									data[i + 1] = e->let.body[i];
-								}
-								e->let.body = {data, e->let.body.size() + 1};
-							}
-							--n;
-							continue;
-						}
-						if (uses != 1)
-						{
-							break;
-						}
-						// A temp's val may hop over sibling atom reads and effect-free
-						// prim calls: a combination's operand order is unspecified, so
-						// the reorder just restores the source's order. A user-written
-						// let promises its val runs before the whole body, so it gets
-						// no skips.
-						Expr** site = find_first_use(&e->let.body[0], target, is_temp(e->let.names[idx]));
-						if (!site)
-						{
-							break;
-						}
-						*site = val;
-						--n;
-					}
-					if (n != e->let.names.size())
-					{
-						e->let.names = {e->let.names.data, n};
-						e->let.vals = {e->let.vals.data, n};
-					}
-					if (n == 0 && e->let.body.size() == 1)
-					{
-						return e->let.body[0];
-					}
-					return e;
-				}
-
-				default:
-					JET_DIE("%d:%d: stackify: unhandled ExprKind %d", e->loc.line, e->loc.col,
-							 static_cast<int>(e->kind));
-			}
-		}
-	};
-
-} // namespace
-
-void Compiler::run_stackify(Program& program)
-{
-	Stackify pass{.db = *this};
-	for (Expr* form : program.forms)
-	{
-		pass.count_uses(form);
-	}
-	for (uint32_t i = 0; i < program.forms.size(); ++i)
-	{
-		program.forms[i] = pass.walk(program.forms[i]);
-	}
-}
-
-namespace
-{
-
 	// LIR: linear IR between stackified resolved ANF and bytes.
 
 	struct LirInst
@@ -3964,15 +3557,19 @@ namespace
 		Opcode op;   // base opcode only: no _1.._7 replicas; label is IR-only
 		union
 		{
-			struct { uint16_t off; } local;                // ldl stl ldd std boxl
-			struct { uint16_t idx; } upvalue;              // ldu ldus stu
-			struct { uint16_t idx; } pool;                 // ldc, *2sc rhs
-			struct { uint32_t id; } label;                 // label; if/skip target
-			struct { uint32_t nargs; bool tail; } call;    // call, recur
-			struct { uint32_t nargs; bool tail; uint16_t upvalue_idx; uint16_t local_off; } call_ic_slot;
-			struct { uint32_t nargs; bool tail; uint8_t src; uint16_t idx; } call_ic_direct;
-			struct { uint16_t pool_idx; uint16_t first_capture; uint16_t n_captures; } closure;
-			struct { uint16_t addr; uint16_t key_idx; } field;   // key_idx only _ck
+			struct { uint16_t dst; uint16_t src; } mov;              // mov
+			struct { uint16_t dst; uint16_t idx; } load;             // ldk ldu ldus ldd
+			struct { uint16_t idx; uint16_t src; } store;            // stu std
+			struct { uint16_t reg; } box;                            // box
+			struct { uint16_t src; } ret;                            // retv
+			struct { uint32_t id; uint16_t src; } label;             // label; if_false/skip target
+			// One payload for every call op: callw/tcall read callee, cs/cst
+			// read upvalue_idx, cd/cdt read src+idx, recurw/applyw only w+nargs.
+			struct { uint16_t w; uint16_t nargs; uint16_t callee; uint16_t upvalue_idx; uint16_t idx;
+					 uint8_t src; } call;
+			struct { uint16_t dst; uint16_t pool_idx; uint16_t first_capture; uint16_t n_captures; } closure;
+			struct { uint16_t dst; uint16_t a; uint16_t b; } arith;  // rr; rk holds the pool idx in b
+			struct { uint16_t dst; uint16_t obj; uint16_t key; uint16_t val; } field;  // ldf stf; *k holds the pool idx in key
 		} u;
 	};
 
@@ -3984,8 +3581,13 @@ namespace
 		std::vector<OP_make_closure_capture> captures;
 		bool is_variadic = false;
 		uint32_t n_params = 0;
-		uint32_t n_locals = 0;
+		// Bump allocator for temps and call windows; starts at the named-register
+		// high water (static per lambda) and never shrinks.
+		uint32_t n_regs = 0;
 		uint16_t pool_slot = 0;   // unused for the toplevel (index 0)
+		// Coalesced bindings: named register -> the call-window register the value
+		// actually lives in. Write-once per register (the name frame never shrinks).
+		std::unordered_map<uint16_t, uint16_t> reg_alias;
 	};
 
 	struct LirProgram
@@ -4006,6 +3608,10 @@ namespace
 		// Lambda entries bypass the dedup: one pool slot per Lambda expr.
 		std::unordered_map<std::string, uint16_t> pool_idx{};
 
+		// Windows allocated ahead of their call site by argument sinking, keyed by
+		// the Call expr id.
+		std::unordered_map<uint32_t, uint16_t> call_windows{};
+
 		LirLambda& current_lambda()
 		{
 			// prog.lambdas reallocates as nested lambdas append; never hold the
@@ -4020,36 +3626,90 @@ namespace
 			return i;
 		}
 
-		void emit(LirInst i) { current_lambda().code.push_back(i); }
+		void emit(const LirInst& i) { current_lambda().code.push_back(i); }
 
-		void emit_op(Opcode op) { emit(inst(op)); }
+		uint16_t alloc_reg() { return alloc_window(1); }
 
-		void emit_local(Opcode op, uint16_t off)
+		uint16_t alloc_window(size_t n)
 		{
-			LirInst i = inst(op);
-			i.u.local.off = off;
+			// A window holds at least the result register: a nullary call still
+			// writes its result at w.
+			if (n == 0)
+			{
+				n = 1;
+			}
+			LirLambda& L = current_lambda();
+			JET_DIE_WHEN(L.n_regs + n > UINT16_MAX, "codegen: frame exceeds %d registers", UINT16_MAX);
+			uint16_t w = static_cast<uint16_t>(L.n_regs);
+			L.n_regs += n;
+			return w;
+		}
+
+		uint16_t alias(uint16_t r)
+		{
+			std::unordered_map<uint16_t, uint16_t>& m = current_lambda().reg_alias;
+			std::unordered_map<uint16_t, uint16_t>::iterator it = m.find(r);
+			return it == m.end() ? r : it->second;
+		}
+
+		// Find-or-allocate the window for a call site; argument sinking claims it
+		// ahead of emit_call reaching the site.
+		uint16_t claim_call_window(Expr* call_expr, size_t nargs)
+		{
+			std::unordered_map<uint32_t, uint16_t>::iterator it = call_windows.find(call_expr->id);
+			if (it == call_windows.end())
+			{
+				it = call_windows.emplace(call_expr->id, alloc_window(nargs)).first;
+			}
+			return it->second;
+		}
+
+		void emit_mov(uint16_t dst, uint16_t src)
+		{
+			if (dst == src)
+			{
+				return;
+			}
+			LirInst i = inst(Opcode::mov);
+			i.u.mov.dst = dst;
+			i.u.mov.src = src;
 			emit(i);
 		}
 
-		void emit_upvalue(Opcode op, uint16_t idx)
+		void emit_load(Opcode op, uint16_t dst, uint16_t idx)
 		{
 			LirInst i = inst(op);
-			i.u.upvalue.idx = idx;
+			i.u.load.dst = dst;
+			i.u.load.idx = idx;
 			emit(i);
 		}
 
-		void emit_label(Opcode op, uint32_t id)
+		void emit_store(Opcode op, uint16_t idx, uint16_t src)
+		{
+			LirInst i = inst(op);
+			i.u.store.idx = idx;
+			i.u.store.src = src;
+			emit(i);
+		}
+
+		void emit_box(uint16_t reg)
+		{
+			LirInst i = inst(Opcode::box);
+			i.u.box.reg = reg;
+			emit(i);
+		}
+
+		void emit_label(Opcode op, uint32_t id, uint16_t src = 0)
 		{
 			LirInst i = inst(op);
 			i.u.label.id = id;
+			i.u.label.src = src;
 			emit(i);
 		}
 
-		void emit_ldc(uint16_t idx)
+		void emit_ldk(uint16_t dst, uint16_t idx)
 		{
-			LirInst i = inst(Opcode::ldc);
-			i.u.pool.idx = idx;
-			emit(i);
+			emit_load(Opcode::ldk, dst, idx);
 		}
 
 		uint16_t intern_constant(std::string& serialized)
@@ -4125,17 +3785,42 @@ namespace
 			}
 		}
 
-		void emit_sequence(Slice<Expr*>& forms)
+		void emit_ret(uint16_t src)
+		{
+			LirInst i = inst(Opcode::retv);
+			i.u.ret.src = src;
+			emit(i);
+		}
+
+		uint16_t emit_sequence_value(Slice<Expr*>& forms)
 		{
 			uint32_t n = forms.size();
-			for (uint32_t i = 0; i < n; ++i)
+			if (n == 0)
 			{
-				emit_expr(forms[i]);
-				if (i + 1 < n)
-				{
-					emit_op(Opcode::pop);
-				}
+				uint16_t t = alloc_reg();
+				emit_ldk(t, intern_empty(ConstTag::Unknown));
+				return t;
 			}
+			for (uint32_t i = 0; i + 1 < n; ++i)
+			{
+				emit_to_any_reg(forms[i]);
+			}
+			return emit_to_any_reg(forms[n - 1]);
+		}
+
+		void emit_sequence_to(Slice<Expr*>& forms, uint16_t dst)
+		{
+			uint32_t n = forms.size();
+			if (n == 0)
+			{
+				emit_ldk(dst, intern_empty(ConstTag::Unknown));
+				return;
+			}
+			for (uint32_t i = 0; i + 1 < n; ++i)
+			{
+				emit_to_any_reg(forms[i]);
+			}
+			emit_to_reg(forms[n - 1], dst);
 		}
 
 		void emit_prologue(Expr* lambda)
@@ -4146,7 +3831,7 @@ namespace
 			{
 				if (captured[i] && mutated[i])
 				{
-					emit_local(Opcode::box_local, narrow_off(i));
+					emit_box(narrow_off(i));
 				}
 			}
 		}
@@ -4157,14 +3842,18 @@ namespace
 			prog.lambdas.emplace_back();
 			prog.lambdas[idx].is_variadic = expr->lambda.is_variadic;
 			prog.lambdas[idx].n_params = expr->lambda.params.size();
-			prog.lambdas[idx].n_locals = static_cast<uint32_t>(
+			// names is the named-register high water (the resolver's name frame
+			// only grows); the variadic formula can exceed it by the rest slot.
+			uint32_t n_named = static_cast<uint32_t>(
 				expr->lambda.params.size() + (expr->lambda.is_variadic ? 1 : 0));
+			uint32_t n_names = static_cast<uint32_t>(expr->lambda.names.size());
+			prog.lambdas[idx].n_regs = n_named > n_names ? n_named : n_names;
 
 			outer_lambdas.push_back(expr);
 			lambda_stack.push_back(idx);
 			emit_prologue(expr);
-			emit_sequence(expr->lambda.body);
-			emit_op(Opcode::ret);
+			uint16_t r = emit_sequence_value(expr->lambda.body);
+			emit_ret(r);
 			lambda_stack.pop_back();
 			outer_lambdas.pop_back();
 
@@ -4189,7 +3878,7 @@ namespace
 				if (rb.lambda == current)
 				{
 					cap.src = static_cast<uint8_t>(CaptureSource::Local);
-					cap.idx = static_cast<uint16_t>(rb.breadth);
+					cap.idx = alias(static_cast<uint16_t>(rb.breadth));
 				}
 				else
 				{
@@ -4202,15 +3891,16 @@ namespace
 			}
 		}
 
-		void emit_lambda_value(Expr* expr)
+		void emit_lambda_value(Expr* expr, uint16_t dst)
 		{
 			uint16_t pool_index = emit_lifted_lambda(expr);
 			if (expr->lambda.upvalues.empty())
 			{
-				emit_ldc(pool_index);
+				emit_ldk(dst, pool_index);
 				return;
 			}
-			LirInst i = inst(Opcode::make_closure);
+			LirInst i = inst(Opcode::clos);
+			i.u.closure.dst = dst;
 			i.u.closure.pool_idx = pool_index;
 			i.u.closure.first_capture = static_cast<uint16_t>(current_lambda().captures.size());
 			i.u.closure.n_captures = static_cast<uint16_t>(expr->lambda.upvalues.size());
@@ -4218,106 +3908,294 @@ namespace
 			emit(i);
 		}
 
-		void emit_var_ref_or_set(Expr* expr)
+		Compiler::OpSelection selection(Expr* expr, const char* what)
 		{
-			JET_DIE_WHEN(!db.selected_ops_[expr->id], "%d:%d: codegen: var access without selection",
-						  expr->loc.line, expr->loc.col);
+			JET_DIE_WHEN(!db.selected_ops_[expr->id], "%d:%d: codegen: %s without selection",
+						  expr->loc.line, expr->loc.col, what);
 			Compiler::OpSelection sel = *db.selected_ops_[expr->id];
+			// Coalesced homes resolve here, the single read point for selections;
+			// only these two payloads name an unboxed local register (for ldu/stu/
+			// ldus the same field holds an upvalue index).
+			if (sel.op == Opcode::mov)
+			{
+				sel.u.var.addr = alias(sel.u.var.addr);
+			}
+			else if (sel.op == Opcode::cd_0 && sel.u.call_ic_direct.src == 0)
+			{
+				sel.u.call_ic_direct.idx = alias(sel.u.call_ic_direct.idx);
+			}
+			return sel;
+		}
+
+		uint16_t emit_set_bang(Expr* expr)
+		{
+			Compiler::OpSelection sel = selection(expr, "set!");
 			switch (sel.op)
 			{
-				case Opcode::ref_local:
-				case Opcode::ref_downvalue:
-				case Opcode::set_local:
-				case Opcode::set_downvalue:
-					emit_local(sel.op, sel.u.var.addr);
-					break;
-
-				case Opcode::ref_upvalue_direct:
-				case Opcode::ref_upvalue_slot:
-				case Opcode::set_upvalue:
-					emit_upvalue(sel.op, sel.u.var.addr);
-					break;
-
+				case Opcode::mov:
+				{
+					emit_to_reg(expr->set_bang.value, sel.u.var.addr);
+					return sel.u.var.addr;
+				}
+				case Opcode::std:
+				case Opcode::stu:
+				{
+					uint16_t v = emit_to_any_reg(expr->set_bang.value);
+					emit_store(sel.op, sel.u.var.addr, v);
+					return v;
+				}
 				default:
-					JET_DIE("%d:%d: codegen: unexpected var selection %d",
+					JET_DIE("%d:%d: codegen: unexpected set! selection %d",
 							 expr->loc.line, expr->loc.col, static_cast<int>(sel.op));
 			}
 		}
 
-		void emit_args(Slice<Expr*>& args, size_t n)
+		uint16_t emit_set_ref(Expr* expr)
 		{
-			for (size_t i = 0; i < n; ++i)
+			Compiler::OpSelection sel = selection(expr, "SetRef");
+			LirInst i = inst(sel.op);
+			i.u.field.obj = emit_to_any_reg(expr->set_ref.obj);
+			i.u.field.key = sel.op == Opcode::stfk ? intern_literal_key(expr->set_ref.key)
+												   : emit_to_any_reg(expr->set_ref.key);
+			uint16_t v = emit_to_any_reg(expr->set_ref.value);
+			i.u.field.val = v;
+			emit(i);
+			return v;
+		}
+
+		void emit_field_get(Compiler::OpSelection sel, Expr* receiver, Expr* key, uint16_t dst)
+		{
+			LirInst i = inst(sel.op);
+			i.u.field.dst = dst;
+			i.u.field.obj = emit_to_any_reg(receiver);
+			i.u.field.key = sel.op == Opcode::ldfk ? intern_literal_key(key) : emit_to_any_reg(key);
+			emit(i);
+		}
+
+		void emit_window_args(Slice<Expr*>& args, uint16_t w)
+		{
+			for (uint32_t i = 0; i < args.size(); ++i)
 			{
-				emit_expr(args[i]);
+				emit_to_reg(args[i], static_cast<uint16_t>(w + i));
 			}
 		}
 
-		void emit_field_op(Compiler::OpSelection sel, Expr* receiver, Expr* key, Expr* val)
+		bool is_plain_reg_ref(Expr* e, uint16_t r)
 		{
-			auto&& takes_receiver_from_stack = [](Opcode o)
+			if (e->kind != ExprKind::VarRef)
 			{
-				switch (o)
-				{
-					case Opcode::ref_field: case Opcode::ref_field_ck:
-					case Opcode::set_field: case Opcode::set_field_ck:
-						return true;
-					default:
-						return false;
-				}
-			};
-			auto&& takes_key_from_pool = [](Opcode o)
-			{
-				switch (o)
-				{
-					case Opcode::ref_field_ck:                case Opcode::set_field_ck:
-					case Opcode::ref_local_field_ck:          case Opcode::set_local_field_ck:
-					case Opcode::ref_upvalue_direct_field_ck: case Opcode::set_upvalue_direct_field_ck:
-					case Opcode::ref_upvalue_slot_field_ck:   case Opcode::set_upvalue_slot_field_ck:
-						return true;
-					default:
-						return false;
-				}
-			};
+				return false;
+			}
+			Compiler::OpSelection sel = selection(e, "var access");
+			return sel.op == Opcode::mov && sel.u.var.addr == r;
+		}
 
-			bool from_stack = takes_receiver_from_stack(sel.op);
-			bool from_pool = takes_key_from_pool(sel.op);
-			if (from_stack)
+		std::optional<uint16_t> window_slot(Expr* e, uint16_t home)
+		{
+			if (e->kind != ExprKind::Call || !is_call_shaped(selection(e, "Call").op))
 			{
-				emit_expr(receiver);
+				return std::nullopt;
 			}
-			if (!from_pool)
+			for (uint32_t i = 0; i < e->call.args.size(); ++i)
 			{
-				emit_expr(key);
+				if (is_plain_reg_ref(e->call.args[i], home))
+				{
+					return static_cast<uint16_t>(claim_call_window(e, e->call.args.size()) + i);
+				}
 			}
-			if (val)
+			return std::nullopt;
+		}
+
+		void emit_let_bindings(Expr* expr)
+		{
+			uint32_t sb = expr->let.slot_base;
+			uint32_t n = expr->let.names.size();
+			for (uint32_t i = 0; i < n; ++i)
 			{
-				emit_expr(val);
+				uint16_t home = narrow_off(sb + i);
+				Expr* val = expr->let.vals[i];
+				if (needs_slot(expr->let.owner, sb + i))
+				{
+					emit_to_reg(val, home);
+					continue;
+				}
+				// ANF nests hoists, so a value is often a let-chain around the
+				// expression that produces it: emit the inner bindings here and
+				// coalesce home with the terminal itself.
+				while (val->kind == ExprKind::Let && val->let.body.size() == 1)
+				{
+					emit_let_bindings(val);
+					val = val->let.body[0];
+				}
+				if (val->kind == ExprKind::Call)
+				{
+					Compiler::OpSelection sel = selection(val, "Call");
+					if (is_call_shaped(sel.op) && sel.op != Opcode::recurw)
+					{
+						current_lambda().reg_alias[home] = emit_call(val, sel);
+						continue;
+					}
+				}
+				if (is_anf_temp(expr->let.names[i]))
+				{
+					std::optional<uint16_t> target = sink_target(expr, home);
+					if (target)
+					{
+						emit_to_reg(val, *target);
+						current_lambda().reg_alias[home] = *target;
+						continue;
+					}
+				}
+				emit_to_reg(val, home);
 			}
+			for (uint32_t i = 0; i < n; ++i)
+			{
+				if (needs_slot(expr->let.owner, sb + i))
+				{
+					emit_box(narrow_off(sb + i));
+				}
+			}
+		}
+
+		// A single-use temp consumed as a window-call argument is computed straight
+		// into the argument register; the consumer's window is allocated early so
+		// the register is known at the temp's definition. Safe because everything
+		// emitted between the definition and the call writes only registers above
+		// its own (later-allocated, hence higher) window.
+		std::optional<uint16_t> sink_target(Expr* let_expr, uint16_t home)
+		{
+			Expr* cur = let_expr;
+			while (cur->let.body.size() == 1)
+			{
+				cur = cur->let.body[0];
+				if (cur->kind != ExprKind::Let)
+				{
+					return window_slot(cur, home);
+				}
+				for (uint32_t i = 0; i < cur->let.vals.size(); ++i)
+				{
+					std::optional<uint16_t> w = window_slot(cur->let.vals[i], home);
+					if (w)
+					{
+						return w;
+					}
+				}
+			}
+			return std::nullopt;
+		}
+
+		uint16_t emit_call(Expr* expr, Compiler::OpSelection sel)
+		{
+			bool tail = db.is_tail(expr);
+			uint16_t nargs = static_cast<uint16_t>(expr->call.args.size());
+
 			LirInst i = inst(sel.op);
-			if (!from_stack)
+			switch (sel.op)
 			{
-				i.u.field.addr = sel.u.field.addr;
+				case Opcode::recurw:
+					break;
+				case Opcode::cs_0:
+					i.op = tail ? Opcode::cst_0 : Opcode::cs_0;
+					i.u.call.upvalue_idx = sel.u.call_ic_slot.upvalue_idx;
+					break;
+				case Opcode::cd_0:
+					i.op = tail ? Opcode::cdt_0 : Opcode::cd_0;
+					i.u.call.src = sel.u.call_ic_direct.src;
+					i.u.call.idx = sel.u.call_ic_direct.idx;
+					break;
+				case Opcode::callw:
+					i.op = tail ? Opcode::tcall : Opcode::callw;
+					i.u.call.callee = emit_to_any_reg(expr->call.proc);
+					break;
+				default:
+					JET_DIE("%d:%d: codegen: unexpected Call selection %d",
+							 expr->loc.line, expr->loc.col, static_cast<int>(sel.op));
 			}
-			if (from_pool)
-			{
-				i.u.field.key_idx = intern_literal_key(key);
-			}
+
+			uint16_t w = claim_call_window(expr, nargs);
+			emit_window_args(expr->call.args, w);
+			i.u.call.w = w;
+			i.u.call.nargs = nargs;
 			emit(i);
+			return w;
+		}
+
+		uint16_t emit_apply(Expr* expr)
+		{
+			uint16_t w = alloc_window(2);
+			emit_to_reg(expr->apply.proc, w);
+			emit_to_reg(expr->apply.args, static_cast<uint16_t>(w + 1));
+			LirInst i = inst(Opcode::applyw);
+			i.u.call.w = w;
+			emit(i);
+			return w;
 		}
 
 		void emit_program(Program& program)
 		{
 			prog.lambdas.emplace_back();
-			prog.lambdas[0].n_locals = static_cast<uint32_t>(db.toplevel_lambda_->lambda.names.size());
+			prog.lambdas[0].n_regs = static_cast<uint32_t>(db.toplevel_lambda_->lambda.names.size());
 			emit_prologue(db.toplevel_lambda_);
-			for (Expr* form : program.forms)
-			{
-				emit_expr(form);
-			}
-			emit_op(Opcode::ret);
+			uint16_t r = emit_sequence_value(program.forms);
+			emit_ret(r);
 		}
 
-		void emit_expr(Expr* expr)
+		bool is_call_shaped(Opcode op)
+		{
+			switch (op)
+			{
+				case Opcode::callw:
+				case Opcode::cs_0:
+				case Opcode::cd_0:
+				case Opcode::recurw:
+					return true;
+				default:
+					return false;
+			}
+		}
+
+		uint16_t emit_to_any_reg(Expr* expr)
+		{
+			switch (expr->kind)
+			{
+				case ExprKind::VarRef:
+				{
+					Compiler::OpSelection sel = selection(expr, "var access");
+					if (sel.op == Opcode::mov)
+					{
+						return sel.u.var.addr;
+					}
+					break;
+				}
+
+				case ExprKind::Call:
+				{
+					Compiler::OpSelection sel = selection(expr, "Call");
+					if (is_call_shaped(sel.op))
+					{
+						return emit_call(expr, sel);
+					}
+					break;
+				}
+
+				case ExprKind::Apply:
+					return emit_apply(expr);
+
+				case ExprKind::SetBang:
+					return emit_set_bang(expr);
+
+				case ExprKind::SetRef:
+					return emit_set_ref(expr);
+
+				default:
+					break;
+			}
+			uint16_t t = alloc_reg();
+			emit_to_reg(expr, t);
+			return t;
+		}
+
+		void emit_to_reg(Expr* expr, uint16_t dst)
 		{
 			switch (expr->kind)
 			{
@@ -4325,220 +4203,142 @@ namespace
 				{
 					double val = number_lit_value(expr->number_lit.text);
 					Number n = static_cast<Number>(val);
-					emit_ldc(intern_typed(ConstTag::Number, n));
+					emit_ldk(dst, intern_typed(ConstTag::Number, n));
 					break;
 				}
 
 				case ExprKind::BooleanLit:
 				{
 					bool v = expr->boolean_lit.value;
-					emit_ldc(intern_typed(ConstTag::Boolean, v));
+					emit_ldk(dst, intern_typed(ConstTag::Boolean, v));
 					break;
 				}
 
 				case ExprKind::CharacterLit:
 				{
 					Character c = static_cast<Character>(expr->character_lit.value);
-					emit_ldc(intern_typed(ConstTag::Character, c));
+					emit_ldk(dst, intern_typed(ConstTag::Character, c));
 					break;
 				}
 
 				case ExprKind::StringLit:
-					emit_ldc(intern_string(ConstTag::String, expr->string_lit.value));
+					emit_ldk(dst, intern_string(ConstTag::String, expr->string_lit.value));
 					break;
 
 				case ExprKind::SymbolLit:
-					emit_ldc(intern_string(ConstTag::Symbol, expr->symbol_lit.name));
+					emit_ldk(dst, intern_string(ConstTag::Symbol, expr->symbol_lit.name));
 					break;
 
 				case ExprKind::UnknownLit:
-					emit_ldc(intern_empty(ConstTag::Unknown));
+					emit_ldk(dst, intern_empty(ConstTag::Unknown));
+					break;
+
+				case ExprKind::PrimRef:
+					emit_ldk(dst, intern_global_name(expr->prim_ref.name));
 					break;
 
 				case ExprKind::VarRef:
-					emit_var_ref_or_set(expr);
-					break;
-
-				case ExprKind::Call:
 				{
-					bool tail = db.is_tail(expr);
-					size_t nargs = static_cast<size_t>(expr->call.args.size());
-					JET_DIE_WHEN(!db.selected_ops_[expr->id], "%d:%d: codegen: Call without selection",
-								  expr->loc.line, expr->loc.col);
-					Compiler::OpSelection sel = *db.selected_ops_[expr->id];
-
+					Compiler::OpSelection sel = selection(expr, "var access");
 					switch (sel.op)
 					{
-						case Opcode::recur:
-						{
-							emit_args(expr->call.args, nargs);
-							LirInst i = inst(Opcode::recur);
-							i.u.call.nargs = static_cast<uint32_t>(nargs);
-							i.u.call.tail = true;
-							emit(i);
+						case Opcode::mov:
+							emit_mov(dst, sel.u.var.addr);
 							break;
-						}
-
-						case Opcode::sub2ss:
-						case Opcode::add2ss:
-						case Opcode::mul2ss:
-						case Opcode::div2ss:
-						case Opcode::eq2ss:
-						case Opcode::lt2ss:
-						case Opcode::le2ss:
-						case Opcode::gt2ss:
-						case Opcode::ge2ss:
-							emit_expr(expr->call.args[0]);
-							emit_expr(expr->call.args[1]);
-							emit_op(sel.op);
+						case Opcode::ldd:
+						case Opcode::ldu:
+						case Opcode::ldus:
+							emit_load(sel.op, dst, sel.u.var.addr);
 							break;
-
-						case Opcode::sub2sc:
-						case Opcode::add2sc:
-						case Opcode::mul2sc:
-						case Opcode::div2sc:
-						case Opcode::eq2sc:
-						case Opcode::lt2sc:
-						{
-							emit_expr(expr->call.args[0]);
-							LirInst i = inst(sel.op);
-							i.u.pool.idx = intern_literal_key(expr->call.args[1]);
-							emit(i);
-							break;
-						}
-
-						case Opcode::ref_field:
-						case Opcode::ref_field_ck:
-						case Opcode::ref_local_field:
-						case Opcode::ref_local_field_ck:
-						case Opcode::ref_upvalue_direct_field:
-						case Opcode::ref_upvalue_direct_field_ck:
-						case Opcode::ref_upvalue_slot_field:
-						case Opcode::ref_upvalue_slot_field_ck:
-							emit_field_op(sel, expr->call.args[0], expr->call.args[1], nullptr);
-							break;
-
-						case Opcode::call_ic_slot_0:
-						{
-							emit_args(expr->call.args, nargs);
-							LirInst i = inst(Opcode::call_ic_slot_0);
-							i.u.call_ic_slot.nargs = static_cast<uint32_t>(nargs);
-							i.u.call_ic_slot.tail = tail;
-							i.u.call_ic_slot.upvalue_idx = sel.u.call_ic_slot.upvalue_idx;
-							emit(i);
-							break;
-						}
-
-						case Opcode::call_ic_slot_local_0:
-						{
-							emit_args(expr->call.args, nargs - 1);
-							LirInst i = inst(Opcode::call_ic_slot_local_0);
-							i.u.call_ic_slot.nargs = static_cast<uint32_t>(nargs);
-							i.u.call_ic_slot.tail = tail;
-							i.u.call_ic_slot.upvalue_idx = sel.u.call_ic_slot.upvalue_idx;
-							i.u.call_ic_slot.local_off = sel.u.call_ic_slot.local_off;
-							emit(i);
-							break;
-						}
-
-						case Opcode::call_ic_direct_0:
-						{
-							emit_args(expr->call.args, nargs);
-							LirInst i = inst(Opcode::call_ic_direct_0);
-							i.u.call_ic_direct.nargs = static_cast<uint32_t>(nargs);
-							i.u.call_ic_direct.tail = tail;
-							i.u.call_ic_direct.src = sel.u.call_ic_direct.src;
-							i.u.call_ic_direct.idx = sel.u.call_ic_direct.idx;
-							emit(i);
-							break;
-						}
-
-						case Opcode::call:
-						{
-							emit_expr(expr->call.proc);
-							emit_args(expr->call.args, nargs);
-							LirInst i = inst(Opcode::call);
-							i.u.call.nargs = static_cast<uint32_t>(nargs);
-							i.u.call.tail = tail;
-							emit(i);
-							break;
-						}
-
 						default:
-							JET_DIE("%d:%d: codegen: unexpected Call selection %d",
+							JET_DIE("%d:%d: codegen: unexpected var selection %d",
 									 expr->loc.line, expr->loc.col, static_cast<int>(sel.op));
 					}
 					break;
 				}
 
+				case ExprKind::Call:
+				{
+					Compiler::OpSelection sel = selection(expr, "Call");
+					switch (sel.op)
+					{
+						case Opcode::add:
+						case Opcode::sub:
+						case Opcode::mul:
+						case Opcode::div:
+						case Opcode::eq:
+						case Opcode::lt:
+						case Opcode::le:
+						case Opcode::gt:
+						case Opcode::ge:
+						case Opcode::addk:
+						case Opcode::subk:
+						case Opcode::mulk:
+						case Opcode::divk:
+						case Opcode::eqk:
+						case Opcode::ltk:
+						{
+							bool k = sel.op == Opcode::addk || sel.op == Opcode::subk
+									 || sel.op == Opcode::mulk || sel.op == Opcode::divk
+									 || sel.op == Opcode::eqk || sel.op == Opcode::ltk;
+							LirInst i = inst(sel.op);
+							i.u.arith.dst = dst;
+							i.u.arith.a = emit_to_any_reg(expr->call.args[0]);
+							i.u.arith.b = k ? intern_literal_key(expr->call.args[1])
+											: emit_to_any_reg(expr->call.args[1]);
+							emit(i);
+							break;
+						}
+
+						case Opcode::ldf:
+						case Opcode::ldfk:
+							emit_field_get(sel, expr->call.args[0], expr->call.args[1], dst);
+							break;
+
+						default:
+							emit_mov(dst, emit_call(expr, sel));
+							break;
+					}
+					break;
+				}
+
 				case ExprKind::Apply:
-					emit_expr(expr->apply.proc);
-					emit_expr(expr->apply.args);
-					emit_op(Opcode::apply);
+					emit_mov(dst, emit_apply(expr));
 					break;
 
 				case ExprKind::Lambda:
-					emit_lambda_value(expr);
-					break;
-
-				case ExprKind::PrimRef:
-					emit_ldc(intern_global_name(expr->prim_ref.name));
+					emit_lambda_value(expr, dst);
 					break;
 
 				case ExprKind::SetBang:
-					emit_expr(expr->set_bang.value);
-					emit_var_ref_or_set(expr);
+					emit_mov(dst, emit_set_bang(expr));
+					break;
+
+				case ExprKind::SetRef:
+					emit_mov(dst, emit_set_ref(expr));
 					break;
 
 				case ExprKind::Let:
-				{
-					uint32_t sb = expr->let.slot_base;
-					uint32_t n = expr->let.names.size();
-					if (sb + n > current_lambda().n_locals)
-					{
-						current_lambda().n_locals = sb + n;
-					}
-					for (uint32_t i = 0; i < n; ++i)
-					{
-						emit_expr(expr->let.vals[i]);
-						emit_local(Opcode::set_local_pop, narrow_off(sb + i));
-					}
-					for (uint32_t i = 0; i < n; ++i)
-					{
-						if (needs_slot(expr->let.owner, sb + i))
-						{
-							emit_local(Opcode::box_local, narrow_off(sb + i));
-						}
-					}
-					emit_sequence(expr->let.body);
+					emit_let_bindings(expr);
+					emit_sequence_to(expr->let.body, dst);
 					break;
-				}
-
-				case ExprKind::SetRef:
-				{
-					JET_DIE_WHEN(!db.selected_ops_[expr->id], "%d:%d: codegen: SetRef without selection",
-								  expr->loc.line, expr->loc.col);
-					emit_field_op(*db.selected_ops_[expr->id], expr->set_ref.obj, expr->set_ref.key,
-								  expr->set_ref.value);
-					break;
-				}
 
 				case ExprKind::If:
 				{
-					emit_expr(expr->if_.test);
+					uint16_t test = emit_to_any_reg(expr->if_.test);
 					uint32_t l_alt = prog.next_label++;
 					uint32_t l_end = prog.next_label++;
-					emit_label(Opcode::if_then_else, l_alt);
-					emit_expr(expr->if_.consequent);
+					emit_label(Opcode::if_false, l_alt, test);
+					emit_to_reg(expr->if_.consequent, dst);
 					emit_label(Opcode::skip, l_end);
 					emit_label(Opcode::label, l_alt);
 					if (expr->if_.alternate)
 					{
-						emit_expr(expr->if_.alternate);
+						emit_to_reg(expr->if_.alternate, dst);
 					}
 					else
 					{
-						emit_ldc(intern_empty(ConstTag::Unknown));
+						emit_ldk(dst, intern_empty(ConstTag::Unknown));
 					}
 					emit_label(Opcode::label, l_end);
 					break;
@@ -4557,9 +4357,10 @@ namespace
 
 		// Rotate among JET_REPLICATE_N variants so distinct call sites
 		// land on distinct asm dispatch tails (Ertl & Gregg 2003).
-		size_t v_call_ic_slot = 0;
-		size_t v_call_ic_slot_local = 0;
-		size_t v_call_ic_direct = 0;
+		size_t v_cs = 0;
+		size_t v_cst = 0;
+		size_t v_cd = 0;
+		size_t v_cdt = 0;
 
 		static size_t encoded_size(const LirInst& i)
 		{
@@ -4567,9 +4368,9 @@ namespace
 			{
 				return 0;
 			}
-			if (i.op == Opcode::make_closure)
+			if (i.op == Opcode::clos)
 			{
-				return OPCODE_SIZE + sizeof(OP_make_closure) +
+				return OPCODE_SIZE + sizeof(OP_clos) +
 					   i.u.closure.n_captures * sizeof(OP_make_closure_capture);
 			}
 			return opcode_step(static_cast<uint8_t>(i.op), nullptr);
@@ -4609,7 +4410,7 @@ namespace
 
 		void fill_lambda_entry(uint16_t slot)
 		{
-			// Pool entry: [tag=Lambda][is_n_ary][n_params|][n_locals][code_size][bytes...]
+			// Pool entry: [tag=Lambda][is_n_ary][n_params if !is_n_ary][n_regs][code_size][bytes...]
 			LirLambda& L = prog.lambdas[static_cast<uint32_t>(prog.pool_to_lambda[slot])];
 			Bytecode body = emit_code(L);
 
@@ -4622,8 +4423,8 @@ namespace
 				size_t n = static_cast<size_t>(L.n_params);
 				entry.append(reinterpret_cast<char*>(&n), sizeof(n));
 			}
-			uint16_t n_locals = static_cast<uint16_t>(L.n_locals);
-			entry.append(reinterpret_cast<char*>(&n_locals), sizeof(n_locals));
+			uint16_t n_regs = static_cast<uint16_t>(L.n_regs);
+			entry.append(reinterpret_cast<char*>(&n_regs), sizeof(n_regs));
 			size_t code_size = body.size();
 			entry.append(reinterpret_cast<char*>(&code_size), sizeof(code_size));
 			entry.append(reinterpret_cast<char*>(body.data()), code_size);
@@ -4662,19 +4463,54 @@ namespace
 				case Opcode::label:
 					break;
 
-				case Opcode::ldc:
+				case Opcode::mov:
 				{
-					emit_opcode(bc, Opcode::ldc);
-					OP_ldc op{};
-					op.idx = i.u.pool.idx;
+					emit_opcode(bc, Opcode::mov);
+					OP_mov op{};
+					op.dst = i.u.mov.dst;
+					op.src = i.u.mov.src;
 					emit_operand(bc, op);
 					break;
 				}
 
-				case Opcode::make_closure:
+				case Opcode::ldk:
+				case Opcode::ldu:
+				case Opcode::ldus:
+				case Opcode::ldd:
 				{
-					emit_opcode(bc, Opcode::make_closure);
-					OP_make_closure op{};
+					emit_opcode(bc, i.op);
+					OP_ldk op{};
+					op.dst = i.u.load.dst;
+					op.idx = i.u.load.idx;
+					emit_operand(bc, op);
+					break;
+				}
+
+				case Opcode::stu:
+				case Opcode::std:
+				{
+					emit_opcode(bc, i.op);
+					OP_stu op{};
+					op.idx = i.u.store.idx;
+					op.src = i.u.store.src;
+					emit_operand(bc, op);
+					break;
+				}
+
+				case Opcode::box:
+				{
+					emit_opcode(bc, Opcode::box);
+					OP_box op{};
+					op.reg = i.u.box.reg;
+					emit_operand(bc, op);
+					break;
+				}
+
+				case Opcode::clos:
+				{
+					emit_opcode(bc, Opcode::clos);
+					OP_clos op{};
+					op.dst = i.u.closure.dst;
 					op.pool_idx = i.u.closure.pool_idx;
 					op.n_captures = i.u.closure.n_captures;
 					emit_operand(bc, op);
@@ -4685,12 +4521,38 @@ namespace
 					break;
 				}
 
-				case Opcode::if_then_else:
+				case Opcode::add:
+				case Opcode::sub:
+				case Opcode::mul:
+				case Opcode::div:
+				case Opcode::eq:
+				case Opcode::lt:
+				case Opcode::le:
+				case Opcode::gt:
+				case Opcode::ge:
+				case Opcode::addk:
+				case Opcode::subk:
+				case Opcode::mulk:
+				case Opcode::divk:
+				case Opcode::eqk:
+				case Opcode::ltk:
 				{
-					emit_opcode(bc, Opcode::if_then_else);
-					OP_if_then_else op{};
-					op.consequent_size =
-						label_target(label_pos, i.u.label.id) - (bc.size() + sizeof(OP_if_then_else));
+					emit_opcode(bc, i.op);
+					OP_binop_rr op{};
+					op.dst = i.u.arith.dst;
+					op.a = i.u.arith.a;
+					op.b = i.u.arith.b;
+					emit_operand(bc, op);
+					break;
+				}
+
+				case Opcode::if_false:
+				{
+					emit_opcode(bc, Opcode::if_false);
+					OP_if_false op{};
+					op.src = i.u.label.src;
+					op.size = static_cast<uint32_t>(
+						label_target(label_pos, i.u.label.id) - (bc.size() + sizeof(OP_if_false)));
 					emit_operand(bc, op);
 					break;
 				}
@@ -4704,167 +4566,111 @@ namespace
 					break;
 				}
 
-				case Opcode::call:
+				case Opcode::retv:
 				{
-					emit_opcode(bc, Opcode::call);
-					OP_call op{};
-					op.tail = i.u.call.tail;
-					op.nargs = static_cast<size_t>(i.u.call.nargs);
+					emit_opcode(bc, Opcode::retv);
+					OP_retv op{};
+					op.src = i.u.ret.src;
 					emit_operand(bc, op);
 					break;
 				}
 
-				case Opcode::recur:
-				{
-					emit_opcode(bc, Opcode::recur);
-					OP_recur op{};
-					op.nargs = static_cast<uint8_t>(i.u.call.nargs);
-					emit_operand(bc, op);
-					break;
-				}
-
-				case Opcode::call_ic_slot_0:
-				{
-					emit_replicated(bc, Opcode::call_ic_slot_0, v_call_ic_slot);
-					OP_call_ic_slot op{};
-					op.upvalue_idx = i.u.call_ic_slot.upvalue_idx;
-					op.tail = i.u.call_ic_slot.tail;
-					op.nargs = static_cast<size_t>(i.u.call_ic_slot.nargs);
-					emit_operand(bc, op);
-					break;
-				}
-
-				case Opcode::call_ic_slot_local_0:
-				{
-					emit_replicated(bc, Opcode::call_ic_slot_local_0, v_call_ic_slot_local);
-					OP_call_ic_slot_local op{};
-					op.local_off = i.u.call_ic_slot.local_off;
-					op.upvalue_idx = i.u.call_ic_slot.upvalue_idx;
-					op.tail = i.u.call_ic_slot.tail;
-					op.nargs = static_cast<size_t>(i.u.call_ic_slot.nargs);
-					emit_operand(bc, op);
-					break;
-				}
-
-				case Opcode::call_ic_direct_0:
-				{
-					emit_replicated(bc, Opcode::call_ic_direct_0, v_call_ic_direct);
-					OP_call_ic_direct op{};
-					op.src = i.u.call_ic_direct.src;
-					op.idx = i.u.call_ic_direct.idx;
-					op.tail = i.u.call_ic_direct.tail;
-					op.nargs = static_cast<size_t>(i.u.call_ic_direct.nargs);
-					emit_operand(bc, op);
-					break;
-				}
-
-				case Opcode::apply:
-				case Opcode::pop:
-				case Opcode::ret:
-				case Opcode::sub2ss:
-				case Opcode::add2ss:
-				case Opcode::mul2ss:
-				case Opcode::div2ss:
-				case Opcode::eq2ss:
-				case Opcode::lt2ss:
-				case Opcode::le2ss:
-				case Opcode::gt2ss:
-				case Opcode::ge2ss:
-					emit_opcode(bc, i.op);
-					break;
-
-				case Opcode::sub2sc:
-				case Opcode::add2sc:
-				case Opcode::mul2sc:
-				case Opcode::div2sc:
-				case Opcode::eq2sc:
-				case Opcode::lt2sc:
+				case Opcode::callw:
+				case Opcode::tcall:
 				{
 					emit_opcode(bc, i.op);
-					OP_binop_sc op{};
-					op.idx = i.u.pool.idx;
+					OP_callw op{};
+					op.w = i.u.call.w;
+					op.callee = i.u.call.callee;
+					op.nargs = i.u.call.nargs;
 					emit_operand(bc, op);
 					break;
 				}
 
-				case Opcode::ref_local:
-				case Opcode::set_local:
-				case Opcode::set_local_pop:
-				case Opcode::ref_downvalue:
-				case Opcode::set_downvalue:
-				case Opcode::box_local:
-					emit_opcode(bc, i.op);
-					emit_operand(bc, i.u.local.off);
-					break;
-
-				case Opcode::ref_upvalue_direct:
-				case Opcode::ref_upvalue_slot:
-				case Opcode::set_upvalue:
-					emit_opcode(bc, i.op);
-					emit_operand(bc, i.u.upvalue.idx);
-					break;
-
-				case Opcode::ref_field:
-				case Opcode::set_field:
+				case Opcode::recurw:
 				{
-					emit_opcode(bc, i.op);
-					OP_ref_field op{};
+					emit_opcode(bc, Opcode::recurw);
+					OP_recurw op{};
+					op.w = i.u.call.w;
+					op.nargs = i.u.call.nargs;
 					emit_operand(bc, op);
 					break;
 				}
 
-				case Opcode::ref_local_field:
-				case Opcode::set_local_field:
+				case Opcode::applyw:
 				{
-					emit_opcode(bc, i.op);
-					OP_ref_local_field op{};
-					op.off = i.u.field.addr;
+					emit_opcode(bc, Opcode::applyw);
+					OP_applyw op{};
+					op.w = i.u.call.w;
 					emit_operand(bc, op);
 					break;
 				}
 
-				case Opcode::ref_upvalue_direct_field:
-				case Opcode::set_upvalue_direct_field:
-				case Opcode::ref_upvalue_slot_field:
-				case Opcode::set_upvalue_slot_field:
+				case Opcode::cs_0:
+				case Opcode::cst_0:
 				{
-					emit_opcode(bc, i.op);
-					OP_ref_upvalue_field op{};
-					op.idx = i.u.field.addr;
+					emit_replicated(bc, i.op, i.op == Opcode::cst_0 ? v_cst : v_cs);
+					OP_cs op{};
+					op.w = i.u.call.w;
+					op.upvalue_idx = i.u.call.upvalue_idx;
+					op.nargs = i.u.call.nargs;
 					emit_operand(bc, op);
 					break;
 				}
 
-				case Opcode::ref_field_ck:
-				case Opcode::set_field_ck:
+				case Opcode::cd_0:
+				case Opcode::cdt_0:
 				{
-					emit_opcode(bc, i.op);
-					OP_ref_field_ck op{};
-					op.key_idx = i.u.field.key_idx;
+					emit_replicated(bc, i.op, i.op == Opcode::cdt_0 ? v_cdt : v_cd);
+					OP_cd op{};
+					op.w = i.u.call.w;
+					op.idx = i.u.call.idx;
+					op.nargs = i.u.call.nargs;
+					op.src = i.u.call.src;
 					emit_operand(bc, op);
 					break;
 				}
 
-				case Opcode::ref_local_field_ck:
-				case Opcode::set_local_field_ck:
+				case Opcode::ldf:
 				{
-					emit_opcode(bc, i.op);
-					OP_ref_local_field_ck op{};
-					op.off = i.u.field.addr;
-					op.key_idx = i.u.field.key_idx;
+					emit_opcode(bc, Opcode::ldf);
+					OP_ldf op{};
+					op.dst = i.u.field.dst;
+					op.obj = i.u.field.obj;
+					op.key = i.u.field.key;
 					emit_operand(bc, op);
 					break;
 				}
 
-				case Opcode::ref_upvalue_direct_field_ck:
-				case Opcode::set_upvalue_direct_field_ck:
-				case Opcode::ref_upvalue_slot_field_ck:
-				case Opcode::set_upvalue_slot_field_ck:
+				case Opcode::stf:
 				{
-					emit_opcode(bc, i.op);
-					OP_ref_upvalue_field_ck op{};
-					op.idx = i.u.field.addr;
-					op.key_idx = i.u.field.key_idx;
+					emit_opcode(bc, Opcode::stf);
+					OP_stf op{};
+					op.obj = i.u.field.obj;
+					op.key = i.u.field.key;
+					op.val = i.u.field.val;
+					emit_operand(bc, op);
+					break;
+				}
+
+				case Opcode::ldfk:
+				{
+					emit_opcode(bc, Opcode::ldfk);
+					OP_ldfk op{};
+					op.dst = i.u.field.dst;
+					op.obj = i.u.field.obj;
+					op.key_idx = i.u.field.key;
+					emit_operand(bc, op);
+					break;
+				}
+
+				case Opcode::stfk:
+				{
+					emit_opcode(bc, Opcode::stfk);
+					OP_stfk op{};
+					op.obj = i.u.field.obj;
+					op.key_idx = i.u.field.key;
+					op.val = i.u.field.val;
 					emit_operand(bc, op);
 					break;
 				}
@@ -4885,9 +4691,9 @@ namespace
 				}
 			}
 
-			// [u32 n_toplevel_slots][u32 n_constants][concatenated pool entries][code...]
+			// [u32 n_toplevel_slots][u32 n_pool_entries][concatenated pool entries][code...]
 			Bytecode out;
-			uint32_t n_slots = prog.lambdas[0].n_locals;
+			uint32_t n_slots = prog.lambdas[0].n_regs;
 			uint8_t* sp = reinterpret_cast<uint8_t*>(&n_slots);
 			out.insert(out.end(), sp, sp + sizeof(n_slots));
 			uint32_t n = static_cast<uint32_t>(prog.pool.size());

@@ -16,59 +16,46 @@
 // scannable; C++ identifiers stay descriptive for source readability.
 #define JET_OPCODES(X)                                                                                      \
 	X(halt,                "halt")                                                                           \
-	X(ret,                 "ret")                                                                            \
-	X(if_then_else,        "if")                                                                             \
 	X(skip,                "b")                                                                              \
-	X(pop,                 "pop")                                                                            \
-	X(call,                "call")                                                                           \
-	X(recur,               "recur")                                                                          \
-	JET_REPLICATE(X, call_ic_slot,       "cs")                                                              \
-	JET_REPLICATE(X, call_ic_slot_local, "csl")                                                             \
-	JET_REPLICATE(X, call_ic_direct,     "cd")                                                              \
-	X(apply,               "apply")                                                                          \
-	X(make_closure,        "clos")                                                                           \
-	X(ref_local,           "ldl")                                                                            \
-	X(set_local,           "stl")                                                                            \
-	X(set_local_pop,       "stlp")                                                                           \
-	X(ref_downvalue,       "ldd")                                                                            \
-	X(set_downvalue,       "std")                                                                            \
-	X(box_local,           "boxl")                                                                           \
-	X(ref_upvalue_direct,  "ldu")                                                                            \
-	X(ref_upvalue_slot,    "ldus")                                                                           \
-	X(set_upvalue,         "stu")                                                                            \
-	X(ref_field,                            "ldf")                                                           \
-	X(set_field,                            "stf")                                                           \
-	X(ref_local_field,                      "ldlf")                                                          \
-	X(set_local_field,                      "stlf")                                                          \
-	X(ref_upvalue_direct_field,             "lduf")                                                          \
-	X(set_upvalue_direct_field,             "stuf")                                                          \
-	X(ref_upvalue_slot_field,               "ldusf")                                                         \
-	X(set_upvalue_slot_field,               "stusf")                                                         \
-	X(ref_field_ck,                         "ldfk")                                                          \
-	X(set_field_ck,                         "stfk")                                                          \
-	X(ref_local_field_ck,                   "ldlfk")                                                         \
-	X(set_local_field_ck,                   "stlfk")                                                         \
-	X(ref_upvalue_direct_field_ck,          "ldufk")                                                         \
-	X(set_upvalue_direct_field_ck,          "stufk")                                                         \
-	X(ref_upvalue_slot_field_ck,            "ldusfk")                                                        \
-	X(set_upvalue_slot_field_ck,            "stusfk")                                                        \
-	X(sub2ss,              "sub2ss")                                                                         \
-	X(add2ss,              "add2ss")                                                                         \
-	X(mul2ss,              "mul2ss")                                                                         \
-	X(div2ss,              "div2ss")                                                                         \
-	X(eq2ss,               "eq2ss")                                                                          \
-	X(lt2ss,               "lt2ss")                                                                          \
-	X(le2ss,               "le2ss")                                                                          \
-	X(gt2ss,               "gt2ss")                                                                          \
-	X(ge2ss,               "ge2ss")                                                                          \
-	X(sub2sc,              "sub2sc")                                                                         \
-	X(add2sc,              "add2sc")                                                                         \
-	X(mul2sc,              "mul2sc")                                                                         \
-	X(div2sc,              "div2sc")                                                                         \
-	X(eq2sc,               "eq2sc")                                                                          \
-	X(lt2sc,               "lt2sc")                                                                          \
-	X(ldc,                 "ldc")                                                                            \
-	X(label,               "label")
+	X(label,               "label")                                                                          \
+	X(mov,                 "mov")                                                                            \
+	X(ldk,                 "ldk")                                                                            \
+	X(ldu,                 "ldu")                                                                            \
+	X(ldus,                "ldus")                                                                           \
+	X(stu,                 "stu")                                                                            \
+	X(ldd,                 "ldd")                                                                            \
+	X(std,                 "std")                                                                            \
+	X(box,                 "box")                                                                            \
+	X(clos,                "clos")                                                                           \
+	X(add,                 "add")                                                                            \
+	X(sub,                 "sub")                                                                            \
+	X(mul,                 "mul")                                                                            \
+	X(div,                 "div")                                                                            \
+	X(eq,                  "eq")                                                                             \
+	X(lt,                  "lt")                                                                             \
+	X(le,                  "le")                                                                             \
+	X(gt,                  "gt")                                                                             \
+	X(ge,                  "ge")                                                                             \
+	X(addk,                "addk")                                                                           \
+	X(subk,                "subk")                                                                           \
+	X(mulk,                "mulk")                                                                           \
+	X(divk,                "divk")                                                                           \
+	X(eqk,                 "eqk")                                                                            \
+	X(ltk,                 "ltk")                                                                            \
+	X(if_false,            "if")                                                                             \
+	X(retv,                "ret")                                                                            \
+	X(callw,               "call")                                                                           \
+	X(tcall,               "tcall")                                                                          \
+	X(recurw,              "recur")                                                                          \
+	X(applyw,              "apply")                                                                          \
+	JET_REPLICATE(X, cs,  "cs")                                                                              \
+	JET_REPLICATE(X, cst, "cst")                                                                             \
+	JET_REPLICATE(X, cd,  "cd")                                                                              \
+	JET_REPLICATE(X, cdt, "cdt")                                                                             \
+	X(ldf,                 "ldf")                                                                            \
+	X(stf,                 "stf")                                                                            \
+	X(ldfk,                "ldfk")                                                                           \
+	X(stfk,                "stfk")
 
 enum class Opcode : uint8_t
 {
@@ -85,111 +72,15 @@ constexpr int OPCODE_COUNT = 0
 
 #pragma pack(push, 1)
 
-struct OP_ref_local
-{
-	uint16_t off;
-};
-struct OP_set_local
-{
-	uint16_t off;
-};
-struct OP_ref_downvalue
-{
-	uint16_t off;
-};
-struct OP_set_downvalue
-{
-	uint16_t off;
-};
-struct OP_box_local
-{
-	uint16_t off;
-};
-
-struct OP_ref_upvalue_direct
-{
-	uint16_t idx;
-};
-struct OP_ref_upvalue_slot
-{
-	uint16_t idx;
-};
-struct OP_set_upvalue
-{
-	uint16_t idx;
-};
-struct OP_ldc
-{
-	uint16_t idx;
-};
-struct OP_binop_sc
-{
-	uint16_t idx;
-};
-
-struct OP_if_then_else
-{
-	size_t consequent_size;
-};
 struct OP_skip
 {
 	size_t size;
-};
-
-struct OP_make_closure
-{
-	uint16_t pool_idx;
-	uint16_t n_captures;
 };
 
 struct OP_make_closure_capture
 {
 	uint8_t src;
 	uint16_t idx;
-};
-
-struct OP_call
-{
-	bool tail;
-	size_t nargs;
-};
-
-struct OP_recur
-{
-	uint8_t nargs;
-};
-
-struct OP_call_ic_slot
-{
-	uint16_t upvalue_idx;
-	bool tail;
-	size_t nargs;
-	uint64_t ic_slot;
-	uint64_t ic_atom;
-	uint64_t ic_stub;
-	uint64_t ic_version;
-};
-
-struct OP_call_ic_slot_local
-{
-	uint16_t local_off;
-	uint16_t upvalue_idx;
-	bool tail;
-	size_t nargs;
-	uint64_t ic_slot;
-	uint64_t ic_atom;
-	uint64_t ic_stub;
-	uint64_t ic_version;
-};
-
-struct OP_call_ic_direct
-{
-	uint8_t src;
-	uint16_t idx;
-	bool tail;
-	size_t nargs;
-	uint64_t ic_atom;
-	uint64_t ic_stub;
 };
 
 struct FieldIc
@@ -200,54 +91,117 @@ struct FieldIc
 	uint64_t ic_extra2;
 };
 
-struct OP_ref_field
+// Register ISA: every dst/src/a/b/w operand is a frame-relative slot index,
+// stack_base[frame_base + r].
+
+struct OP_mov
 {
-	FieldIc ic;
+	uint16_t dst;
+	uint16_t src;
 };
-
-using OP_set_field = OP_ref_field;
-
-struct OP_ref_local_field
+struct OP_ldk
 {
-	uint16_t off;
-	FieldIc ic;
+	uint16_t dst;
+	uint16_t idx;
 };
-
-using OP_set_local_field = OP_ref_local_field;
-
-struct OP_ref_upvalue_field
+using OP_ldu = OP_ldk;
+using OP_ldus = OP_ldk;
+using OP_ldd = OP_ldk;
+struct OP_stu
 {
 	uint16_t idx;
-	FieldIc ic;
+	uint16_t src;
 };
-
-using OP_set_upvalue_field = OP_ref_upvalue_field;
-
-struct OP_ref_field_ck
+using OP_std = OP_stu;
+struct OP_box
 {
-	uint16_t key_idx;
-	FieldIc ic;
+	uint16_t reg;
 };
-
-using OP_set_field_ck = OP_ref_field_ck;
-
-struct OP_ref_local_field_ck
+struct OP_clos
 {
-	uint16_t off;
-	uint16_t key_idx;
-	FieldIc ic;
+	uint16_t dst;
+	uint16_t pool_idx;
+	uint16_t n_captures;
 };
-
-using OP_set_local_field_ck = OP_ref_local_field_ck;
-
-struct OP_ref_upvalue_field_ck
+struct OP_binop_rr
 {
+	uint16_t dst;
+	uint16_t a;
+	// rk forms read b as a constant-pool index.
+	uint16_t b;
+};
+using OP_binop_rk = OP_binop_rr;
+struct OP_if_false
+{
+	uint16_t src;
+	uint32_t size;
+};
+struct OP_retv
+{
+	uint16_t src;
+};
+struct OP_callw
+{
+	uint16_t w;
+	uint16_t callee;
+	uint16_t nargs;
+};
+struct OP_recurw
+{
+	uint16_t w;
+	uint16_t nargs;
+};
+struct OP_applyw
+{
+	uint16_t w;
+};
+struct OP_cs
+{
+	uint16_t w;
+	uint16_t upvalue_idx;
+	uint16_t nargs;
+	uint64_t ic_slot;
+	uint64_t ic_atom;
+	uint64_t ic_stub;
+	uint64_t ic_version;
+};
+struct OP_cd
+{
+	uint16_t w;
 	uint16_t idx;
+	uint16_t nargs;
+	uint8_t src;
+	uint64_t ic_atom;
+	uint64_t ic_stub;
+};
+struct OP_ldf
+{
+	uint16_t dst;
+	uint16_t obj;
+	uint16_t key;
+	FieldIc ic;
+};
+struct OP_stf
+{
+	uint16_t obj;
+	uint16_t key;
+	uint16_t val;
+	FieldIc ic;
+};
+struct OP_ldfk
+{
+	uint16_t dst;
+	uint16_t obj;
 	uint16_t key_idx;
 	FieldIc ic;
 };
-
-using OP_set_upvalue_field_ck = OP_ref_upvalue_field_ck;
+struct OP_stfk
+{
+	uint16_t obj;
+	uint16_t key_idx;
+	uint16_t val;
+	FieldIc ic;
+};
 
 #pragma pack(pop)
 
@@ -262,93 +216,73 @@ inline size_t opcode_step(uint8_t op, const uint8_t* operands)
 	switch (static_cast<Opcode>(op))
 	{
 		case Opcode::halt:
-		case Opcode::ret:
-		case Opcode::pop:
-		case Opcode::apply:
 		case Opcode::label:
-		case Opcode::sub2ss:
-		case Opcode::add2ss:
-		case Opcode::mul2ss:
-		case Opcode::div2ss:
-		case Opcode::eq2ss:
-		case Opcode::lt2ss:
-		case Opcode::le2ss:
-		case Opcode::gt2ss:
-		case Opcode::ge2ss:
 			return OPCODE_SIZE;
-		case Opcode::sub2sc:
-		case Opcode::add2sc:
-		case Opcode::mul2sc:
-		case Opcode::div2sc:
-		case Opcode::eq2sc:
-		case Opcode::lt2sc:
-			return OPCODE_SIZE + sizeof(OP_binop_sc);
 		case Opcode::skip:
 			return OPCODE_SIZE + sizeof(OP_skip);
-		case Opcode::if_then_else:
-			return OPCODE_SIZE + sizeof(OP_if_then_else);
-		case Opcode::call:
-			return OPCODE_SIZE + sizeof(OP_call);
-		case Opcode::recur:
-			return OPCODE_SIZE + sizeof(OP_recur);
-		case Opcode::ldc:
-			return OPCODE_SIZE + sizeof(OP_ldc);
-		case Opcode::ref_local:
-			return OPCODE_SIZE + sizeof(OP_ref_local);
-		case Opcode::set_local:
-		case Opcode::set_local_pop:
-			return OPCODE_SIZE + sizeof(OP_set_local);
-		case Opcode::ref_downvalue:
-			return OPCODE_SIZE + sizeof(OP_ref_downvalue);
-		case Opcode::set_downvalue:
-			return OPCODE_SIZE + sizeof(OP_set_downvalue);
-		case Opcode::box_local:
-			return OPCODE_SIZE + sizeof(OP_box_local);
-		case Opcode::ref_upvalue_direct:
-			return OPCODE_SIZE + sizeof(OP_ref_upvalue_direct);
-		case Opcode::ref_upvalue_slot:
-			return OPCODE_SIZE + sizeof(OP_ref_upvalue_slot);
-		case Opcode::set_upvalue:
-			return OPCODE_SIZE + sizeof(OP_set_upvalue);
-		case Opcode::ref_field:
-		case Opcode::set_field:
-			return OPCODE_SIZE + sizeof(OP_ref_field);
-		case Opcode::ref_local_field:
-		case Opcode::set_local_field:
-			return OPCODE_SIZE + sizeof(OP_ref_local_field);
-		case Opcode::ref_upvalue_direct_field:
-		case Opcode::set_upvalue_direct_field:
-		case Opcode::ref_upvalue_slot_field:
-		case Opcode::set_upvalue_slot_field:
-			return OPCODE_SIZE + sizeof(OP_ref_upvalue_field);
-		case Opcode::ref_field_ck:
-		case Opcode::set_field_ck:
-			return OPCODE_SIZE + sizeof(OP_ref_field_ck);
-		case Opcode::ref_local_field_ck:
-		case Opcode::set_local_field_ck:
-			return OPCODE_SIZE + sizeof(OP_ref_local_field_ck);
-		case Opcode::ref_upvalue_direct_field_ck:
-		case Opcode::set_upvalue_direct_field_ck:
-		case Opcode::ref_upvalue_slot_field_ck:
-		case Opcode::set_upvalue_slot_field_ck:
-			return OPCODE_SIZE + sizeof(OP_ref_upvalue_field_ck);
-#define X(name, disp) case Opcode::name:
-			JET_REPLICATE(X, call_ic_slot, "cs")
-#undef X
-			return OPCODE_SIZE + sizeof(OP_call_ic_slot);
-#define X(name, disp) case Opcode::name:
-			JET_REPLICATE(X, call_ic_slot_local, "csl")
-#undef X
-			return OPCODE_SIZE + sizeof(OP_call_ic_slot_local);
-#define X(name, disp) case Opcode::name:
-			JET_REPLICATE(X, call_ic_direct, "cd")
-#undef X
-			return OPCODE_SIZE + sizeof(OP_call_ic_direct);
-		case Opcode::make_closure:
+		case Opcode::mov:
+			return OPCODE_SIZE + sizeof(OP_mov);
+		case Opcode::ldk:
+		case Opcode::ldu:
+		case Opcode::ldus:
+		case Opcode::ldd:
+			return OPCODE_SIZE + sizeof(OP_ldk);
+		case Opcode::stu:
+		case Opcode::std:
+			return OPCODE_SIZE + sizeof(OP_stu);
+		case Opcode::box:
+			return OPCODE_SIZE + sizeof(OP_box);
+		case Opcode::clos:
 		{
-			const OP_make_closure* mc = reinterpret_cast<const OP_make_closure*>(operands);
-			return OPCODE_SIZE + sizeof(OP_make_closure) + mc->n_captures * sizeof(OP_make_closure_capture);
+			const OP_clos* c = reinterpret_cast<const OP_clos*>(operands);
+			return OPCODE_SIZE + sizeof(OP_clos) + c->n_captures * sizeof(OP_make_closure_capture);
 		}
+		case Opcode::add:
+		case Opcode::sub:
+		case Opcode::mul:
+		case Opcode::div:
+		case Opcode::eq:
+		case Opcode::lt:
+		case Opcode::le:
+		case Opcode::gt:
+		case Opcode::ge:
+			return OPCODE_SIZE + sizeof(OP_binop_rr);
+		case Opcode::addk:
+		case Opcode::subk:
+		case Opcode::mulk:
+		case Opcode::divk:
+		case Opcode::eqk:
+		case Opcode::ltk:
+			return OPCODE_SIZE + sizeof(OP_binop_rr);
+		case Opcode::if_false:
+			return OPCODE_SIZE + sizeof(OP_if_false);
+		case Opcode::retv:
+			return OPCODE_SIZE + sizeof(OP_retv);
+		case Opcode::callw:
+		case Opcode::tcall:
+			return OPCODE_SIZE + sizeof(OP_callw);
+		case Opcode::recurw:
+			return OPCODE_SIZE + sizeof(OP_recurw);
+		case Opcode::applyw:
+			return OPCODE_SIZE + sizeof(OP_applyw);
+#define X(name, disp) case Opcode::name:
+			JET_REPLICATE(X, cs, "cs")
+			JET_REPLICATE(X, cst, "cst")
+#undef X
+			return OPCODE_SIZE + sizeof(OP_cs);
+#define X(name, disp) case Opcode::name:
+			JET_REPLICATE(X, cd, "cd")
+			JET_REPLICATE(X, cdt, "cdt")
+#undef X
+			return OPCODE_SIZE + sizeof(OP_cd);
+		case Opcode::ldf:
+			return OPCODE_SIZE + sizeof(OP_ldf);
+		case Opcode::stf:
+			return OPCODE_SIZE + sizeof(OP_stf);
+		case Opcode::ldfk:
+			return OPCODE_SIZE + sizeof(OP_ldfk);
+		case Opcode::stfk:
+			return OPCODE_SIZE + sizeof(OP_stfk);
 	}
 	return OPCODE_SIZE;
 }

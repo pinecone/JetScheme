@@ -337,19 +337,9 @@ LoadedProgram load_program(Code* bytecode, size_t bytecode_size, Env& primitives
 }
 
 constexpr size_t STACK_CAPACITY = 1 << 20;
-// Operand pushes within a frame are unchecked; the slack below the true end
-// absorbs them, so the only guard needed is the frame-extension check in
-// the call handlers.
+// applyw's list splat writes above the frame before its overflow check runs;
+// the slack below the true end absorbs the overshoot.
 constexpr size_t STACK_SLACK = 4096;
-
-static Atom* pass_results(VmState& s, Atom* stack_top, Atom* stack_base, size_t frame_base)
-{
-	Atom retval = stack_top[-1];
-	s.frames.pop_back();
-	Atom* new_top = stack_base + frame_base;
-	*new_top++ = retval;
-	return new_top;
-}
 
 static Atom pack_args_to_list(Atom* first, Atom* last)
 {
@@ -389,24 +379,37 @@ JET_NOINLINE JET_PRESERVE_NONE static void slow_call_lambda(VM_OP_PARAMS)
 	Lambda& la = *unbox<Lambda>(callee);
 	size_t nargs = static_cast<size_t>(stack_top - args);
 	size_t base = is_tail ? frame_base : result_slot;
-	install_args(la, stack_base, base, args, nargs);
 	if constexpr (is_tail)
 	{
+		install_args(la, stack_base, base, args, nargs);
 		frame->code = la.code;
 		frame->closure = &la;
+		frame->top = base + la.n_locals;
 	}
 	else
 	{
+		// Non-tail args were evaluated in place at base: only nary rest-packing
+		// remains.
+		if (is_nary(la.arity)) [[unlikely]]
+		{
+			size_t n_copy = la.arity.expected;
+			stack_base[base + n_copy] = pack_args_to_list(args + n_copy, args + nargs);
+		}
 		frame = &s.frames.emplace_back();
 		frame->code = la.code;
 		frame->closure = &la;
 		frame->base = base;
+		frame->top = base + la.n_locals;
 	}
 	frame_base = base;
 	stack_top = stack_base + base + la.n_locals;
-	if (stack_top > s.stack_end - STACK_SLACK) [[unlikely]]
+	if (stack_top > s.stack_watermark) [[unlikely]]
 	{
-		JET_DIE("stack overflow (too much recursion?)");
+		if (stack_top > s.stack_end - STACK_SLACK) [[unlikely]]
+		{
+			JET_DIE("stack overflow (too much recursion?)");
+		}
+		s.stack_watermark = stack_top;
 	}
 	pc = la.code;
 	DISPATCH();
@@ -418,25 +421,26 @@ JET_PRESERVE_NONE static void fast_call_lambda(VM_OP_PARAMS)
 	JET_PROFILE_LAMBDA;
 	Lambda& la = *unbox<Lambda>(callee);
 	size_t nargs = static_cast<size_t>(stack_top - args);
-	if (is_nary(la.arity) || nargs > 4) [[unlikely]]
+	if (is_nary(la.arity) || (is_tail && nargs > 4)) [[unlikely]]
 	{
 		JET_MUSTTAIL return slow_call_lambda<is_tail>(VM_OP_ARGS);
 	}
 	size_t base = is_tail ? frame_base : result_slot;
 	Atom* dst = stack_base + base;
-	switch (nargs)
-	{
-		case 0: break;
-		case 1: __builtin_memmove(dst, args, 1 * sizeof(Atom)); break;
-		case 2: __builtin_memmove(dst, args, 2 * sizeof(Atom)); break;
-		case 3: __builtin_memmove(dst, args, 3 * sizeof(Atom)); break;
-		case 4: __builtin_memmove(dst, args, 4 * sizeof(Atom)); break;
-	}
 
 	if constexpr (is_tail)
 	{
+		switch (nargs)
+		{
+			case 0: break;
+			case 1: __builtin_memmove(dst, args, 1 * sizeof(Atom)); break;
+			case 2: __builtin_memmove(dst, args, 2 * sizeof(Atom)); break;
+			case 3: __builtin_memmove(dst, args, 3 * sizeof(Atom)); break;
+			case 4: __builtin_memmove(dst, args, 4 * sizeof(Atom)); break;
+		}
 		frame->code = la.code;
 		frame->closure = &la;
+		frame->top = base + la.n_locals;
 	}
 	else
 	{
@@ -444,13 +448,18 @@ JET_PRESERVE_NONE static void fast_call_lambda(VM_OP_PARAMS)
 		frame->code = la.code;
 		frame->closure = &la;
 		frame->base = base;
+		frame->top = base + la.n_locals;
 	}
 	frame_base = base;
 
 	stack_top = stack_base + base + la.n_locals;
-	if (stack_top > s.stack_end - STACK_SLACK) [[unlikely]]
+	if (stack_top > s.stack_watermark) [[unlikely]]
 	{
-		JET_DIE("stack overflow (too much recursion?)");
+		if (stack_top > s.stack_end - STACK_SLACK) [[unlikely]]
+		{
+			JET_DIE("stack overflow (too much recursion?)");
+		}
+		s.stack_watermark = stack_top;
 	}
 	pc = la.code;
 	DISPATCH();
@@ -468,8 +477,8 @@ JET_PRESERVE_NONE static void fast_call_struct(VM_OP_PARAMS)
 	{
 		inst->values[i] = args[i];
 	}
-	stack_top = stack_base + result_slot;
-	*stack_top++ = Atom::make_tagged(jet_tag::struct_, inst);
+	stack_base[result_slot] = Atom::make_tagged(jet_tag::struct_, inst);
+	stack_top = stack_base + frame->top;
 	DISPATCH();
 }
 
@@ -517,124 +526,12 @@ JET_PRESERVE_NONE static void op_halt(VM_OP_PARAMS)
 	s.stack_top = stack_top;
 }
 
-JET_PRESERVE_NONE static void op_ret(VM_OP_PARAMS)
-{
-	Frame* prev = frame - 1;
-	stack_top = pass_results(s, stack_top, stack_base, frame_base);
-	frame = prev;
-	frame_base = prev->base;
-	pc = prev->code;
-	DISPATCH();
-}
-
-JET_PRESERVE_NONE static void op_ref_local(VM_OP_PARAMS)
-{
-	OP_ref_local* op = reinterpret_cast<OP_ref_local*>(pc);
-	pc += sizeof(*op);
-	*stack_top++ = stack_base[frame_base + op->off];
-	DISPATCH();
-}
-
-JET_PRESERVE_NONE static void op_set_local(VM_OP_PARAMS)
-{
-	OP_set_local* op = reinterpret_cast<OP_set_local*>(pc);
-	pc += sizeof(*op);
-	stack_base[frame_base + op->off] = stack_top[-1];
-	DISPATCH();
-}
-
-JET_PRESERVE_NONE static void op_set_local_pop(VM_OP_PARAMS)
-{
-	OP_set_local* op = reinterpret_cast<OP_set_local*>(pc);
-	pc += sizeof(*op);
-	--stack_top;
-	stack_base[frame_base + op->off] = *stack_top;
-	DISPATCH();
-}
-
-JET_PRESERVE_NONE static void op_ref_downvalue(VM_OP_PARAMS)
-{
-	OP_ref_downvalue* op = reinterpret_cast<OP_ref_downvalue*>(pc);
-	pc += sizeof(*op);
-	Slot* sl = unbox<Slot>(stack_base[frame_base + op->off]);
-	*stack_top++ = sl->value;
-	DISPATCH();
-}
-
-JET_PRESERVE_NONE static void op_set_downvalue(VM_OP_PARAMS)
-{
-	OP_set_downvalue* op = reinterpret_cast<OP_set_downvalue*>(pc);
-	pc += sizeof(*op);
-	Slot* sl = unbox<Slot>(stack_base[frame_base + op->off]);
-	sl->value = stack_top[-1];
-	sl->version = next_slot_version();
-	DISPATCH();
-}
-
 JET_NOINLINE JET_PRESERVE_NONE static void gc_then_dispatch(VM_OP_PARAMS)
 {
 	s.stack_top = stack_top;
 	collect(s);
 	VmOp h = *reinterpret_cast<VmOp*>(pc - OPCODE_SIZE);
 	JET_MUSTTAIL return h(VM_OP_ARGS);
-}
-
-JET_PRESERVE_NONE static void op_box_local(VM_OP_PARAMS)
-{
-	JET_GC_CHECK();
-	OP_box_local* op = reinterpret_cast<OP_box_local*>(pc);
-	pc += sizeof(*op);
-	Atom prev = stack_base[frame_base + op->off];
-	stack_base[frame_base + op->off] = box<Slot>(prev);
-	DISPATCH();
-}
-
-JET_PRESERVE_NONE static void op_ref_upvalue_direct(VM_OP_PARAMS)
-{
-	OP_ref_upvalue_direct* op = reinterpret_cast<OP_ref_upvalue_direct*>(pc);
-	pc += sizeof(*op);
-	*stack_top++ = frame->closure->captures[op->idx];
-	DISPATCH();
-}
-
-JET_PRESERVE_NONE static void op_ref_upvalue_slot(VM_OP_PARAMS)
-{
-	OP_ref_upvalue_slot* op = reinterpret_cast<OP_ref_upvalue_slot*>(pc);
-	pc += sizeof(*op);
-	Slot* sl = unbox<Slot>(frame->closure->captures[op->idx]);
-	*stack_top++ = sl->value;
-	DISPATCH();
-}
-
-JET_PRESERVE_NONE static void op_set_upvalue(VM_OP_PARAMS)
-{
-	OP_set_upvalue* op = reinterpret_cast<OP_set_upvalue*>(pc);
-	pc += sizeof(*op);
-	Slot* sl = unbox<Slot>(frame->closure->captures[op->idx]);
-	sl->value = stack_top[-1];
-	sl->version = next_slot_version();
-	DISPATCH();
-}
-
-JET_PRESERVE_NONE static void op_make_closure(VM_OP_PARAMS)
-{
-	JET_GC_CHECK();
-	OP_make_closure* op = reinterpret_cast<OP_make_closure*>(pc);
-	pc += sizeof(*op);
-
-	Lambda& tmpl = *unbox<Lambda>(s.constants[op->pool_idx]);
-	Atom la_atom = box<Lambda>(tmpl.code, tmpl.arity, tmpl.n_locals, op->n_captures);
-	Lambda* la = unbox<Lambda>(la_atom);
-	for (uint16_t i = 0; i < op->n_captures; ++i)
-	{
-		OP_make_closure_capture* cap = reinterpret_cast<OP_make_closure_capture*>(pc);
-		pc += sizeof(*cap);
-		CaptureSource src = static_cast<CaptureSource>(cap->src);
-		la->captures[i] = (src == CaptureSource::Local) ? stack_base[frame_base + cap->idx]
-														: frame->closure->captures[cap->idx];
-	}
-	*stack_top++ = la_atom;
-	DISPATCH();
 }
 
 JET_NOINLINE JET_PRESERVE_NONE static void die_ref_bad_key(VM_OP_PARAMS)
@@ -675,32 +572,46 @@ static Atom container_load(T& c, size_t i)
 	}
 }
 
-// Per-shape ref/set handlers expect:
-//   callee  = receiver (loaded by dispatch opcode from its addressing mode)
-//   ref:  stack[-1]      = key                  → replaces stack[-1] with result
-//   set:  stack[-2]      = key, stack[-1] = value → pops key, leaves value on top
-// The IC sits at the start of the opcode operand; its address is recoverable
-// because the dispatch opcode advances pc past sizeof(FieldIc) of operand.
-
-static FieldIc* field_ic(Code* pc)
+JET_NOINLINE JET_PRESERVE_NONE static void die_struct_int_key(VM_OP_PARAMS)
 {
-	return reinterpret_cast<FieldIc*>(pc - sizeof(FieldIc));
+	JET_DIE("struct field access requires a symbol key");
 }
 
-template <class T>
-JET_PRESERVE_NONE static void fast_ref_field(VM_OP_PARAMS)
+[[noreturn]] static void die_struct_no_field(StructType* t, std::string_view name)
 {
-	FieldIc* ic = field_ic(pc);
-	Atom obj = callee;
-	Atom key = stack_top[-1];
-	T& c = *unbox<T>(obj);
+	JET_DIE("struct '%s': no field named '%.*s'", t->name().c_str(),
+			 static_cast<int>(name.size()), name.data());
+}
+
+static Atom slow_ref_struct(Atom obj, Atom key)
+{
+	Struct* inst = unbox<Struct>(obj);
+	Symbol* sym = slow_unbox<Symbol>(key);
+	int idx = inst->type->find(sym->str());
+	if (idx < 0)
+	{
+		die_struct_no_field(inst->type, sym->str());
+	}
+	return inst->values[idx];
+}
+
+// Register-ISA shape handlers recover their full operand struct via
+// pc - sizeof(OP_*): the dispatch opcode advanced pc past exactly one struct.
+
+template <class T>
+JET_PRESERVE_NONE static void fast_ldf(VM_OP_PARAMS)
+{
+	OP_ldf* op = reinterpret_cast<OP_ldf*>(pc - sizeof(OP_ldf));
+	FieldIc* ic = &op->ic;
+	Atom key = stack_base[frame_base + op->key];
+	T& c = *unbox<T>(callee);
 
 	if (ic->ic_extra2 == key.bits) [[likely]]
 	{
 		size_t idx = ic->ic_extra1;
 		if (idx < c.size()) [[likely]]
 		{
-			stack_top[-1] = container_load(c, idx);
+			stack_base[frame_base + op->dst] = container_load(c, idx);
 			DISPATCH();
 		}
 	}
@@ -721,18 +632,18 @@ JET_PRESERVE_NONE static void fast_ref_field(VM_OP_PARAMS)
 	}
 	ic->ic_extra1 = idx;
 	ic->ic_extra2 = key.bits;
-	stack_top[-1] = container_load(c, idx);
+	stack_base[frame_base + op->dst] = container_load(c, idx);
 	DISPATCH();
 }
 
 template <class T>
-JET_PRESERVE_NONE static void fast_set_field(VM_OP_PARAMS)
+JET_PRESERVE_NONE static void fast_stf(VM_OP_PARAMS)
 {
-	FieldIc* ic = field_ic(pc);
-	Atom obj = callee;
-	Atom value = stack_top[-1];
-	Atom key = stack_top[-2];
-	T& c = *unbox<T>(obj);
+	OP_stf* op = reinterpret_cast<OP_stf*>(pc - sizeof(OP_stf));
+	FieldIc* ic = &op->ic;
+	Atom key = stack_base[frame_base + op->key];
+	Atom value = stack_base[frame_base + op->val];
+	T& c = *unbox<T>(callee);
 
 	auto write = [&](size_t idx) -> bool {
 		if constexpr (std::is_same_v<T, String>)
@@ -759,8 +670,6 @@ JET_PRESERVE_NONE static void fast_set_field(VM_OP_PARAMS)
 			{
 				JET_MUSTTAIL return die_set_bad_value(VM_OP_ARGS);
 			}
-			stack_top[-2] = value;
-			--stack_top;
 			DISPATCH();
 		}
 	}
@@ -785,34 +694,21 @@ JET_PRESERVE_NONE static void fast_set_field(VM_OP_PARAMS)
 	}
 	ic->ic_extra1 = idx;
 	ic->ic_extra2 = key.bits;
-	stack_top[-2] = value;
-	--stack_top;
 	DISPATCH();
 }
 
-JET_NOINLINE JET_PRESERVE_NONE static void die_struct_int_key(VM_OP_PARAMS)
+JET_PRESERVE_NONE static void fast_ldf_struct(VM_OP_PARAMS)
 {
-	JET_DIE("struct field access requires a symbol key");
-}
-
-[[noreturn]] static void die_struct_no_field(StructType* t, std::string_view name)
-{
-	JET_DIE("struct '%s': no field named '%.*s'", t->name().c_str(),
-			 static_cast<int>(name.size()), name.data());
-}
-
-JET_PRESERVE_NONE static void fast_ref_struct_field(VM_OP_PARAMS)
-{
-	FieldIc* ic = field_ic(pc);
-	Atom obj = callee;
-	Atom key = stack_top[-1];
-	Struct* inst = unbox<Struct>(obj);
+	OP_ldf* op = reinterpret_cast<OP_ldf*>(pc - sizeof(OP_ldf));
+	FieldIc* ic = &op->ic;
+	Atom key = stack_base[frame_base + op->key];
+	Struct* inst = unbox<Struct>(callee);
 
 	uintptr_t type_packed = reinterpret_cast<uintptr_t>(inst->type);
 	if ((ic->ic_extra1 >> 16) == type_packed && ic->ic_extra2 == key.bits) [[likely]]
 	{
 		uint16_t idx = static_cast<uint16_t>(ic->ic_extra1 & 0xFFFF);
-		stack_top[-1] = inst->values[idx];
+		stack_base[frame_base + op->dst] = inst->values[idx];
 		DISPATCH();
 	}
 
@@ -828,25 +724,23 @@ JET_PRESERVE_NONE static void fast_ref_struct_field(VM_OP_PARAMS)
 	}
 	ic->ic_extra1 = (type_packed << 16) | static_cast<uint16_t>(idx);
 	ic->ic_extra2 = key.bits;
-	stack_top[-1] = inst->values[idx];
+	stack_base[frame_base + op->dst] = inst->values[idx];
 	DISPATCH();
 }
 
-JET_PRESERVE_NONE static void fast_set_struct_field(VM_OP_PARAMS)
+JET_PRESERVE_NONE static void fast_stf_struct(VM_OP_PARAMS)
 {
-	FieldIc* ic = field_ic(pc);
-	Atom obj = callee;
-	Atom value = stack_top[-1];
-	Atom key = stack_top[-2];
-	Struct* inst = unbox<Struct>(obj);
+	OP_stf* op = reinterpret_cast<OP_stf*>(pc - sizeof(OP_stf));
+	FieldIc* ic = &op->ic;
+	Atom key = stack_base[frame_base + op->key];
+	Atom value = stack_base[frame_base + op->val];
+	Struct* inst = unbox<Struct>(callee);
 
 	uintptr_t type_packed = reinterpret_cast<uintptr_t>(inst->type);
 	if ((ic->ic_extra1 >> 16) == type_packed && ic->ic_extra2 == key.bits) [[likely]]
 	{
 		uint16_t idx = static_cast<uint16_t>(ic->ic_extra1 & 0xFFFF);
 		inst->values[idx] = value;
-		stack_top[-2] = value;
-		--stack_top;
 		DISPATCH();
 	}
 
@@ -863,52 +757,23 @@ JET_PRESERVE_NONE static void fast_set_struct_field(VM_OP_PARAMS)
 	ic->ic_extra1 = (type_packed << 16) | static_cast<uint16_t>(idx);
 	ic->ic_extra2 = key.bits;
 	inst->values[idx] = value;
-	stack_top[-2] = value;
-	--stack_top;
 	DISPATCH();
 }
 
-static Atom slow_ref_struct(Atom obj, Atom key)
-{
-	Struct* inst = unbox<Struct>(obj);
-	Symbol* sym = slow_unbox<Symbol>(key);
-	int idx = inst->type->find(sym->str());
-	if (idx < 0)
-	{
-		die_struct_no_field(inst->type, sym->str());
-	}
-	return inst->values[idx];
-}
-
-// Const-key shape handlers. The dispatch opcode set callee = receiver and
-// advanced pc past its operand. The key sits in the constant pool at index
-// `key_idx`, located at pc - sizeof(FieldIc) - 2 in every const-key opcode
-// because we stash key_idx right before the FieldIc in each layout.
-//
-// Stack contract: ref handlers PUSH the result; set handlers expect value on
-// top, write, leave value in place.
-
-static uint16_t field_ck_key_idx(Code* pc)
-{
-	uint16_t v;
-	std::memcpy(&v, pc - sizeof(FieldIc) - 2, sizeof(v));
-	return v;
-}
-
 template <class T>
-JET_PRESERVE_NONE static void fast_ref_field_ck(VM_OP_PARAMS)
+JET_PRESERVE_NONE static void fast_ldfk(VM_OP_PARAMS)
 {
-	FieldIc* ic = field_ic(pc);
-	Atom obj = callee;
-	T& c = *unbox<T>(obj);
+	OP_ldfk* op = reinterpret_cast<OP_ldfk*>(pc - sizeof(OP_ldfk));
+	FieldIc* ic = &op->ic;
+	T& c = *unbox<T>(callee);
 	size_t idx = ic->ic_extra1;
 	if (idx < c.size()) [[likely]]
 	{
-		*stack_top++ = container_load(c, idx);
+		stack_base[frame_base + op->dst] = container_load(c, idx);
 		DISPATCH();
 	}
 
-	Atom key = s.constants[field_ck_key_idx(pc)];
+	Atom key = s.constants[op->key_idx];
 	if (!is_type<jet::Type::Number>(key)) [[unlikely]]
 	{
 		JET_MUSTTAIL return die_ref_bad_key(VM_OP_ARGS);
@@ -924,17 +789,17 @@ JET_PRESERVE_NONE static void fast_ref_field_ck(VM_OP_PARAMS)
 		JET_MUSTTAIL return die_ref_oob(VM_OP_ARGS);
 	}
 	ic->ic_extra1 = idx;
-	*stack_top++ = container_load(c, idx);
+	stack_base[frame_base + op->dst] = container_load(c, idx);
 	DISPATCH();
 }
 
 template <class T>
-JET_PRESERVE_NONE static void fast_set_field_ck(VM_OP_PARAMS)
+JET_PRESERVE_NONE static void fast_stfk(VM_OP_PARAMS)
 {
-	FieldIc* ic = field_ic(pc);
-	Atom obj = callee;
-	Atom value = stack_top[-1];
-	T& c = *unbox<T>(obj);
+	OP_stfk* op = reinterpret_cast<OP_stfk*>(pc - sizeof(OP_stfk));
+	FieldIc* ic = &op->ic;
+	Atom value = stack_base[frame_base + op->val];
+	T& c = *unbox<T>(callee);
 	size_t idx = ic->ic_extra1;
 
 	auto write = [&](size_t i) -> bool {
@@ -962,7 +827,7 @@ JET_PRESERVE_NONE static void fast_set_field_ck(VM_OP_PARAMS)
 		DISPATCH();
 	}
 
-	Atom key = s.constants[field_ck_key_idx(pc)];
+	Atom key = s.constants[op->key_idx];
 	if (!is_type<jet::Type::Number>(key)) [[unlikely]]
 	{
 		JET_MUSTTAIL return die_set_bad_key(VM_OP_ARGS);
@@ -985,21 +850,21 @@ JET_PRESERVE_NONE static void fast_set_field_ck(VM_OP_PARAMS)
 	DISPATCH();
 }
 
-JET_PRESERVE_NONE static void fast_ref_struct_field_ck(VM_OP_PARAMS)
+JET_PRESERVE_NONE static void fast_ldfk_struct(VM_OP_PARAMS)
 {
-	FieldIc* ic = field_ic(pc);
-	Atom obj = callee;
-	Struct* inst = unbox<Struct>(obj);
+	OP_ldfk* op = reinterpret_cast<OP_ldfk*>(pc - sizeof(OP_ldfk));
+	FieldIc* ic = &op->ic;
+	Struct* inst = unbox<Struct>(callee);
 
 	uintptr_t type_packed = reinterpret_cast<uintptr_t>(inst->type);
 	if ((ic->ic_extra1 >> 16) == type_packed) [[likely]]
 	{
 		uint16_t idx = static_cast<uint16_t>(ic->ic_extra1 & 0xFFFF);
-		*stack_top++ = inst->values[idx];
+		stack_base[frame_base + op->dst] = inst->values[idx];
 		DISPATCH();
 	}
 
-	Atom key = s.constants[field_ck_key_idx(pc)];
+	Atom key = s.constants[op->key_idx];
 	if (!is_type<jet::Type::Symbol>(key)) [[unlikely]]
 	{
 		JET_MUSTTAIL return die_struct_int_key(VM_OP_ARGS);
@@ -1011,16 +876,16 @@ JET_PRESERVE_NONE static void fast_ref_struct_field_ck(VM_OP_PARAMS)
 		die_struct_no_field(inst->type, sym->str());
 	}
 	ic->ic_extra1 = (type_packed << 16) | static_cast<uint16_t>(idx);
-	*stack_top++ = inst->values[idx];
+	stack_base[frame_base + op->dst] = inst->values[idx];
 	DISPATCH();
 }
 
-JET_PRESERVE_NONE static void fast_set_struct_field_ck(VM_OP_PARAMS)
+JET_PRESERVE_NONE static void fast_stfk_struct(VM_OP_PARAMS)
 {
-	FieldIc* ic = field_ic(pc);
-	Atom obj = callee;
-	Atom value = stack_top[-1];
-	Struct* inst = unbox<Struct>(obj);
+	OP_stfk* op = reinterpret_cast<OP_stfk*>(pc - sizeof(OP_stfk));
+	FieldIc* ic = &op->ic;
+	Atom value = stack_base[frame_base + op->val];
+	Struct* inst = unbox<Struct>(callee);
 
 	uintptr_t type_packed = reinterpret_cast<uintptr_t>(inst->type);
 	if ((ic->ic_extra1 >> 16) == type_packed) [[likely]]
@@ -1030,7 +895,7 @@ JET_PRESERVE_NONE static void fast_set_struct_field_ck(VM_OP_PARAMS)
 		DISPATCH();
 	}
 
-	Atom key = s.constants[field_ck_key_idx(pc)];
+	Atom key = s.constants[op->key_idx];
 	if (!is_type<jet::Type::Symbol>(key)) [[unlikely]]
 	{
 		JET_MUSTTAIL return die_struct_int_key(VM_OP_ARGS);
@@ -1054,20 +919,20 @@ namespace
 	{
 		shape_table_init_t()
 		{
-			g_shape_by_tag[jet_tag::vector] = {fast_ref_field<Vec>,
-												fast_set_field<Vec>,
-												fast_ref_field_ck<Vec>,
-												fast_set_field_ck<Vec>,
+			g_shape_by_tag[jet_tag::vector] = {fast_ldf<Vec>,
+												fast_stf<Vec>,
+												fast_ldfk<Vec>,
+												fast_stfk<Vec>,
 												vector_ref};
-			g_shape_by_tag[jet_tag::string] = {fast_ref_field<String>,
-												fast_set_field<String>,
-												fast_ref_field_ck<String>,
-												fast_set_field_ck<String>,
+			g_shape_by_tag[jet_tag::string] = {fast_ldf<String>,
+												fast_stf<String>,
+												fast_ldfk<String>,
+												fast_stfk<String>,
 												string_ref};
-			g_shape_by_tag[jet_tag::struct_] = {fast_ref_struct_field,
-												 fast_set_struct_field,
-												 fast_ref_struct_field_ck,
-												 fast_set_struct_field_ck,
+			g_shape_by_tag[jet_tag::struct_] = {fast_ldf_struct,
+												 fast_stf_struct,
+												 fast_ldfk_struct,
+												 fast_stfk_struct,
 												 slow_ref_struct};
 		}
 	} shape_table_init;
@@ -1078,117 +943,54 @@ static uint16_t type_bits(Atom a)
 	return static_cast<uint16_t>(a.bits >> 48);
 }
 
-// Each op_*_field dispatcher loads `obj` from its addressing-mode source,
-// shifts the stack so the shape handler sees the uniform layout (key on top
-// for ref; key,value on top for set), passes obj via callee, and tail-calls
-// the per-shape handler stamped in the IC. The IC's address is recoverable
-// from pc since it sits at the start of the operand bytes.
-
 static bool field_ic_hit(FieldIc* ic, Atom obj)
 {
 	return ic->ic_handler != 0 && ic->ic_dispatch_key == type_bits(obj);
 }
 
-static VmOp field_install_ref(FieldIc* ic, Atom obj)
+static VmOp field_install_ldf(FieldIc* ic, Atom obj)
 {
 	ObjShape* shape = shape_of(obj);
 	JET_DIE_UNLESS(shape, "ref: unsupported receiver type");
-	ic->ic_handler = reinterpret_cast<uint64_t>(shape->ref_handler);
+	ic->ic_handler = reinterpret_cast<uint64_t>(shape->ldf_handler);
 	ic->ic_dispatch_key = type_bits(obj);
-	return shape->ref_handler;
+	return shape->ldf_handler;
 }
 
-static VmOp field_install_set(FieldIc* ic, Atom obj)
+static VmOp field_install_stf(FieldIc* ic, Atom obj)
 {
 	ObjShape* shape = shape_of(obj);
 	JET_DIE_UNLESS(shape, "set!: unsupported receiver type");
-	ic->ic_handler = reinterpret_cast<uint64_t>(shape->set_handler);
+	ic->ic_handler = reinterpret_cast<uint64_t>(shape->stf_handler);
 	ic->ic_dispatch_key = type_bits(obj);
-	return shape->set_handler;
+	return shape->stf_handler;
 }
 
-// Const-key install variants: same as ref/set but stamp the per-handler
-// IC slot (ic_extra1) with a sentinel so the shape handler's own cache
-// installs on first hit.
-
-static VmOp field_install_ref_ck(FieldIc* ic, Atom obj)
+static VmOp field_install_ldfk(FieldIc* ic, Atom obj)
 {
 	ObjShape* shape = shape_of(obj);
 	JET_DIE_UNLESS(shape, "ref: unsupported receiver type");
-	ic->ic_handler = reinterpret_cast<uint64_t>(shape->ref_handler_ck);
+	ic->ic_handler = reinterpret_cast<uint64_t>(shape->ldfk_handler);
 	ic->ic_dispatch_key = type_bits(obj);
 	ic->ic_extra1 = ~static_cast<uint64_t>(0);
-	return shape->ref_handler_ck;
+	return shape->ldfk_handler;
 }
 
-static VmOp field_install_set_ck(FieldIc* ic, Atom obj)
+static VmOp field_install_stfk(FieldIc* ic, Atom obj)
 {
 	ObjShape* shape = shape_of(obj);
 	JET_DIE_UNLESS(shape, "set!: unsupported receiver type");
-	ic->ic_handler = reinterpret_cast<uint64_t>(shape->set_handler_ck);
+	ic->ic_handler = reinterpret_cast<uint64_t>(shape->stfk_handler);
 	ic->ic_dispatch_key = type_bits(obj);
 	ic->ic_extra1 = ~static_cast<uint64_t>(0);
-	return shape->set_handler_ck;
+	return shape->stfk_handler;
 }
 
-// Receiver-fetch tag types for op_field_ic. Each provides an always-inlined
-// static get() that reads the receiver Atom. Stack-mode also consumes the
-// receiver from the value stack; Depth selects how many slots back from
-// stack_top the receiver lives (1=ref-ck, 2=set-ck/ref, 3=set).
-
-template<int Depth>
-struct GetReceiverFromStack
-{
-	template<class Op>
-	JET_ALWAYS_INLINE static Atom get(Op*, Atom*& stack_top, Atom*, size_t, Frame*)
-	{
-		Atom obj = stack_top[-Depth];
-		if constexpr (Depth >= 2)
-		{
-			stack_top[-Depth] = stack_top[-Depth + 1];
-		}
-		if constexpr (Depth >= 3)
-		{
-			stack_top[-Depth + 1] = stack_top[-Depth + 2];
-		}
-		--stack_top;
-		return obj;
-	}
-};
-
-struct GetReceiverFromLocal
-{
-	template<class Op>
-	JET_ALWAYS_INLINE static Atom get(Op* op, Atom*&, Atom* stack_base, size_t frame_base, Frame*)
-	{
-		return stack_base[frame_base + op->off];
-	}
-};
-
-struct GetReceiverFromUpvalueDirect
-{
-	template<class Op>
-	JET_ALWAYS_INLINE static Atom get(Op* op, Atom*&, Atom*, size_t, Frame* frame)
-	{
-		return frame->closure->captures[op->idx];
-	}
-};
-
-struct GetReceiverFromUpvalueSlot
-{
-	template<class Op>
-	JET_ALWAYS_INLINE static Atom get(Op* op, Atom*&, Atom*, size_t, Frame* frame)
-	{
-		Slot* sl = unbox<Slot>(frame->closure->captures[op->idx]);
-		return sl->value;
-	}
-};
-
-template<class Op, class GetReceiver, auto InstallHandler>
-JET_PRESERVE_NONE static void op_field_ic(VM_OP_PARAMS)
+template<class Op, auto InstallHandler>
+JET_PRESERVE_NONE static void op_field_reg(VM_OP_PARAMS)
 {
 	Op* op = reinterpret_cast<Op*>(pc);
-	Atom obj = GetReceiver::get(op, stack_top, stack_base, frame_base, frame);
+	Atom obj = stack_base[frame_base + op->obj];
 	pc += sizeof(*op);
 	callee = obj;
 
@@ -1198,30 +1000,10 @@ JET_PRESERVE_NONE static void op_field_ic(VM_OP_PARAMS)
 	JET_MUSTTAIL return h(VM_OP_ARGS);
 }
 
-static constexpr auto& op_ref_field                   = op_field_ic<OP_ref_field,             GetReceiverFromStack<2>,      field_install_ref>;
-static constexpr auto& op_set_field                   = op_field_ic<OP_set_field,             GetReceiverFromStack<3>,      field_install_set>;
-static constexpr auto& op_ref_local_field             = op_field_ic<OP_ref_local_field,       GetReceiverFromLocal,         field_install_ref>;
-static constexpr auto& op_set_local_field             = op_field_ic<OP_set_local_field,       GetReceiverFromLocal,         field_install_set>;
-static constexpr auto& op_ref_upvalue_direct_field    = op_field_ic<OP_ref_upvalue_field,     GetReceiverFromUpvalueDirect, field_install_ref>;
-static constexpr auto& op_set_upvalue_direct_field    = op_field_ic<OP_set_upvalue_field,     GetReceiverFromUpvalueDirect, field_install_set>;
-static constexpr auto& op_ref_upvalue_slot_field      = op_field_ic<OP_ref_upvalue_field,     GetReceiverFromUpvalueSlot,   field_install_ref>;
-static constexpr auto& op_set_upvalue_slot_field      = op_field_ic<OP_set_upvalue_field,     GetReceiverFromUpvalueSlot,   field_install_set>;
-static constexpr auto& op_ref_field_ck                = op_field_ic<OP_ref_field_ck,          GetReceiverFromStack<1>,      field_install_ref_ck>;
-static constexpr auto& op_set_field_ck                = op_field_ic<OP_set_field_ck,          GetReceiverFromStack<2>,      field_install_set_ck>;
-static constexpr auto& op_ref_local_field_ck          = op_field_ic<OP_ref_local_field_ck,    GetReceiverFromLocal,         field_install_ref_ck>;
-static constexpr auto& op_set_local_field_ck          = op_field_ic<OP_set_local_field_ck,    GetReceiverFromLocal,         field_install_set_ck>;
-static constexpr auto& op_ref_upvalue_direct_field_ck = op_field_ic<OP_ref_upvalue_field_ck,  GetReceiverFromUpvalueDirect, field_install_ref_ck>;
-static constexpr auto& op_set_upvalue_direct_field_ck = op_field_ic<OP_set_upvalue_field_ck,  GetReceiverFromUpvalueDirect, field_install_set_ck>;
-static constexpr auto& op_ref_upvalue_slot_field_ck   = op_field_ic<OP_ref_upvalue_field_ck,  GetReceiverFromUpvalueSlot,   field_install_ref_ck>;
-static constexpr auto& op_set_upvalue_slot_field_ck   = op_field_ic<OP_set_upvalue_field_ck,  GetReceiverFromUpvalueSlot,   field_install_set_ck>;
-
-JET_PRESERVE_NONE static void op_ldc(VM_OP_PARAMS)
-{
-	OP_ldc* op = reinterpret_cast<OP_ldc*>(pc);
-	pc += sizeof(*op);
-	*stack_top++ = s.constants[op->idx];
-	DISPATCH();
-}
+static constexpr auto& op_ldf  = op_field_reg<OP_ldf,  field_install_ldf>;
+static constexpr auto& op_stf  = op_field_reg<OP_stf,  field_install_stf>;
+static constexpr auto& op_ldfk = op_field_reg<OP_ldfk, field_install_ldfk>;
+static constexpr auto& op_stfk = op_field_reg<OP_stfk, field_install_stfk>;
 
 JET_ALWAYS_INLINE static Atom sub_op(Atom a, Atom b)
 {
@@ -1269,114 +1051,6 @@ JET_ALWAYS_INLINE static Atom ge_op(Atom a, Atom b)
 	return box(unbox<Number>(a) >= unbox<Number>(b));
 }
 
-template<auto Op>
-JET_PRESERVE_NONE static void op_binop_ss(VM_OP_PARAMS)
-{
-	Atom b = stack_top[-1];
-	Atom a = stack_top[-2];
-	stack_top[-2] = Op(a, b);
-	--stack_top;
-	DISPATCH();
-}
-
-template<auto Op>
-JET_PRESERVE_NONE static void op_binop_sc(VM_OP_PARAMS)
-{
-	OP_binop_sc* op = reinterpret_cast<OP_binop_sc*>(pc);
-	pc += sizeof(*op);
-	Atom a = stack_top[-1];
-	stack_top[-1] = Op(a, s.constants[op->idx]);
-	DISPATCH();
-}
-
-static constexpr auto& op_sub2ss = op_binop_ss<sub_op>;
-static constexpr auto& op_add2ss = op_binop_ss<add_op>;
-static constexpr auto& op_mul2ss = op_binop_ss<mul_op>;
-static constexpr auto& op_div2ss = op_binop_ss<div_op>;
-static constexpr auto& op_eq2ss  = op_binop_ss<eq_op>;
-static constexpr auto& op_lt2ss  = op_binop_ss<lt_op>;
-static constexpr auto& op_le2ss  = op_binop_ss<le_op>;
-static constexpr auto& op_gt2ss  = op_binop_ss<gt_op>;
-static constexpr auto& op_ge2ss  = op_binop_ss<ge_op>;
-static constexpr auto& op_sub2sc = op_binop_sc<sub_op>;
-static constexpr auto& op_add2sc = op_binop_sc<add_op>;
-static constexpr auto& op_mul2sc = op_binop_sc<mul_op>;
-static constexpr auto& op_div2sc = op_binop_sc<div_op>;
-static constexpr auto& op_eq2sc  = op_binop_sc<eq_op>;
-static constexpr auto& op_lt2sc  = op_binop_sc<lt_op>;
-
-JET_NOINLINE JET_PRESERVE_NONE static void slow_recur(VM_OP_PARAMS)
-{
-	OP_recur* op = reinterpret_cast<OP_recur*>(pc);
-	size_t nargs = op->nargs;
-	Lambda& la = *frame->closure;
-	Atom* dst = stack_base + frame_base;
-	std::memmove(dst, stack_top - nargs, nargs * sizeof(Atom));
-	stack_top = dst + la.n_locals;
-	pc = la.code;
-	DISPATCH();
-}
-
-JET_PRESERVE_NONE static void op_recur(VM_OP_PARAMS)
-{
-	JET_GC_CHECK();
-	OP_recur* op = reinterpret_cast<OP_recur*>(pc);
-	size_t nargs = op->nargs;
-	Lambda& la = *frame->closure;
-	Atom* dst = stack_base + frame_base;
-	Atom* src = stack_top - nargs;
-	switch (nargs)
-	{
-		case 0: break;
-		case 1: __builtin_memmove(dst, src, 1 * sizeof(Atom)); break;
-		case 2: __builtin_memmove(dst, src, 2 * sizeof(Atom)); break;
-		case 3: __builtin_memmove(dst, src, 3 * sizeof(Atom)); break;
-		case 4: __builtin_memmove(dst, src, 4 * sizeof(Atom)); break;
-		default: JET_MUSTTAIL return slow_recur(VM_OP_ARGS);
-	}
-	stack_top = dst + la.n_locals;
-	pc = la.code;
-	DISPATCH();
-}
-
-JET_PRESERVE_NONE static void op_apply(VM_OP_PARAMS)
-{
-	JET_GC_CHECK();
-	Atom args_list = *--stack_top;
-	args = stack_top;
-	stack_top = list_to_args(args_list, stack_top);
-	Atom* proc_p = args - 1;
-	result_slot = static_cast<size_t>(proc_p - stack_base);
-	callee = *proc_p;
-
-	frame->code = pc;
-	JET_MUSTTAIL return slow_call_notail(VM_OP_ARGS);
-}
-
-JET_PRESERVE_NONE static void op_call(VM_OP_PARAMS)
-{
-	JET_GC_CHECK();
-	OP_call* op = reinterpret_cast<OP_call*>(pc);
-	pc += sizeof(*op);
-	bool is_tail = op->tail;
-	size_t nargs = op->nargs;
-
-	args = stack_top - nargs;
-	Atom* proc_p = args - 1;
-	result_slot = static_cast<size_t>(proc_p - stack_base);
-	callee = *proc_p;
-
-	frame->code = pc;
-	if (is_tail)
-	{
-		JET_MUSTTAIL return slow_call_tail(VM_OP_ARGS);
-	}
-	else
-	{
-		JET_MUSTTAIL return slow_call_notail(VM_OP_ARGS);
-	}
-}
-
 JET_NOINLINE static VmOp resolve_call_stub(Atom callee, size_t nargs, bool tail)
 {
 	if (is_type<jet::Type::Procedure>(callee))
@@ -1397,184 +1071,360 @@ JET_NOINLINE static VmOp resolve_call_stub(Atom callee, size_t nargs, bool tail)
 	return p->stub;
 }
 
-template <int N>
-JET_NOINLINE JET_PRESERVE_NONE static void op_call_ic_slot_miss(VM_OP_PARAMS)
-{
-	JET_PROFILE_IC_MISS(static_cast<uint8_t>(Opcode::call_ic_slot_0) + N);
-	OP_call_ic_slot* op = reinterpret_cast<OP_call_ic_slot*>(pc);
-	pc += sizeof(*op);
-	size_t nargs = op->nargs;
-	Slot* sl = unbox<Slot>(frame->closure->captures[op->upvalue_idx]);
-	callee = sl->value;
-	VmOp stub = resolve_call_stub(callee, nargs, op->tail);
-	op->ic_slot = reinterpret_cast<uint64_t>(sl);
-	op->ic_atom = callee.bits;
-	op->ic_stub = reinterpret_cast<uint64_t>(stub);
-	op->ic_version = sl->version;
-
-	args = stack_top - nargs;
-	result_slot = static_cast<size_t>(args - stack_base);
-	frame->code = pc;
-	JET_MUSTTAIL return stub(VM_OP_ARGS);
-}
-
-template <int N>
-JET_PRESERVE_NONE static void op_call_ic_slot(VM_OP_PARAMS)
-{
-	JET_GC_CHECK();
-	OP_call_ic_slot* op = reinterpret_cast<OP_call_ic_slot*>(pc);
-	Slot* sl = unbox<Slot>(frame->closure->captures[op->upvalue_idx]);
-	if (op->ic_slot != reinterpret_cast<uint64_t>(sl) || op->ic_version != sl->version) [[unlikely]]
-	{
-		JET_MUSTTAIL return op_call_ic_slot_miss<N>(VM_OP_ARGS);
-	}
-	pc += sizeof(*op);
-	callee = Atom::from_bits(op->ic_atom);
-	VmOp stub = reinterpret_cast<VmOp>(op->ic_stub);
-	args = stack_top - op->nargs;
-	result_slot = static_cast<size_t>(args - stack_base);
-	frame->code = pc;
-	JET_MUSTTAIL return stub(VM_OP_ARGS);
-}
-
-template <int N>
-JET_NOINLINE JET_PRESERVE_NONE static void op_call_ic_slot_local_miss(VM_OP_PARAMS)
-{
-	JET_PROFILE_IC_MISS(static_cast<uint8_t>(Opcode::call_ic_slot_local_0) + N);
-	OP_call_ic_slot_local* op = reinterpret_cast<OP_call_ic_slot_local*>(pc);
-	pc += sizeof(*op);
-	size_t nargs = op->nargs;
-	Slot* sl = unbox<Slot>(frame->closure->captures[op->upvalue_idx]);
-	callee = sl->value;
-	VmOp stub = resolve_call_stub(callee, nargs, op->tail);
-	op->ic_slot = reinterpret_cast<uint64_t>(sl);
-	op->ic_atom = callee.bits;
-	op->ic_stub = reinterpret_cast<uint64_t>(stub);
-	op->ic_version = sl->version;
-
-	args = stack_top - nargs;
-	result_slot = static_cast<size_t>(args - stack_base);
-	frame->code = pc;
-	JET_MUSTTAIL return stub(VM_OP_ARGS);
-}
-
-template <int N>
-JET_PRESERVE_NONE static void op_call_ic_slot_local(VM_OP_PARAMS)
-{
-	JET_GC_CHECK();
-	OP_call_ic_slot_local* op = reinterpret_cast<OP_call_ic_slot_local*>(pc);
-	*stack_top++ = stack_base[frame_base + op->local_off];
-	Slot* sl = unbox<Slot>(frame->closure->captures[op->upvalue_idx]);
-	if (op->ic_slot != reinterpret_cast<uint64_t>(sl) || op->ic_version != sl->version) [[unlikely]]
-	{
-		JET_MUSTTAIL return op_call_ic_slot_local_miss<N>(VM_OP_ARGS);
-	}
-	pc += sizeof(*op);
-	callee = Atom::from_bits(op->ic_atom);
-	VmOp stub = reinterpret_cast<VmOp>(op->ic_stub);
-	args = stack_top - op->nargs;
-	result_slot = static_cast<size_t>(args - stack_base);
-	frame->code = pc;
-	JET_MUSTTAIL return stub(VM_OP_ARGS);
-}
-
 enum class IcDirectSource : uint8_t
 {
 	Local = 0,
 	Upvalue = 1
 };
 
-template <int N>
-JET_NOINLINE JET_PRESERVE_NONE static void op_call_ic_direct_miss(VM_OP_PARAMS)
+JET_PRESERVE_NONE static void op_mov(VM_OP_PARAMS)
 {
-	JET_PROFILE_IC_MISS(static_cast<uint8_t>(Opcode::call_ic_direct_0) + N);
-	OP_call_ic_direct* op = reinterpret_cast<OP_call_ic_direct*>(pc);
+	OP_mov* op = reinterpret_cast<OP_mov*>(pc);
 	pc += sizeof(*op);
-	IcDirectSource src = static_cast<IcDirectSource>(op->src);
+	stack_base[frame_base + op->dst] = stack_base[frame_base + op->src];
+	DISPATCH();
+}
+
+JET_PRESERVE_NONE static void op_ldk(VM_OP_PARAMS)
+{
+	OP_ldk* op = reinterpret_cast<OP_ldk*>(pc);
+	pc += sizeof(*op);
+	stack_base[frame_base + op->dst] = s.constants[op->idx];
+	DISPATCH();
+}
+
+JET_PRESERVE_NONE static void op_ldu(VM_OP_PARAMS)
+{
+	OP_ldu* op = reinterpret_cast<OP_ldu*>(pc);
+	pc += sizeof(*op);
+	stack_base[frame_base + op->dst] = frame->closure->captures[op->idx];
+	DISPATCH();
+}
+
+JET_PRESERVE_NONE static void op_ldus(VM_OP_PARAMS)
+{
+	OP_ldus* op = reinterpret_cast<OP_ldus*>(pc);
+	pc += sizeof(*op);
+	Slot* sl = unbox<Slot>(frame->closure->captures[op->idx]);
+	stack_base[frame_base + op->dst] = sl->value;
+	DISPATCH();
+}
+
+JET_PRESERVE_NONE static void op_stu(VM_OP_PARAMS)
+{
+	OP_stu* op = reinterpret_cast<OP_stu*>(pc);
+	pc += sizeof(*op);
+	Slot* sl = unbox<Slot>(frame->closure->captures[op->idx]);
+	sl->value = stack_base[frame_base + op->src];
+	sl->version = next_slot_version();
+	DISPATCH();
+}
+
+JET_PRESERVE_NONE static void op_ldd(VM_OP_PARAMS)
+{
+	OP_ldd* op = reinterpret_cast<OP_ldd*>(pc);
+	pc += sizeof(*op);
+	Slot* sl = unbox<Slot>(stack_base[frame_base + op->idx]);
+	stack_base[frame_base + op->dst] = sl->value;
+	DISPATCH();
+}
+
+JET_PRESERVE_NONE static void op_std(VM_OP_PARAMS)
+{
+	OP_std* op = reinterpret_cast<OP_std*>(pc);
+	pc += sizeof(*op);
+	Slot* sl = unbox<Slot>(stack_base[frame_base + op->idx]);
+	sl->value = stack_base[frame_base + op->src];
+	sl->version = next_slot_version();
+	DISPATCH();
+}
+
+JET_PRESERVE_NONE static void op_box(VM_OP_PARAMS)
+{
+	JET_GC_CHECK();
+	OP_box* op = reinterpret_cast<OP_box*>(pc);
+	pc += sizeof(*op);
+	Atom prev = stack_base[frame_base + op->reg];
+	stack_base[frame_base + op->reg] = box<Slot>(prev);
+	DISPATCH();
+}
+
+JET_PRESERVE_NONE static void op_clos(VM_OP_PARAMS)
+{
+	JET_GC_CHECK();
+	OP_clos* op = reinterpret_cast<OP_clos*>(pc);
+	pc += sizeof(*op);
+
+	Lambda& tmpl = *unbox<Lambda>(s.constants[op->pool_idx]);
+	Atom la_atom = box<Lambda>(tmpl.code, tmpl.arity, tmpl.n_locals, op->n_captures);
+	Lambda* la = unbox<Lambda>(la_atom);
+	for (uint16_t i = 0; i < op->n_captures; ++i)
+	{
+		OP_make_closure_capture* cap = reinterpret_cast<OP_make_closure_capture*>(pc);
+		pc += sizeof(*cap);
+		CaptureSource src = static_cast<CaptureSource>(cap->src);
+		la->captures[i] = (src == CaptureSource::Local) ? stack_base[frame_base + cap->idx]
+														: frame->closure->captures[cap->idx];
+	}
+	stack_base[frame_base + op->dst] = la_atom;
+	DISPATCH();
+}
+
+template<auto Op>
+JET_PRESERVE_NONE static void op_binop_rr_impl(VM_OP_PARAMS)
+{
+	OP_binop_rr* op = reinterpret_cast<OP_binop_rr*>(pc);
+	pc += sizeof(*op);
+	stack_base[frame_base + op->dst] = Op(stack_base[frame_base + op->a], stack_base[frame_base + op->b]);
+	DISPATCH();
+}
+
+template<auto Op>
+JET_PRESERVE_NONE static void op_binop_rk_impl(VM_OP_PARAMS)
+{
+	OP_binop_rk* op = reinterpret_cast<OP_binop_rk*>(pc);
+	pc += sizeof(*op);
+	stack_base[frame_base + op->dst] = Op(stack_base[frame_base + op->a], s.constants[op->b]);
+	DISPATCH();
+}
+
+static constexpr auto& op_add  = op_binop_rr_impl<add_op>;
+static constexpr auto& op_sub  = op_binop_rr_impl<sub_op>;
+static constexpr auto& op_mul  = op_binop_rr_impl<mul_op>;
+static constexpr auto& op_div  = op_binop_rr_impl<div_op>;
+static constexpr auto& op_eq   = op_binop_rr_impl<eq_op>;
+static constexpr auto& op_lt   = op_binop_rr_impl<lt_op>;
+static constexpr auto& op_le   = op_binop_rr_impl<le_op>;
+static constexpr auto& op_gt   = op_binop_rr_impl<gt_op>;
+static constexpr auto& op_ge   = op_binop_rr_impl<ge_op>;
+static constexpr auto& op_addk = op_binop_rk_impl<add_op>;
+static constexpr auto& op_subk = op_binop_rk_impl<sub_op>;
+static constexpr auto& op_mulk = op_binop_rk_impl<mul_op>;
+static constexpr auto& op_divk = op_binop_rk_impl<div_op>;
+static constexpr auto& op_eqk  = op_binop_rk_impl<eq_op>;
+static constexpr auto& op_ltk  = op_binop_rk_impl<lt_op>;
+
+JET_PRESERVE_NONE static void op_if_false(VM_OP_PARAMS)
+{
+	OP_if_false* op = reinterpret_cast<OP_if_false*>(pc);
+	pc += sizeof(*op);
+	if (!is_true(stack_base[frame_base + op->src]))
+	{
+		pc += op->size;
+	}
+	DISPATCH();
+}
+
+JET_PRESERVE_NONE static void op_retv(VM_OP_PARAMS)
+{
+	OP_retv* op = reinterpret_cast<OP_retv*>(pc);
+	Atom retval = stack_base[frame_base + op->src];
+	Frame* prev = frame - 1;
+	s.frames.pop_back();
+	stack_base[frame_base] = retval;
+	frame = prev;
+	frame_base = prev->base;
+	stack_top = stack_base + prev->top;
+	pc = prev->code;
+	DISPATCH();
+}
+
+#define JET_CALL_WINDOW(w_, nargs_)                                                                          \
+	do                                                                                                       \
+	{                                                                                                        \
+		result_slot = frame_base + (w_);                                                                     \
+		args = stack_base + result_slot;                                                                     \
+		stack_top = args + (nargs_);                                                                         \
+		frame->code = pc;                                                                                    \
+	} while (0)
+
+template <bool is_tail>
+JET_PRESERVE_NONE static void op_callw_impl(VM_OP_PARAMS)
+{
+	JET_GC_CHECK();
+	OP_callw* op = reinterpret_cast<OP_callw*>(pc);
+	pc += sizeof(*op);
+	callee = stack_base[frame_base + op->callee];
+	JET_CALL_WINDOW(op->w, op->nargs);
+	if constexpr (is_tail)
+	{
+		JET_MUSTTAIL return slow_call_tail(VM_OP_ARGS);
+	}
+	else
+	{
+		JET_MUSTTAIL return slow_call_notail(VM_OP_ARGS);
+	}
+}
+
+static constexpr auto& op_callw = op_callw_impl<false>;
+static constexpr auto& op_tcall = op_callw_impl<true>;
+
+JET_NOINLINE JET_PRESERVE_NONE static void slow_recurw(VM_OP_PARAMS)
+{
+	OP_recurw* op = reinterpret_cast<OP_recurw*>(pc);
+	Lambda& la = *frame->closure;
+	Atom* dst = stack_base + frame_base;
+	Atom* src = stack_base + frame_base + op->w;
+	std::memmove(dst, src, op->nargs * sizeof(Atom));
+	pc = la.code;
+	DISPATCH();
+}
+
+JET_PRESERVE_NONE static void op_recurw(VM_OP_PARAMS)
+{
+	JET_GC_CHECK();
+	OP_recurw* op = reinterpret_cast<OP_recurw*>(pc);
 	size_t nargs = op->nargs;
-	Atom current =
-		(src == IcDirectSource::Local) ? stack_base[frame_base + op->idx] : frame->closure->captures[op->idx];
-	callee = current;
-	VmOp stub = resolve_call_stub(callee, nargs, op->tail);
+	Lambda& la = *frame->closure;
+	Atom* dst = stack_base + frame_base;
+	Atom* src = stack_base + frame_base + op->w;
+	switch (nargs)
+	{
+		case 0: break;
+		case 1: __builtin_memmove(dst, src, 1 * sizeof(Atom)); break;
+		case 2: __builtin_memmove(dst, src, 2 * sizeof(Atom)); break;
+		case 3: __builtin_memmove(dst, src, 3 * sizeof(Atom)); break;
+		case 4: __builtin_memmove(dst, src, 4 * sizeof(Atom)); break;
+		default: JET_MUSTTAIL return slow_recurw(VM_OP_ARGS);
+	}
+	pc = la.code;
+	DISPATCH();
+}
+
+JET_PRESERVE_NONE static void op_applyw(VM_OP_PARAMS)
+{
+	JET_GC_CHECK();
+	OP_applyw* op = reinterpret_cast<OP_applyw*>(pc);
+	pc += sizeof(*op);
+	callee = stack_base[frame_base + op->w];
+	Atom args_list = stack_base[frame_base + op->w + 1];
+	result_slot = frame_base + op->w;
+	args = stack_base + result_slot;
+	stack_top = list_to_args(args_list, args);
+	if (stack_top > s.stack_watermark) [[unlikely]]
+	{
+		if (stack_top > s.stack_end - STACK_SLACK) [[unlikely]]
+		{
+			JET_DIE("stack overflow (apply with too many arguments?)");
+		}
+		s.stack_watermark = stack_top;
+	}
+	frame->code = pc;
+	JET_MUSTTAIL return slow_call_notail(VM_OP_ARGS);
+}
+
+template <int N, bool is_tail>
+JET_NOINLINE JET_PRESERVE_NONE static void op_cs_miss(VM_OP_PARAMS)
+{
+	JET_PROFILE_IC_MISS(static_cast<uint8_t>(is_tail ? Opcode::cst_0 : Opcode::cs_0) + N);
+	OP_cs* op = reinterpret_cast<OP_cs*>(pc);
+	pc += sizeof(*op);
+	Slot* sl = unbox<Slot>(frame->closure->captures[op->upvalue_idx]);
+	callee = sl->value;
+	VmOp stub = resolve_call_stub(callee, op->nargs, is_tail);
+	op->ic_slot = reinterpret_cast<uint64_t>(sl);
 	op->ic_atom = callee.bits;
 	op->ic_stub = reinterpret_cast<uint64_t>(stub);
+	op->ic_version = sl->version;
 
-	args = stack_top - nargs;
-	result_slot = static_cast<size_t>(args - stack_base);
-	frame->code = pc;
+	JET_CALL_WINDOW(op->w, op->nargs);
 	JET_MUSTTAIL return stub(VM_OP_ARGS);
 }
 
-template <int N>
-JET_PRESERVE_NONE static void op_call_ic_direct(VM_OP_PARAMS)
+template <int N, bool is_tail>
+JET_PRESERVE_NONE static void op_cs_impl(VM_OP_PARAMS)
 {
 	JET_GC_CHECK();
-	OP_call_ic_direct* op = reinterpret_cast<OP_call_ic_direct*>(pc);
+	OP_cs* op = reinterpret_cast<OP_cs*>(pc);
+	Slot* sl = unbox<Slot>(frame->closure->captures[op->upvalue_idx]);
+	if (op->ic_slot != reinterpret_cast<uint64_t>(sl) || op->ic_version != sl->version) [[unlikely]]
+	{
+		JET_MUSTTAIL return op_cs_miss<N, is_tail>(VM_OP_ARGS);
+	}
+	pc += sizeof(*op);
+	callee = Atom::from_bits(op->ic_atom);
+	VmOp stub = reinterpret_cast<VmOp>(op->ic_stub);
+	JET_CALL_WINDOW(op->w, op->nargs);
+	JET_MUSTTAIL return stub(VM_OP_ARGS);
+}
+
+template <int N, bool is_tail>
+JET_NOINLINE JET_PRESERVE_NONE static void op_cd_miss(VM_OP_PARAMS)
+{
+	JET_PROFILE_IC_MISS(static_cast<uint8_t>(is_tail ? Opcode::cdt_0 : Opcode::cd_0) + N);
+	OP_cd* op = reinterpret_cast<OP_cd*>(pc);
+	pc += sizeof(*op);
 	IcDirectSource src = static_cast<IcDirectSource>(op->src);
-	Atom current =
-		(src == IcDirectSource::Local) ? stack_base[frame_base + op->idx] : frame->closure->captures[op->idx];
+	callee = (src == IcDirectSource::Local) ? stack_base[frame_base + op->idx]
+											: frame->closure->captures[op->idx];
+	VmOp stub = resolve_call_stub(callee, op->nargs, is_tail);
+	op->ic_atom = callee.bits;
+	op->ic_stub = reinterpret_cast<uint64_t>(stub);
+
+	JET_CALL_WINDOW(op->w, op->nargs);
+	JET_MUSTTAIL return stub(VM_OP_ARGS);
+}
+
+template <int N, bool is_tail>
+JET_PRESERVE_NONE static void op_cd_impl(VM_OP_PARAMS)
+{
+	JET_GC_CHECK();
+	OP_cd* op = reinterpret_cast<OP_cd*>(pc);
+	IcDirectSource src = static_cast<IcDirectSource>(op->src);
+	Atom current = (src == IcDirectSource::Local) ? stack_base[frame_base + op->idx]
+												  : frame->closure->captures[op->idx];
 	if (op->ic_atom != current.bits) [[unlikely]]
 	{
-		JET_MUSTTAIL return op_call_ic_direct_miss<N>(VM_OP_ARGS);
+		JET_MUSTTAIL return op_cd_miss<N, is_tail>(VM_OP_ARGS);
 	}
 	pc += sizeof(*op);
 	callee = current;
 	VmOp stub = reinterpret_cast<VmOp>(op->ic_stub);
-	args = stack_top - op->nargs;
-	result_slot = static_cast<size_t>(args - stack_base);
-	frame->code = pc;
+	JET_CALL_WINDOW(op->w, op->nargs);
 	JET_MUSTTAIL return stub(VM_OP_ARGS);
 }
 
-static constexpr auto& op_call_ic_slot_0 = op_call_ic_slot<0>;
-static constexpr auto& op_call_ic_slot_1 = op_call_ic_slot<1>;
-static constexpr auto& op_call_ic_slot_2 = op_call_ic_slot<2>;
-static constexpr auto& op_call_ic_slot_3 = op_call_ic_slot<3>;
-static constexpr auto& op_call_ic_slot_4 = op_call_ic_slot<4>;
-static constexpr auto& op_call_ic_slot_5 = op_call_ic_slot<5>;
-static constexpr auto& op_call_ic_slot_6 = op_call_ic_slot<6>;
-static constexpr auto& op_call_ic_slot_7 = op_call_ic_slot<7>;
+static constexpr auto& op_cs_0 = op_cs_impl<0, false>;
+static constexpr auto& op_cs_1 = op_cs_impl<1, false>;
+static constexpr auto& op_cs_2 = op_cs_impl<2, false>;
+static constexpr auto& op_cs_3 = op_cs_impl<3, false>;
+static constexpr auto& op_cs_4 = op_cs_impl<4, false>;
+static constexpr auto& op_cs_5 = op_cs_impl<5, false>;
+static constexpr auto& op_cs_6 = op_cs_impl<6, false>;
+static constexpr auto& op_cs_7 = op_cs_impl<7, false>;
 
-static constexpr auto& op_call_ic_slot_local_0 = op_call_ic_slot_local<0>;
-static constexpr auto& op_call_ic_slot_local_1 = op_call_ic_slot_local<1>;
-static constexpr auto& op_call_ic_slot_local_2 = op_call_ic_slot_local<2>;
-static constexpr auto& op_call_ic_slot_local_3 = op_call_ic_slot_local<3>;
-static constexpr auto& op_call_ic_slot_local_4 = op_call_ic_slot_local<4>;
-static constexpr auto& op_call_ic_slot_local_5 = op_call_ic_slot_local<5>;
-static constexpr auto& op_call_ic_slot_local_6 = op_call_ic_slot_local<6>;
-static constexpr auto& op_call_ic_slot_local_7 = op_call_ic_slot_local<7>;
+static constexpr auto& op_cst_0 = op_cs_impl<0, true>;
+static constexpr auto& op_cst_1 = op_cs_impl<1, true>;
+static constexpr auto& op_cst_2 = op_cs_impl<2, true>;
+static constexpr auto& op_cst_3 = op_cs_impl<3, true>;
+static constexpr auto& op_cst_4 = op_cs_impl<4, true>;
+static constexpr auto& op_cst_5 = op_cs_impl<5, true>;
+static constexpr auto& op_cst_6 = op_cs_impl<6, true>;
+static constexpr auto& op_cst_7 = op_cs_impl<7, true>;
 
-static constexpr auto& op_call_ic_direct_0 = op_call_ic_direct<0>;
-static constexpr auto& op_call_ic_direct_1 = op_call_ic_direct<1>;
-static constexpr auto& op_call_ic_direct_2 = op_call_ic_direct<2>;
-static constexpr auto& op_call_ic_direct_3 = op_call_ic_direct<3>;
-static constexpr auto& op_call_ic_direct_4 = op_call_ic_direct<4>;
-static constexpr auto& op_call_ic_direct_5 = op_call_ic_direct<5>;
-static constexpr auto& op_call_ic_direct_6 = op_call_ic_direct<6>;
-static constexpr auto& op_call_ic_direct_7 = op_call_ic_direct<7>;
+static constexpr auto& op_cd_0 = op_cd_impl<0, false>;
+static constexpr auto& op_cd_1 = op_cd_impl<1, false>;
+static constexpr auto& op_cd_2 = op_cd_impl<2, false>;
+static constexpr auto& op_cd_3 = op_cd_impl<3, false>;
+static constexpr auto& op_cd_4 = op_cd_impl<4, false>;
+static constexpr auto& op_cd_5 = op_cd_impl<5, false>;
+static constexpr auto& op_cd_6 = op_cd_impl<6, false>;
+static constexpr auto& op_cd_7 = op_cd_impl<7, false>;
 
-JET_PRESERVE_NONE static void op_if_then_else(VM_OP_PARAMS)
-{
-	OP_if_then_else* op = reinterpret_cast<OP_if_then_else*>(pc);
-	pc += sizeof(*op);
-	if (!is_true(*--stack_top))
-	{
-		pc += op->consequent_size;
-	}
-	DISPATCH();
-}
+static constexpr auto& op_cdt_0 = op_cd_impl<0, true>;
+static constexpr auto& op_cdt_1 = op_cd_impl<1, true>;
+static constexpr auto& op_cdt_2 = op_cd_impl<2, true>;
+static constexpr auto& op_cdt_3 = op_cd_impl<3, true>;
+static constexpr auto& op_cdt_4 = op_cd_impl<4, true>;
+static constexpr auto& op_cdt_5 = op_cd_impl<5, true>;
+static constexpr auto& op_cdt_6 = op_cd_impl<6, true>;
+static constexpr auto& op_cdt_7 = op_cd_impl<7, true>;
 
 JET_PRESERVE_NONE static void op_skip(VM_OP_PARAMS)
 {
 	OP_skip* op = reinterpret_cast<OP_skip*>(pc);
 	pc += sizeof(*op);
 	pc += op->size;
-	DISPATCH();
-}
-
-JET_PRESERVE_NONE static void op_pop(VM_OP_PARAMS)
-{
-	--stack_top;
 	DISPATCH();
 }
 
@@ -1595,7 +1445,19 @@ void collect(VmState& s)
 	Gc& gc = *g_gc;
 	gc.begin_mark();
 
-	for (Atom* p = s.stack_base; p < s.stack_top; ++p)
+	// Scan every frame-claimed slot, not just up to stack_top: enclosing frames
+	// reach above the innermost extent, and marking their stale slots keeps the
+	// referents alive so no slot below the frontier ever dangles.
+	Atom* scan_frontier = s.stack_top;
+	for (Frame& frame : s.frames)
+	{
+		if (s.stack_base + frame.top > scan_frontier)
+		{
+			scan_frontier = s.stack_base + frame.top;
+		}
+	}
+
+	for (Atom* p = s.stack_base; p < scan_frontier; ++p)
 	{
 		gc.mark_atom(p->bits);
 	}
@@ -1615,6 +1477,9 @@ void collect(VmState& s)
 	}
 
 	gc.sweep();
+
+	std::memset(scan_frontier, 0, static_cast<size_t>(s.stack_watermark - scan_frontier) * sizeof(Atom));
+	s.stack_watermark = scan_frontier;
 }
 
 void eval(Frame& init_frame, Atom* constants, size_t n_constants, size_t initial_stack_size)
@@ -1627,6 +1492,7 @@ void eval(Frame& init_frame, Atom* constants, size_t n_constants, size_t initial
 	s.stack_base = stack_buffer.get();
 	s.stack_end = stack_buffer.get() + STACK_CAPACITY;
 	s.stack_top = stack_buffer.get() + initial_stack_size;
+	s.stack_watermark = s.stack_top;
 	s.constants = constants;
 	s.n_constants = n_constants;
 
@@ -1634,7 +1500,7 @@ void eval(Frame& init_frame, Atom* constants, size_t n_constants, size_t initial
 	VmOp halt_handler = dispatch_table[static_cast<int>(Opcode::halt)];
 	std::memcpy(halt_buf, &halt_handler, sizeof(halt_handler));
 	halt_buf[VM_OP_SLOT_SIZE] = static_cast<uint8_t>(Opcode::halt);
-	s.frames.push_back({halt_buf, nullptr, 0});
+	s.frames.push_back({halt_buf, nullptr, 0, initial_stack_size});
 	s.frames.push_back(init_frame);
 
 	Frame* frame = &s.frames.back();

@@ -186,8 +186,8 @@ JET_PRESERVE_NONE inline void prim_stub_varargs(VM_OP_PARAMS)
 {
 	JET_PROFILE_PRIM;
 	Atom result = fn(args, stack_top);
-	stack_top = stack_base + result_slot;
-	*stack_top++ = result;
+	stack_base[result_slot] = result;
+	stack_top = stack_base + frame->top;
 	DISPATCH();
 }
 
@@ -207,8 +207,8 @@ JET_PRESERVE_NONE inline void prim_stub_typed(VM_OP_PARAMS)
 			return box(fn(args[Is]...));
 		}
 	}(std::make_index_sequence<T::arity>{});
-	stack_top = stack_base + result_slot;
-	*stack_top++ = result;
+	stack_base[result_slot] = result;
+	stack_top = stack_base + frame->top;
 	DISPATCH();
 }
 
