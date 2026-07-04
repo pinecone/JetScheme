@@ -215,8 +215,12 @@ void decode_args(FILE* out, uint8_t op, Code* p)
 	if (is_cd_op(op))
 	{
 		OP_cd* o = reinterpret_cast<OP_cd*>(p);
-		std::fprintf(out, " w=%u src=%s idx=%u nargs=%u", o->w, o->src == 0 ? "local" : "upvalue", o->idx,
-					 o->nargs);
+		const char* src = o->src == static_cast<uint8_t>(IcDirectSource::Local)
+			? "local"
+			: o->src == static_cast<uint8_t>(IcDirectSource::SelfClosure)
+			? "self"
+			: "upvalue";
+		std::fprintf(out, " w=%u src=%s idx=%u nargs=%u", o->w, src, o->idx, o->nargs);
 		return;
 	}
 	switch (static_cast<Opcode>(op))

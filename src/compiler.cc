@@ -3065,6 +3065,21 @@ void Compiler::select_call_op(Expr* expr, Expr* current)
 		return;
 	}
 
+	// Callee whose init value is this very closure and is never reassigned: the
+	// binding always holds the closure we're running, so call frame->closure
+	// directly
+	{
+		LambdaBindings& lb = lambda_bindings_[proc_binding.lambda];
+		if (!get(lb.reassigned_after_init, proc_binding.breadth)
+			&& get(lb.bound_init, proc_binding.breadth) == current)
+		{
+			sel.op = Opcode::cd_0;
+			sel.u.call_ic_direct.src = static_cast<uint8_t>(IcDirectSource::SelfClosure);
+			sel.u.call_ic_direct.idx = 0;
+			return;
+		}
+	}
+
 	bool slot = needs_slot(proc_binding.lambda, static_cast<uint32_t>(proc_binding.breadth));
 
 	// Callee in a boxed binding: slot IC.
@@ -3084,7 +3099,7 @@ void Compiler::select_call_op(Expr* expr, Expr* current)
 		sel.op = Opcode::cd_0;
 		if (proc_binding.lambda == current)
 		{
-			sel.u.call_ic_direct.src = 0;
+			sel.u.call_ic_direct.src = static_cast<uint8_t>(IcDirectSource::Local);
 			sel.u.call_ic_direct.idx = static_cast<uint16_t>(proc_binding.breadth);
 		}
 		else
@@ -3092,10 +3107,9 @@ void Compiler::select_call_op(Expr* expr, Expr* current)
 			std::optional<uint16_t> found = find_upvalue(current, proc_binding.lambda,
 														 static_cast<uint32_t>(proc_binding.breadth));
 			JET_DIE_UNLESS(found, "codegen: cacheable call missing upvalue entry");
-			sel.u.call_ic_direct.src = 1;
+			sel.u.call_ic_direct.src = static_cast<uint8_t>(IcDirectSource::Upvalue);
 			sel.u.call_ic_direct.idx = *found;
 		}
-		return;
 	}
 }
 
@@ -4385,7 +4399,8 @@ namespace
 			{
 				sel.u.var.addr = alias(sel.u.var.addr);
 			}
-			else if (sel.op == Opcode::cd_0 && sel.u.call_ic_direct.src == 0)
+			else if (sel.op == Opcode::cd_0
+					 && sel.u.call_ic_direct.src == static_cast<uint8_t>(IcDirectSource::Local))
 			{
 				sel.u.call_ic_direct.idx = alias(sel.u.call_ic_direct.idx);
 			}

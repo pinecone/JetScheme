@@ -179,6 +179,12 @@ struct OP_cs
 	uint64_t ic_stub;
 	uint64_t ic_version;
 };
+enum class IcDirectSource : uint8_t
+{
+	Local = 0,
+	Upvalue = 1,
+	SelfClosure = 2
+};
 struct OP_cd
 {
 	uint16_t w;

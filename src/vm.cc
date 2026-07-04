@@ -1071,12 +1071,6 @@ JET_NOINLINE static VmOp resolve_call_stub(Atom callee, size_t nargs, bool tail)
 	return p->stub;
 }
 
-enum class IcDirectSource : uint8_t
-{
-	Local = 0,
-	Upvalue = 1
-};
-
 JET_PRESERVE_NONE static void op_mov(VM_OP_PARAMS)
 {
 	OP_mov* op = reinterpret_cast<OP_mov*>(pc);
@@ -1387,8 +1381,11 @@ JET_NOINLINE JET_PRESERVE_NONE static void op_cd_miss(VM_OP_PARAMS)
 	OP_cd* op = reinterpret_cast<OP_cd*>(pc);
 	pc += sizeof(*op);
 	IcDirectSource src = static_cast<IcDirectSource>(op->src);
-	callee = (src == IcDirectSource::Local) ? stack_base[frame_base + op->idx]
-											: frame->closure->captures[op->idx];
+	callee = src == IcDirectSource::Local
+		? stack_base[frame_base + op->idx]
+		: src == IcDirectSource::SelfClosure
+		? Atom::make_tagged(jet_tag::procedure, frame->closure)
+		: frame->closure->captures[op->idx];
 	VmOp stub = resolve_call_stub(callee, op->nargs, is_tail);
 	op->ic_atom = callee.bits;
 	op->ic_stub = reinterpret_cast<uint64_t>(stub);
@@ -1403,8 +1400,11 @@ JET_PRESERVE_NONE static void op_cd_impl(VM_OP_PARAMS)
 	JET_GC_CHECK();
 	OP_cd* op = reinterpret_cast<OP_cd*>(pc);
 	IcDirectSource src = static_cast<IcDirectSource>(op->src);
-	Atom current = (src == IcDirectSource::Local) ? stack_base[frame_base + op->idx]
-												  : frame->closure->captures[op->idx];
+	Atom current = src == IcDirectSource::Local
+		? stack_base[frame_base + op->idx]
+		: src == IcDirectSource::SelfClosure
+		? Atom::make_tagged(jet_tag::procedure, frame->closure)
+		: frame->closure->captures[op->idx];
 	if (op->ic_atom != current.bits) [[unlikely]]
 	{
 		JET_MUSTTAIL return op_cd_miss<N, is_tail>(VM_OP_ARGS);
