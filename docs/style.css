@@ -286,7 +286,7 @@ p code, li code, td code {
 pre {
   font-family: var(--font-mono);
   border-left: 2px solid var(--bg-highlight);
-  padding: var(--sp-2) 0 var(--sp-2) var(--sp-4);
+  padding: 0 0 0 var(--sp-4);
   overflow-x: auto;
   margin: 0 0 var(--sp-5) 0;
   font-size: var(--fs-small);
@@ -326,7 +326,6 @@ thead th {
   text-align: left;
   padding: var(--sp-2) var(--sp-4);
   border-bottom: 1px solid var(--bg-highlight);
-  font-family: var(--font-mono);
   font-size: var(--fs-small);
   letter-spacing: 0.02em;
 }
@@ -336,11 +335,22 @@ thead th.hint {
   font-weight: 400;
 }
 
+thead tr:nth-child(2) th { width: 12%; }
+
 thead th.hint a {
   display: block;
-  text-align: center;
+  text-align: left;
   font-size: var(--fs-micro);
   border-bottom: 0;
+}
+
+thead th.hint a .sha { font-family: var(--font-mono); }
+
+thead th.hint a .ext {
+  margin-left: 0.15em;
+  vertical-align: 0.03em;
+  font-size: 0.85em;
+  color: var(--fg-muted);
 }
 
 tbody td {
@@ -372,9 +382,10 @@ tbody tr:hover td { background: rgba(122,162,247,0.04); }
 tfoot th, tfoot td {
   padding: var(--sp-2) var(--sp-4);
   border-top: 1px solid var(--bg-highlight);
-  font-family: var(--font-mono);
   font-size: var(--fs-small);
 }
+
+tfoot td span { font-family: var(--font-mono); }
 
 tfoot th {
   color: var(--cyan-pale);
