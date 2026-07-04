@@ -291,6 +291,23 @@ void decode_args(FILE* out, uint8_t op, Code* p)
 			std::fprintf(out, " src=%u size=%u", o->src, o->size);
 			break;
 		}
+		case Opcode::if_eq:
+		case Opcode::if_lt:
+		case Opcode::if_le:
+		case Opcode::if_gt:
+		case Opcode::if_ge:
+		{
+			OP_if_cmp* o = reinterpret_cast<OP_if_cmp*>(p);
+			std::fprintf(out, " a=%u b=%u size=%u", o->a, o->b, o->size);
+			break;
+		}
+		case Opcode::if_eqk:
+		case Opcode::if_ltk:
+		{
+			OP_if_cmp* o = reinterpret_cast<OP_if_cmp*>(p);
+			std::fprintf(out, " a=%u k=%u size=%u", o->a, o->b, o->size);
+			break;
+		}
 		case Opcode::retv:
 			std::fprintf(out, " src=%u", reinterpret_cast<OP_retv*>(p)->src);
 			break;

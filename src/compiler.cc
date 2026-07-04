@@ -522,6 +522,7 @@ struct Compiler
 	void run_select_ops(Program& program);
 	void select_ops_in(Expr* expr, Expr* current);
 	void select_call_op(Expr* expr, Expr* current);
+	void select_if_cmp(Expr* expr);
 	void select_field_op(Expr* expr, Expr* current, Expr* receiver, Expr* key, bool is_set);
 	void select_var_op(Expr* expr, Expr* current, bool is_set);
 
@@ -2887,6 +2888,11 @@ void Compiler::select_ops_in(Expr* expr, Expr* current)
 			select_field_op(expr, current, expr->set_ref.obj, expr->set_ref.key, true);
 			break;
 
+		case ExprKind::Let:
+			walk_children(expr, [&](Expr* e) { select_ops_in(e, current); });
+			select_if_cmp(expr);
+			break;
+
 		default:
 			walk_children(expr, [&](Expr* e) { select_ops_in(e, current); });
 			break;
@@ -3001,6 +3007,61 @@ void Compiler::select_call_op(Expr* expr, Expr* current)
 		}
 		return;
 	}
+}
+
+// ANF spells a branch on a compare as (let ((%t (< a b))) (if %t C A)): reselect the compare
+// as the fused branch op. The fold drops the write to %t, so any second ref to the temp in a
+// branch arm -- (or x y) expands to (if %t %t y) -- keeps the compare unfused.
+void Compiler::select_if_cmp(Expr* expr)
+{
+	if (expr->let.names.size() != 1 || expr->let.body.size() != 1 || !is_anf_temp(expr->let.names[0]))
+	{
+		return;
+	}
+	Expr* val = expr->let.vals[0];
+	Expr* if_e = expr->let.body[0];
+	if (val->kind != ExprKind::Call || if_e->kind != ExprKind::If
+		|| if_e->if_.test->kind != ExprKind::VarRef || !selected_ops_[val->id])
+	{
+		return;
+	}
+	Opcode fused;
+	switch (selected_ops_[val->id]->op)
+	{
+		case Opcode::eq:  fused = Opcode::if_eq;  break;
+		case Opcode::lt:  fused = Opcode::if_lt;  break;
+		case Opcode::le:  fused = Opcode::if_le;  break;
+		case Opcode::gt:  fused = Opcode::if_gt;  break;
+		case Opcode::ge:  fused = Opcode::if_ge;  break;
+		case Opcode::eqk: fused = Opcode::if_eqk; break;
+		case Opcode::ltk: fused = Opcode::if_ltk; break;
+		default:          return;
+	}
+	ResolvedBinding temp = binding(if_e->if_.test);
+	if (temp.lambda != expr->let.owner || temp.breadth != expr->let.slot_base)
+	{
+		return;
+	}
+	bool reread = false;
+	auto&& scan = [&](Expr* e, auto&& self) -> void
+	{
+		if (e->kind == ExprKind::VarRef || e->kind == ExprKind::SetBang)
+		{
+			ResolvedBinding b = binding(e);
+			reread = reread || (b.lambda == temp.lambda && b.breadth == temp.breadth);
+		}
+		walk_children(e, [&](Expr* c) { self(c, self); });
+	};
+	scan(if_e->if_.consequent, scan);
+	if (if_e->if_.alternate)
+	{
+		scan(if_e->if_.alternate, scan);
+	}
+	if (reread)
+	{
+		return;
+	}
+	selected_ops_[val->id]->op = fused;
 }
 
 void Compiler::select_field_op(Expr* expr, Expr* current, Expr* receiver, Expr* key, bool is_set)
@@ -3563,6 +3624,7 @@ namespace
 			struct { uint16_t reg; } box;                            // box
 			struct { uint16_t src; } ret;                            // retv
 			struct { uint32_t id; uint16_t src; } label;             // label; if_false/skip target
+			struct { uint32_t id; uint16_t a; uint16_t b; } if_cmp;  // if_eq..if_ltk; rk holds the pool idx in b
 			// One payload for every call op: callw/tcall read callee, cs/cst
 			// read upvalue_idx, cd/cdt read src+idx, recurw/applyw only w+nargs.
 			struct { uint16_t w; uint16_t nargs; uint16_t callee; uint16_t upvalue_idx; uint16_t idx;
@@ -3611,6 +3673,10 @@ namespace
 		// Windows allocated ahead of their call site by argument sinking, keyed by
 		// the Call expr id.
 		std::unordered_map<uint32_t, uint16_t> call_windows{};
+
+		// Compares reselected as fused branch ops: the let binding skips them and
+		// the consuming If emits them, keyed by the If expr id.
+		std::unordered_map<uint32_t, Expr*> fused_tests{};
 
 		LirLambda& current_lambda()
 		{
@@ -4030,6 +4096,11 @@ namespace
 				if (val->kind == ExprKind::Call)
 				{
 					Compiler::OpSelection sel = selection(val, "Call");
+					if (is_if_cmp(sel.op))
+					{
+						fused_tests[expr->let.body[0]->id] = val;
+						continue;
+					}
 					if (is_call_shaped(sel.op) && sel.op != Opcode::recurw)
 					{
 						current_lambda().reg_alias[home] = emit_call(val, sel);
@@ -4148,6 +4219,23 @@ namespace
 				case Opcode::cs_0:
 				case Opcode::cd_0:
 				case Opcode::recurw:
+					return true;
+				default:
+					return false;
+			}
+		}
+
+		bool is_if_cmp(Opcode op)
+		{
+			switch (op)
+			{
+				case Opcode::if_eq:
+				case Opcode::if_lt:
+				case Opcode::if_le:
+				case Opcode::if_gt:
+				case Opcode::if_ge:
+				case Opcode::if_eqk:
+				case Opcode::if_ltk:
 					return true;
 				default:
 					return false;
@@ -4325,10 +4413,26 @@ namespace
 
 				case ExprKind::If:
 				{
-					uint16_t test = emit_to_any_reg(expr->if_.test);
 					uint32_t l_alt = prog.next_label++;
 					uint32_t l_end = prog.next_label++;
-					emit_label(Opcode::if_false, l_alt, test);
+					std::unordered_map<uint32_t, Expr*>::iterator fused = fused_tests.find(expr->id);
+					if (fused != fused_tests.end())
+					{
+						Expr* cmp = fused->second;
+						Compiler::OpSelection sel = selection(cmp, "fused test");
+						LirInst i = inst(sel.op);
+						i.u.if_cmp.id = l_alt;
+						i.u.if_cmp.a = emit_to_any_reg(cmp->call.args[0]);
+						i.u.if_cmp.b = sel.op == Opcode::if_eqk || sel.op == Opcode::if_ltk
+										   ? intern_literal_key(cmp->call.args[1])
+										   : emit_to_any_reg(cmp->call.args[1]);
+						emit(i);
+					}
+					else
+					{
+						uint16_t test = emit_to_any_reg(expr->if_.test);
+						emit_label(Opcode::if_false, l_alt, test);
+					}
 					emit_to_reg(expr->if_.consequent, dst);
 					emit_label(Opcode::skip, l_end);
 					emit_label(Opcode::label, l_alt);
@@ -4553,6 +4657,24 @@ namespace
 					op.src = i.u.label.src;
 					op.size = static_cast<uint32_t>(
 						label_target(label_pos, i.u.label.id) - (bc.size() + sizeof(OP_if_false)));
+					emit_operand(bc, op);
+					break;
+				}
+
+				case Opcode::if_eq:
+				case Opcode::if_lt:
+				case Opcode::if_le:
+				case Opcode::if_gt:
+				case Opcode::if_ge:
+				case Opcode::if_eqk:
+				case Opcode::if_ltk:
+				{
+					emit_opcode(bc, i.op);
+					OP_if_cmp op{};
+					op.a = i.u.if_cmp.a;
+					op.b = i.u.if_cmp.b;
+					op.size = static_cast<uint32_t>(
+						label_target(label_pos, i.u.if_cmp.id) - (bc.size() + sizeof(OP_if_cmp)));
 					emit_operand(bc, op);
 					break;
 				}

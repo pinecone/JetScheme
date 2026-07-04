@@ -43,6 +43,13 @@
 	X(eqk,                 "eqk")                                                                            \
 	X(ltk,                 "ltk")                                                                            \
 	X(if_false,            "if")                                                                             \
+	X(if_eq,               "ifeq")                                                                           \
+	X(if_lt,               "iflt")                                                                           \
+	X(if_le,               "ifle")                                                                           \
+	X(if_gt,               "ifgt")                                                                           \
+	X(if_ge,               "ifge")                                                                           \
+	X(if_eqk,              "ifeqk")                                                                          \
+	X(if_ltk,              "ifltk")                                                                          \
 	X(retv,                "ret")                                                                            \
 	X(callw,               "call")                                                                           \
 	X(tcall,               "tcall")                                                                          \
@@ -134,6 +141,13 @@ using OP_binop_rk = OP_binop_rr;
 struct OP_if_false
 {
 	uint16_t src;
+	uint32_t size;
+};
+struct OP_if_cmp
+{
+	uint16_t a;
+	// rk forms read b as a constant-pool index.
+	uint16_t b;
 	uint32_t size;
 };
 struct OP_retv
@@ -256,6 +270,14 @@ inline size_t opcode_step(uint8_t op, const uint8_t* operands)
 			return OPCODE_SIZE + sizeof(OP_binop_rr);
 		case Opcode::if_false:
 			return OPCODE_SIZE + sizeof(OP_if_false);
+		case Opcode::if_eq:
+		case Opcode::if_lt:
+		case Opcode::if_le:
+		case Opcode::if_gt:
+		case Opcode::if_ge:
+		case Opcode::if_eqk:
+		case Opcode::if_ltk:
+			return OPCODE_SIZE + sizeof(OP_if_cmp);
 		case Opcode::retv:
 			return OPCODE_SIZE + sizeof(OP_retv);
 		case Opcode::callw:

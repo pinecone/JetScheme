@@ -1215,6 +1215,38 @@ JET_PRESERVE_NONE static void op_if_false(VM_OP_PARAMS)
 	DISPATCH();
 }
 
+template<auto Op>
+JET_PRESERVE_NONE static void op_if_cmp_rr_impl(VM_OP_PARAMS)
+{
+	OP_if_cmp* op = reinterpret_cast<OP_if_cmp*>(pc);
+	pc += sizeof(*op);
+	if (!is_true(Op(stack_base[frame_base + op->a], stack_base[frame_base + op->b])))
+	{
+		pc += op->size;
+	}
+	DISPATCH();
+}
+
+template<auto Op>
+JET_PRESERVE_NONE static void op_if_cmp_rk_impl(VM_OP_PARAMS)
+{
+	OP_if_cmp* op = reinterpret_cast<OP_if_cmp*>(pc);
+	pc += sizeof(*op);
+	if (!is_true(Op(stack_base[frame_base + op->a], s.constants[op->b])))
+	{
+		pc += op->size;
+	}
+	DISPATCH();
+}
+
+static constexpr auto& op_if_eq  = op_if_cmp_rr_impl<eq_op>;
+static constexpr auto& op_if_lt  = op_if_cmp_rr_impl<lt_op>;
+static constexpr auto& op_if_le  = op_if_cmp_rr_impl<le_op>;
+static constexpr auto& op_if_gt  = op_if_cmp_rr_impl<gt_op>;
+static constexpr auto& op_if_ge  = op_if_cmp_rr_impl<ge_op>;
+static constexpr auto& op_if_eqk = op_if_cmp_rk_impl<eq_op>;
+static constexpr auto& op_if_ltk = op_if_cmp_rk_impl<lt_op>;
+
 JET_PRESERVE_NONE static void op_retv(VM_OP_PARAMS)
 {
 	OP_retv* op = reinterpret_cast<OP_retv*>(pc);
