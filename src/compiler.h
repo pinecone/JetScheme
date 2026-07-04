@@ -13,6 +13,7 @@ struct CompileFlags
 {
 	bool inlining = true;
 	bool specialize_ops = true;
+	bool lift_lambdas = true;
 };
 
 Bytecode compile(std::string source, std::string filename = "<stdin>", CompileFlags flags = {});

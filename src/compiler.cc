@@ -480,6 +480,7 @@ struct Compiler
 	Expr* toplevel_lambda_ = nullptr;
 
 	std::vector<Expr*> all_lambdas_;
+	std::vector<bool> intrinsic_callee_;
 
 	struct LambdaBindings
 	{
@@ -494,6 +495,9 @@ struct Compiler
 
 	ResolvedBinding binding(Expr* expr);
 	bool is_tail(Expr* expr);
+	bool is_self_tail_call(Expr* call, Expr* current);
+	bool is_intrinsic_callee(Expr* call, Expr* current);
+	void collect_intrinsic_callees(Expr* expr, Expr* current);
 	std::optional<ResolvedBinding> lookup_name(std::string_view name);
 	void push_lambda_scope(Expr* lambda);
 	void pop_lambda_scope();
@@ -501,12 +505,14 @@ struct Compiler
 	void record_ref(ResolvedBinding b);
 	void record_set(ResolvedBinding b, bool is_init, Expr* value);
 	void resolve_bindings(Program& program);
+	void run_optimization_passes(Program& program);
 	void compute_binding_addresses(Program& program);
 	void compute_binding_addresses_in(Expr* expr);
 	void recompute_lambda_bindings(Program& program);
 	void recompute_lambda_bindings_in(Expr* expr);
 	void freeze_lambda(Expr* lambda);
-	void compute_tail(Expr* expr, bool in_tail);
+	void collect_tail_calls(Program& program);
+	void collect_tail_calls(Expr* expr, bool in_tail);
 
 	struct OpSelection
 	{
@@ -519,7 +525,7 @@ struct Compiler
 		} u;
 	};
 	std::vector<std::optional<OpSelection>> selected_ops_;
-	void run_select_ops(Program& program);
+	void run_op_selection(Program& program);
 	void select_ops_in(Expr* expr, Expr* current);
 	void select_call_op(Expr* expr, Expr* current);
 	void select_if_cmp(Expr* expr);
@@ -528,6 +534,7 @@ struct Compiler
 
 	void run_anf_inline(Program& program);
 	void run_binarize_arith(Program& program);
+	void run_lambda_lift(Program& program);
 
 	Bytecode compile();
 };
@@ -1844,7 +1851,16 @@ Program& Compiler::ast()
 			ast_->forms[i] = compute_anf(ast_->forms[i]);
 			verify_anf(ast_->forms[i]);
 		}
+		toplevel_lambda_ = make_expr(ExprKind::Lambda, {});
+		toplevel_lambda_->lambda.params = {};
+		toplevel_lambda_->lambda.is_variadic = false;
+		toplevel_lambda_->lambda.body = {};
+		toplevel_lambda_->lambda.names = arena.copy_slice(toplevel_names_.ordered);
+
 		resolve_bindings(*ast_);
+		run_optimization_passes(*ast_);
+		collect_tail_calls(*ast_);
+		run_op_selection(*ast_);
 	}
 	return *ast_;
 }
@@ -2555,15 +2571,12 @@ void Compiler::recompute_lambda_bindings(Program& program)
 
 void Compiler::resolve_bindings(Program& program)
 {
-	toplevel_lambda_ = make_expr(ExprKind::Lambda, {});
-	toplevel_lambda_->lambda.params = {};
-	toplevel_lambda_->lambda.is_variadic = false;
-	toplevel_lambda_->lambda.body = {};
-	toplevel_lambda_->lambda.names = arena.copy_slice(toplevel_names_.ordered);
-
 	compute_binding_addresses(program);
 	recompute_lambda_bindings(program);
+}
 
+void Compiler::run_optimization_passes(Program& program)
+{
 	if (flags_.inlining)
 	{
 		run_anf_inline(program);
@@ -2576,18 +2589,11 @@ void Compiler::resolve_bindings(Program& program)
 		recompute_lambda_bindings(program);
 	}
 
-	for (Expr* L : all_lambdas_)
+	if (flags_.lift_lambdas)
 	{
-		freeze_lambda(L);
+		run_lambda_lift(program);
+		resolve_bindings(program);
 	}
-
-	tail_cache_.assign(next_expr_id_ + 1, false);
-	for (Expr* form : program.forms)
-	{
-		compute_tail(form, false);
-	}
-
-	run_select_ops(program);
 }
 
 void Compiler::compute_binding_addresses_in(Expr* expr)
@@ -2695,7 +2701,10 @@ void Compiler::recompute_lambda_bindings_in(Expr* expr)
 	switch (expr->kind)
 	{
 		case ExprKind::VarRef:
-			record_ref(bindings_[expr->id]);
+			if (!get(intrinsic_callee_, expr->id))
+			{
+				record_ref(bindings_[expr->id]);
+			}
 			break;
 
 		case ExprKind::Lambda:
@@ -2720,7 +2729,16 @@ void Compiler::recompute_lambda_bindings_in(Expr* expr)
 	}
 }
 
-void Compiler::compute_tail(Expr* expr, bool in_tail)
+void Compiler::collect_tail_calls(Program& program)
+{
+	tail_cache_.assign(next_expr_id_ + 1, false);
+	for (Expr* form : program.forms)
+	{
+		collect_tail_calls(form, false);
+	}
+}
+
+void Compiler::collect_tail_calls(Expr* expr, bool in_tail)
 {
 	switch (expr->kind)
 	{
@@ -2729,40 +2747,40 @@ void Compiler::compute_tail(Expr* expr, bool in_tail)
 			{
 				tail_cache_[expr->id] = true;
 			}
-			walk_children(expr, [&](Expr* e) { compute_tail(e, false); });
+			walk_children(expr, [&](Expr* e) { collect_tail_calls(e, false); });
 			break;
 
 		case ExprKind::Lambda:
 			for (uint32_t i = 0; i < expr->lambda.body.size(); ++i)
 			{
 				bool is_last = (i == expr->lambda.body.size() - 1);
-				compute_tail(expr->lambda.body[i], is_last);
+				collect_tail_calls(expr->lambda.body[i], is_last);
 			}
 			break;
 
 		case ExprKind::If:
-			compute_tail(expr->if_.test, false);
-			compute_tail(expr->if_.consequent, in_tail);
+			collect_tail_calls(expr->if_.test, false);
+			collect_tail_calls(expr->if_.consequent, in_tail);
 			if (expr->if_.alternate)
 			{
-				compute_tail(expr->if_.alternate, in_tail);
+				collect_tail_calls(expr->if_.alternate, in_tail);
 			}
 			break;
 
 		case ExprKind::Let:
 			for (Expr* val : expr->let.vals)
 			{
-				compute_tail(val, false);
+				collect_tail_calls(val, false);
 			}
 			for (uint32_t i = 0; i < expr->let.body.size(); ++i)
 			{
 				bool is_last = (i == expr->let.body.size() - 1);
-				compute_tail(expr->let.body[i], is_last && in_tail);
+				collect_tail_calls(expr->let.body[i], is_last && in_tail);
 			}
 			break;
 
 		default:
-			walk_children(expr, [&](Expr* e) { compute_tail(e, false); });
+			walk_children(expr, [&](Expr* e) { collect_tail_calls(e, false); });
 			break;
 	}
 }
@@ -2809,10 +2827,65 @@ namespace
 		return static_cast<uint16_t>(v);
 	}
 
+	std::optional<Opcode> binary_arith_opcode(std::string_view name)
+	{
+		if (name == "-")
+		{
+			return Opcode::sub;
+		}
+		if (name == "+")
+		{
+			return Opcode::add;
+		}
+		if (name == "*")
+		{
+			return Opcode::mul;
+		}
+		if (name == "/")
+		{
+			return Opcode::div;
+		}
+		if (name == "=")
+		{
+			return Opcode::eq;
+		}
+		if (name == "<")
+		{
+			return Opcode::lt;
+		}
+		if (name == "<=")
+		{
+			return Opcode::le;
+		}
+		if (name == ">")
+		{
+			return Opcode::gt;
+		}
+		if (name == ">=")
+		{
+			return Opcode::ge;
+		}
+		return std::nullopt;
+	}
+
 } // namespace
 
-void Compiler::run_select_ops(Program& program)
+void Compiler::run_op_selection(Program& program)
 {
+	// Remove references to callees that will be lowered to intrinsics to avoid classifying them
+	// as upvalues during instruction selection.
+	intrinsic_callee_.assign(next_expr_id_ + 1, false);
+	for (Expr* form : program.forms)
+	{
+		collect_intrinsic_callees(form, toplevel_lambda_);
+	}
+	recompute_lambda_bindings(program);
+
+	for (Expr* L : all_lambdas_)
+	{
+		freeze_lambda(L);
+	}
+
 	selected_ops_.assign(next_expr_id_ + 1, std::nullopt);
 	for (Expr* form : program.forms)
 	{
@@ -2829,7 +2902,17 @@ void Compiler::select_ops_in(Expr* expr, Expr* current)
 			break;
 
 		case ExprKind::Call:
-			walk_children(expr, [&](Expr* e) { select_ops_in(e, current); });
+			if (get(intrinsic_callee_, expr->call.proc->id))
+			{
+				for (Expr* arg : expr->call.args)
+				{
+					select_ops_in(arg, current);
+				}
+			}
+			else
+			{
+				walk_children(expr, [&](Expr* e) { select_ops_in(e, current); });
+			}
 			select_call_op(expr, current);
 			break;
 
@@ -2858,6 +2941,71 @@ void Compiler::select_ops_in(Expr* expr, Expr* current)
 	}
 }
 
+bool Compiler::is_self_tail_call(Expr* expr, Expr* current)
+{
+	if (expr->kind != ExprKind::Call)
+	{
+		return false;
+	}
+	Expr* proc = expr->call.proc;
+	if (proc->kind != ExprKind::VarRef)
+	{
+		return false;
+	}
+	if (!is_tail(expr))
+	{
+		return false;
+	}
+	if (current->lambda.is_variadic)
+	{
+		return false;
+	}
+	if (current->lambda.params.size() != expr->call.args.size())
+	{
+		return false;
+	}
+	ResolvedBinding proc_binding = binding(proc);
+	LambdaBindings& lb = lambda_bindings_[proc_binding.lambda];
+	return !get(lb.reassigned_after_init, proc_binding.breadth)
+		   && get(lb.bound_init, proc_binding.breadth) == current;
+}
+
+bool Compiler::is_intrinsic_callee(Expr* expr, Expr* current)
+{
+	if (!flags_.specialize_ops)
+	{
+		return false;
+	}
+	if (is_self_tail_call(expr, current))
+	{
+		return true;
+	}
+	Expr* proc = expr->call.proc;
+	if (proc->kind != ExprKind::VarRef || expr->call.args.size() != 2)
+	{
+		return false;
+	}
+	std::string_view name = proc->var_ref.name;
+	if (!binary_arith_opcode(name) && name != "ref")
+	{
+		return false;
+	}
+	return prim_binding_lowerable(binding(proc), name);
+}
+
+void Compiler::collect_intrinsic_callees(Expr* expr, Expr* current)
+{
+	if (expr->kind == ExprKind::Call && is_intrinsic_callee(expr, current))
+	{
+		get(intrinsic_callee_, expr->call.proc->id) = true;
+	}
+	if (expr->kind == ExprKind::Lambda)
+	{
+		current = expr;
+	}
+	walk_children(expr, [&](Expr* e) { collect_intrinsic_callees(e, current); });
+}
+
 void Compiler::select_call_op(Expr* expr, Expr* current)
 {
 	Expr* proc = expr->call.proc;
@@ -2869,6 +3017,13 @@ void Compiler::select_call_op(Expr* expr, Expr* current)
 		return;
 	}
 
+	// Self-tail-call: recur.
+	if (is_self_tail_call(expr, current))
+	{
+		sel.op = Opcode::recurw;
+		return;
+	}
+
 	if (proc->kind != ExprKind::VarRef)
 	{
 		return;
@@ -2876,38 +3031,14 @@ void Compiler::select_call_op(Expr* expr, Expr* current)
 
 	ResolvedBinding proc_binding = binding(proc);
 
-	// Self-tail-call: recur.
-	if (is_tail(expr)
-		&& !current->lambda.is_variadic
-		&& current->lambda.params.size() == expr->call.args.size())
-	{
-		LambdaBindings& lb = lambda_bindings_[proc_binding.lambda];
-		if (!get(lb.reassigned_after_init, proc_binding.breadth)
-			&& get(lb.bound_init, proc_binding.breadth) == current)
-		{
-			sel.op = Opcode::recurw;
-			return;
-		}
-	}
-
 	// Two-arg arithmetic: rr, or rk when the rhs is a number literal.
 	if (expr->call.args.size() == 2)
 	{
 		std::string_view name = proc->var_ref.name;
-		Opcode op;
-		bool lowered = true;
-		if (name == "-")       op = Opcode::sub;
-		else if (name == "+")  op = Opcode::add;
-		else if (name == "*")  op = Opcode::mul;
-		else if (name == "/")  op = Opcode::div;
-		else if (name == "=")  op = Opcode::eq;
-		else if (name == "<")  op = Opcode::lt;
-		else if (name == "<=") op = Opcode::le;
-		else if (name == ">")  op = Opcode::gt;
-		else if (name == ">=") op = Opcode::ge;
-		else                   lowered = false;
-		if (lowered && prim_binding_lowerable(proc_binding, name))
+		std::optional<Opcode> arith = binary_arith_opcode(name);
+		if (arith && prim_binding_lowerable(proc_binding, name))
 		{
+			Opcode op = *arith;
 			if (expr->call.args[1]->kind == ExprKind::NumberLit)
 			{
 				switch (op)
@@ -3051,7 +3182,9 @@ void Compiler::select_var_op(Expr* expr, Expr* current, bool is_set)
 		return;
 	}
 	std::optional<uint16_t> found = find_upvalue(current, b.lambda, static_cast<uint32_t>(b.breadth));
-	JET_DIE_UNLESS(found, "select-pass: ref to non-local without upvalue entry");
+	std::string_view name = expr->kind == ExprKind::SetBang ? expr->set_bang.name : expr->var_ref.name;
+	JET_DIE_UNLESS(found, "select-pass: ref to non-local without upvalue entry: '%.*s'",
+			   static_cast<int>(name.size()), name.data());
 	sel.op = is_set ? Opcode::stu : (slot ? Opcode::ldus : Opcode::ldu);
 	sel.u.var.addr = *found;
 }
@@ -3539,7 +3672,345 @@ void Compiler::run_binarize_arith(Program& program)
 namespace
 {
 
-	// LIR: linear IR between stackified resolved ANF and bytes.
+	struct LambdaLift
+	{
+		Compiler& db;
+
+		static bool is_false_lit(Expr* e)
+		{
+			return e->kind == ExprKind::BooleanLit && !e->boolean_lit.value;
+		}
+
+		static bool name_used_as_value(Expr* expr, std::string_view name)
+		{
+			switch (expr->kind)
+			{
+				case ExprKind::VarRef:
+					return expr->var_ref.name == name;
+				case ExprKind::Call:
+				{
+					bool proc_is_name = expr->call.proc->kind == ExprKind::VarRef
+										&& expr->call.proc->var_ref.name == name;
+					if (!proc_is_name && name_used_as_value(expr->call.proc, name))
+					{
+						return true;
+					}
+					for (Expr* arg : expr->call.args)
+					{
+						if (name_used_as_value(arg, name))
+						{
+							return true;
+						}
+					}
+					return false;
+				}
+				case ExprKind::SetBang:
+					return expr->set_bang.name == name
+						   || name_used_as_value(expr->set_bang.value, name);
+				default:
+				{
+					bool found = false;
+					walk_children(expr, [&](Expr*& c) { found = found || name_used_as_value(c, name); });
+					return found;
+				}
+			}
+		}
+
+		static bool self_calls_all_tail(Expr* expr, std::string_view name, bool in_tail)
+		{
+			switch (expr->kind)
+			{
+				case ExprKind::Call:
+				{
+					bool is_self = expr->call.proc->kind == ExprKind::VarRef
+								   && expr->call.proc->var_ref.name == name;
+					if (is_self && !in_tail)
+					{
+						return false;
+					}
+					if (!self_calls_all_tail(expr->call.proc, name, false))
+					{
+						return false;
+					}
+					for (Expr* arg : expr->call.args)
+					{
+						if (!self_calls_all_tail(arg, name, false))
+						{
+							return false;
+						}
+					}
+					return true;
+				}
+				case ExprKind::If:
+					return self_calls_all_tail(expr->if_.test, name, false)
+						   && self_calls_all_tail(expr->if_.consequent, name, in_tail)
+						   && (!expr->if_.alternate
+							   || self_calls_all_tail(expr->if_.alternate, name, in_tail));
+				case ExprKind::Let:
+				{
+					for (Expr* val : expr->let.vals)
+					{
+						if (!self_calls_all_tail(val, name, false))
+						{
+							return false;
+						}
+					}
+					for (uint32_t i = 0; i < expr->let.body.size(); ++i)
+					{
+						bool last = (i == expr->let.body.size() - 1);
+						if (!self_calls_all_tail(expr->let.body[i], name, last && in_tail))
+						{
+							return false;
+						}
+					}
+					return true;
+				}
+				case ExprKind::Lambda:
+					for (uint32_t i = 0; i < expr->lambda.body.size(); ++i)
+					{
+						bool last = (i == expr->lambda.body.size() - 1);
+						if (!self_calls_all_tail(expr->lambda.body[i], name, last))
+						{
+							return false;
+						}
+					}
+					return true;
+				default:
+				{
+					bool ok = true;
+					walk_children(expr, [&](Expr*& c) { ok = ok && self_calls_all_tail(c, name, false); });
+					return ok;
+				}
+			}
+		}
+
+		struct Capture
+		{
+			std::string_view name;
+			ResolvedBinding binding;
+		};
+
+		void collect_captures_in(Expr* expr, Expr* lambda, std::string_view self_name,
+			std::vector<Capture>& out, std::unordered_set<uint64_t>& seen)
+		{
+			switch (expr->kind)
+			{
+				case ExprKind::VarRef:
+				{
+					if (expr->var_ref.name == self_name)
+					{
+						return;
+					}
+					ResolvedBinding b = db.binding(expr);
+					if (b.lambda == lambda || b.lambda == db.toplevel_lambda_)
+					{
+						return;
+					}
+					uint64_t key = (static_cast<uint64_t>(b.lambda->id) << 32) | b.breadth;
+					if (seen.insert(key).second)
+					{
+						out.push_back({expr->var_ref.name, b});
+					}
+					return;
+				}
+				case ExprKind::Lambda:
+					// Do not descend into nested lambdas: their captures reach the
+					// binding through the closure chain and stay captures.
+					return;
+				default:
+					walk_children(expr, [&](Expr* c) {
+						collect_captures_in(c, lambda, self_name, out, seen);
+					});
+					return;
+			}
+		}
+
+		std::vector<Capture> collect_captures(Expr* lambda, std::string_view self_name)
+		{
+			std::vector<Capture> captures;
+			std::unordered_set<uint64_t> seen;
+			for (Expr* form : lambda->lambda.body)
+			{
+				collect_captures_in(form, lambda, self_name, captures, seen);
+			}
+			return captures;
+		}
+
+		Expr* make_resolved_ref(const Capture& cap, SourceLoc loc)
+		{
+			// Record the binding immediately so lifts of enclosing lets can resolve
+			// this ref before resolve_bindings reruns.
+			Expr* e = db.make_expr(ExprKind::VarRef, loc);
+			e->var_ref.name = cap.name;
+			get(db.bindings_, e->id) = cap.binding;
+			return e;
+		}
+
+		void prepend_capture_args(Expr* expr, std::string_view name, const std::vector<Capture>& captures)
+		{
+			if (expr->kind == ExprKind::Call
+				&& expr->call.proc->kind == ExprKind::VarRef
+				&& expr->call.proc->var_ref.name == name)
+			{
+				uint32_t n = static_cast<uint32_t>(expr->call.args.size());
+				Expr** new_args = db.arena.alloc_array<Expr*>(n + captures.size());
+				for (uint32_t i = 0; i < captures.size(); ++i)
+				{
+					new_args[i] = make_resolved_ref(captures[i], expr->loc);
+				}
+				for (uint32_t i = 0; i < n; ++i)
+				{
+					new_args[captures.size() + i] = expr->call.args[i];
+				}
+				expr->call.args = {new_args, static_cast<uint32_t>(n + captures.size())};
+				for (Expr* arg : expr->call.args)
+				{
+					prepend_capture_args(arg, name, captures);
+				}
+				return;
+			}
+			walk_children(expr, [&](Expr*& c) { prepend_capture_args(c, name, captures); });
+		}
+
+		Expr* try_lift(Expr* let_expr)
+		{
+			if (let_expr->kind != ExprKind::Let || let_expr->let.names.size() != 1)
+			{
+				return let_expr;
+			}
+
+			std::string_view name = let_expr->let.names[0];
+			Expr* init_val = let_expr->let.vals[0];
+			if (!is_false_lit(init_val))
+			{
+				return let_expr;
+			}
+
+			Expr* lambda = nullptr;
+			size_t setbang_idx = 0;
+			for (size_t i = 0; i < let_expr->let.body.size(); ++i)
+			{
+				Expr* form = let_expr->let.body[i];
+				if (form->kind == ExprKind::SetBang
+					&& form->set_bang.name == name
+					&& form->set_bang.is_init
+					&& form->set_bang.value->kind == ExprKind::Lambda)
+				{
+					if (lambda)
+					{
+						return let_expr;
+					}
+					lambda = form->set_bang.value;
+					setbang_idx = i;
+				}
+			}
+			if (!lambda)
+			{
+				return let_expr;
+			}
+
+			for (Expr* form : let_expr->let.body)
+			{
+				if (form->kind == ExprKind::SetBang
+					&& form->set_bang.name == name
+					&& !form->set_bang.is_init)
+				{
+					return let_expr;
+				}
+			}
+
+			if (lambda->lambda.is_variadic)
+			{
+				return let_expr;
+			}
+
+			for (size_t i = setbang_idx + 1; i < let_expr->let.body.size(); ++i)
+			{
+				if (name_used_as_value(let_expr->let.body[i], name))
+				{
+					return let_expr;
+				}
+			}
+
+			for (Expr* form : lambda->lambda.body)
+			{
+				if (name_used_as_value(form, name))
+				{
+					return let_expr;
+				}
+			}
+
+			std::vector<Capture> captures = collect_captures(lambda, name);
+			if (captures.empty())
+			{
+				return let_expr;
+			}
+
+			// A parameter is a copy: a capture whose binding is written after init must
+			// stay a capture or writes through one copy are lost to the others.
+			for (Capture& cap : captures)
+			{
+				Compiler::LambdaBindings& owner = db.lambda_bindings_[cap.binding.lambda];
+				if (get(owner.reassigned_after_init, cap.binding.breadth))
+				{
+					return let_expr;
+				}
+			}
+
+			if (!self_calls_all_tail(lambda, name, false))
+			{
+				return let_expr;
+			}
+
+			uint32_t n_captures = static_cast<uint32_t>(captures.size());
+			uint32_t n_params = static_cast<uint32_t>(lambda->lambda.params.size());
+			std::string_view* new_params = db.arena.alloc_array<std::string_view>(n_captures + n_params);
+			for (uint32_t i = 0; i < n_captures; ++i)
+			{
+				new_params[i] = captures[i].name;
+			}
+			for (uint32_t i = 0; i < n_params; ++i)
+			{
+				new_params[n_captures + i] = lambda->lambda.params[i];
+			}
+			lambda->lambda.params = {new_params, n_captures + n_params};
+
+			for (size_t i = setbang_idx + 1; i < let_expr->let.body.size(); ++i)
+			{
+				prepend_capture_args(let_expr->let.body[i], name, captures);
+			}
+			for (Expr* form : lambda->lambda.body)
+			{
+				prepend_capture_args(form, name, captures);
+			}
+
+			return let_expr;
+		}
+
+		Expr* walk(Expr* expr)
+		{
+			walk_children(expr, [&](Expr*& c) { c = walk(c); });
+			if (expr->kind == ExprKind::Let)
+			{
+				return try_lift(expr);
+			}
+			return expr;
+		}
+	};
+
+} // namespace
+
+void Compiler::run_lambda_lift(Program& program)
+{
+	LambdaLift pass{.db = *this};
+	for (Expr* form : program.forms)
+	{
+		pass.walk(form);
+	}
+}
+
+namespace
+{
 
 	struct LirInst
 	{

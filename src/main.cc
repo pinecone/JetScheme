@@ -127,6 +127,7 @@ options for run/compile:
 
 optimization options (generated code is slower):
   --no-inline                           disable the inliner
+  --no-lift-lambdas                     disable the lambda lifter
   --no-specialize-ops                   emit generic opcodes only
 options for run/exec (debug build only):
   --trace                               print one trace line per opcode dispatched
@@ -189,6 +190,11 @@ int main(int argc, char* argv[])
 		if (strcmp(argv[i], "--no-inline") == 0)
 		{
 			flags.inlining = false;
+			continue;
+		}
+		if (strcmp(argv[i], "--no-lift-lambdas") == 0)
+		{
+			flags.lift_lambdas = false;
 			continue;
 		}
 		if (strcmp(argv[i], "--no-specialize-ops") == 0)
