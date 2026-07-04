@@ -73,7 +73,7 @@ struct Token
 	SourceLoc loc;
 };
 
-template <class T>
+template <typename T>
 struct Slice
 {
 	T* data = nullptr;
@@ -132,14 +132,14 @@ struct Arena
 		return aligned;
 	}
 
-	template <class T, class... Args>
+	template <typename T, typename... Args>
 	T* alloc(Args&&... args)
 	{
 		T* p = static_cast<T*>(alloc_raw(sizeof(T), alignof(T)));
 		return new (p) T{std::forward<Args>(args)...};
 	}
 
-	template <class T>
+	template <typename T>
 	T* alloc_array(size_t count)
 	{
 		T* p = static_cast<T*>(alloc_raw(sizeof(T) * count, alignof(T)));
@@ -158,7 +158,7 @@ struct Arena
 		return {p, s.size()};
 	}
 
-	template <class T>
+	template <typename T>
 	Slice<T> copy_slice(const T* src, uint32_t count)
 	{
 		T* data = alloc_array<T>(count);
@@ -169,13 +169,13 @@ struct Arena
 		return {data, count};
 	}
 
-	template <class T>
+	template <typename T>
 	Slice<T> copy_slice(const std::vector<T>& src)
 	{
 		return copy_slice(src.data(), static_cast<uint32_t>(src.size()));
 	}
 
-	template <class T>
+	template <typename T>
 	Slice<T> copy_slice(std::initializer_list<T> src)
 	{
 		return copy_slice(src.begin(), static_cast<uint32_t>(src.size()));
@@ -272,7 +272,7 @@ struct Expr
 			Slice<Expr*> body;
 			Slice<std::string_view> names;
 			Slice<bool> captured_locals;
-			Slice<bool> mutated_locals;
+			Slice<bool> captured_before_init_locals;
 			Slice<bool> reassigned_after_init_locals;
 			Slice<UpvalueRef> upvalues;
 		} lambda;
@@ -407,7 +407,7 @@ struct ResolvedBinding
 	size_t breadth;
 };
 
-template <class T>
+template <typename T>
 typename std::vector<T>::reference get(std::vector<T>& v, size_t i)
 {
 	if (v.size() <= i)
@@ -487,7 +487,8 @@ struct Compiler
 		std::vector<UpvalueRef> upvalues;
 		std::unordered_set<uint64_t> upvalue_keys;
 		std::vector<bool> captured;
-		std::vector<bool> mutated;
+		std::vector<bool> captured_before_init;
+		std::vector<bool> is_initialized;
 		std::vector<bool> reassigned_after_init;
 		std::vector<Expr*> bound_init;
 	};
@@ -2452,7 +2453,12 @@ void Compiler::record_ref(ResolvedBinding b)
 		return;
 	}
 
-	get(lambda_bindings_[b.lambda].captured, b.breadth) = true;
+	LambdaBindings& ob = lambda_bindings_[b.lambda];
+	get(ob.captured, b.breadth) = true;
+	if (!get(ob.is_initialized, b.breadth))
+	{
+		get(ob.captured_before_init, b.breadth) = true;
+	}
 
 	uint32_t bw = static_cast<uint32_t>(b.breadth);
 	uint64_t key = (static_cast<uint64_t>(b.lambda->id) << 32) | bw;
@@ -2475,12 +2481,13 @@ void Compiler::record_ref(ResolvedBinding b)
 void Compiler::record_set(ResolvedBinding b, bool is_init, Expr* value)
 {
 	LambdaBindings& lb = lambda_bindings_[b.lambda];
-	get(lb.mutated, b.breadth) = true;
-	if (!is_init)
+	if (!is_init || get(lb.is_initialized, b.breadth))
 	{
 		get(lb.reassigned_after_init, b.breadth) = true;
+		return;
 	}
-	if (is_init && value)
+	get(lb.is_initialized, b.breadth) = true;
+	if (value)
 	{
 		get(lb.bound_init, b.breadth) = value;
 	}
@@ -2527,16 +2534,18 @@ void Compiler::freeze_lambda(Expr* lambda)
 
 	uint32_t n = lambda->lambda.names.size();
 	bool* captured_data = arena.alloc_array<bool>(n);
-	bool* mutated_data = arena.alloc_array<bool>(n);
+	bool* captured_before_init_data = arena.alloc_array<bool>(n);
 	bool* reassigned_data = arena.alloc_array<bool>(n);
 	for (uint32_t i = 0; i < n; ++i)
 	{
 		captured_data[i] = get(lb.captured, i);
-		mutated_data[i] = get(lb.mutated, i);
+		// The is_initialized gate keeps never-initialized bindings (parameters) out:
+		// their captures always copy the final value.
+		captured_before_init_data[i] = get(lb.captured_before_init, i) && get(lb.is_initialized, i);
 		reassigned_data[i] = get(lb.reassigned_after_init, i);
 	}
 	lambda->lambda.captured_locals = {captured_data, n};
-	lambda->lambda.mutated_locals = {mutated_data, n};
+	lambda->lambda.captured_before_init_locals = {captured_before_init_data, n};
 	lambda->lambda.reassigned_after_init_locals = {reassigned_data, n};
 }
 
@@ -2790,7 +2799,9 @@ namespace
 
 	bool needs_slot(Expr* owner, uint32_t breadth)
 	{
-		return owner->lambda.captured_locals[breadth] && owner->lambda.mutated_locals[breadth];
+		return owner->lambda.captured_locals[breadth]
+			&& (owner->lambda.reassigned_after_init_locals[breadth]
+				|| owner->lambda.captured_before_init_locals[breadth]);
 	}
 
 	std::optional<uint16_t> find_upvalue(Expr* current, Expr* owner, uint32_t breadth)
@@ -2821,10 +2832,11 @@ namespace
 		}
 	}
 
-	uint16_t narrow_off(size_t v)
+	template <typename T>
+	T narrow_or_die(size_t v)
 	{
-		JET_DIE_WHEN(v > UINT16_MAX, "codegen: frame offset %zu exceeds uint16_t", v);
-		return static_cast<uint16_t>(v);
+		JET_DIE_WHEN(v > std::numeric_limits<T>::max(), "codegen: value %zu overflows a narrower field", v);
+		return static_cast<T>(v);
 	}
 
 	std::optional<Opcode> binary_arith_opcode(std::string_view name)
@@ -3192,7 +3204,7 @@ void Compiler::select_var_op(Expr* expr, Expr* current, bool is_set)
 		// mov marks a plain register access: refs read the register directly
 		// (no code), sets write it.
 		sel.op = slot ? (is_set ? Opcode::std : Opcode::ldd) : Opcode::mov;
-		sel.u.var.addr = narrow_off(b.breadth);
+		sel.u.var.addr = narrow_or_die<uint16_t>(b.breadth);
 		return;
 	}
 	std::optional<uint16_t> found = find_upvalue(current, b.lambda, static_cast<uint32_t>(b.breadth));
@@ -3284,7 +3296,7 @@ namespace
 		std::unordered_set<Expr*> active{};
 		std::vector<Expr*> hosts{};
 		// Ids at or above this are clones this pass made. A cloned Let has no
-		// row in the pre-pass analysis, so its slots' mutated flags are
+		// row in the pre-pass analysis, so its locals' write flags are
 		// unknowable and it never registers candidates.
 		uint32_t first_clone_id;
 
@@ -3387,7 +3399,7 @@ namespace
 					e->lambda.is_variadic = orig->lambda.is_variadic;
 					e->lambda.names = orig->lambda.names;
 					e->lambda.captured_locals = {};
-					e->lambda.mutated_locals = {};
+					e->lambda.captured_before_init_locals = {};
 					e->lambda.reassigned_after_init_locals = {};
 					e->lambda.upvalues = {};
 					ctx.lambda_stack.push_back({orig, e});
@@ -3567,7 +3579,8 @@ namespace
 							// whole scope; a written one (incl. letrec-style
 							// is_init set!s over #f sentinels) is covered by
 							// bound_init candidacy instead.
-							if (!get(ob.mutated, expr->let.slot_base + i))
+							if (!get(ob.is_initialized, expr->let.slot_base + i)
+								&& !get(ob.reassigned_after_init, expr->let.slot_base + i))
 							{
 								consider(expr->let.owner, expr->let.slot_base + i, expr->let.vals[i]);
 							}
@@ -4205,7 +4218,7 @@ namespace
 			return idx;
 		}
 
-		template <class T>
+		template <typename T>
 		uint16_t intern_typed(ConstTag t, T& payload)
 		{
 			std::string s;
@@ -4304,13 +4317,11 @@ namespace
 
 		void emit_prologue(Expr* lambda)
 		{
-			Slice<bool>& captured = lambda->lambda.captured_locals;
-			Slice<bool>& mutated = lambda->lambda.mutated_locals;
-			for (uint32_t i = 0; i < captured.size(); ++i)
+			for (uint32_t i = 0; i < lambda->lambda.names.size(); ++i)
 			{
-				if (captured[i] && mutated[i])
+				if (needs_slot(lambda, i))
 				{
-					emit_box(narrow_off(i));
+					emit_box(narrow_or_die<uint16_t>(i));
 				}
 			}
 		}
@@ -4492,7 +4503,7 @@ namespace
 			uint32_t n = expr->let.names.size();
 			for (uint32_t i = 0; i < n; ++i)
 			{
-				uint16_t home = narrow_off(sb + i);
+				uint16_t home = narrow_or_die<uint16_t>(sb + i);
 				Expr* val = expr->let.vals[i];
 				if (needs_slot(expr->let.owner, sb + i))
 				{
@@ -4537,7 +4548,7 @@ namespace
 			{
 				if (needs_slot(expr->let.owner, sb + i))
 				{
-					emit_box(narrow_off(sb + i));
+					emit_box(narrow_or_die<uint16_t>(sb + i));
 				}
 			}
 		}
@@ -4900,7 +4911,7 @@ namespace
 			bc.insert(bc.end(), p, p + size);
 		}
 
-		template <class T>
+		template <typename T>
 		void emit_operand(Bytecode& bc, T& val)
 		{
 			emit_raw(bc, &val, sizeof(T));
