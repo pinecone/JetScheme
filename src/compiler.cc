@@ -417,6 +417,11 @@ typename std::vector<T>::reference get(std::vector<T>& v, size_t i)
 	return v[i];
 }
 
+static uint64_t binding_key(ResolvedBinding b)
+{
+	return (static_cast<uint64_t>(b.lambda->id) << 32) | static_cast<uint32_t>(b.breadth);
+}
+
 struct OrderedNameSet
 {
 	std::vector<std::string_view> ordered;
@@ -469,6 +474,7 @@ struct Compiler
 
 	std::vector<ResolvedBinding> bindings_;
 	std::vector<bool> tail_cache_;
+	std::unordered_set<uint64_t> used_bindings_;
 
 	// Compile-time chain of enclosing lambdas during binding resolution.
 	// Index 0 is a synthesized toplevel lambda whose names are the program's
@@ -512,6 +518,9 @@ struct Compiler
 	PrimLowering prim_call_lowering(Expr* call);
 	void record_ref(ResolvedBinding b);
 	void record_set(ResolvedBinding b, bool is_init, Expr* value);
+	void collect_used_bindings(Program& program);
+	void collect_used_bindings_in(Expr* expr);
+	bool binding_used(Expr* owner, uint32_t breadth);
 	void resolve_bindings(Program& program);
 	void run_optimization_passes(Program& program);
 	void compute_binding_addresses(Program& program);
@@ -2468,7 +2477,7 @@ void Compiler::record_ref(ResolvedBinding b)
 	}
 
 	uint32_t bw = static_cast<uint32_t>(b.breadth);
-	uint64_t key = (static_cast<uint64_t>(b.lambda->id) << 32) | bw;
+	uint64_t key = binding_key(b);
 	for (size_t i = lambdas_.size(); i-- > 0;)
 	{
 		Expr* lam = lambdas_[i];
@@ -2589,6 +2598,33 @@ void Compiler::resolve_bindings(Program& program)
 {
 	compute_binding_addresses(program);
 	recompute_lambda_bindings(program);
+}
+
+void Compiler::collect_used_bindings_in(Expr* expr)
+{
+	if (expr->kind == ExprKind::VarRef || expr->kind == ExprKind::SetBang)
+	{
+		ResolvedBinding b = bindings_[expr->id];
+		if (b.lambda)
+		{
+			used_bindings_.insert(binding_key(b));
+		}
+	}
+	walk_children(expr, [&](Expr* e) { collect_used_bindings_in(e); });
+}
+
+void Compiler::collect_used_bindings(Program& program)
+{
+	used_bindings_.clear();
+	for (Expr* form : program.forms)
+	{
+		collect_used_bindings_in(form);
+	}
+}
+
+bool Compiler::binding_used(Expr* owner, uint32_t breadth)
+{
+	return used_bindings_.count(binding_key({.lambda = owner, .breadth = breadth})) != 0;
 }
 
 void Compiler::run_optimization_passes(Program& program)
@@ -3292,11 +3328,6 @@ namespace
 				break;
 		}
 		return n;
-	}
-
-	uint64_t binding_key(ResolvedBinding b)
-	{
-		return (static_cast<uint64_t>(b.lambda->id) << 32) | static_cast<uint32_t>(b.breadth);
 	}
 
 	struct AnfInline
@@ -4325,7 +4356,7 @@ namespace
 			}
 			for (uint32_t i = 0; i + 1 < n; ++i)
 			{
-				emit_to_any_reg(forms[i]);
+				emit_ignoring_result(forms[i]);
 			}
 			return emit_to_any_reg(forms[n - 1]);
 		}
@@ -4340,9 +4371,41 @@ namespace
 			}
 			for (uint32_t i = 0; i + 1 < n; ++i)
 			{
-				emit_to_any_reg(forms[i]);
+				emit_ignoring_result(forms[i]);
 			}
 			emit_to_reg(forms[n - 1], dst);
+		}
+
+		void emit_ignoring_result(Expr* expr)
+		{
+			switch (expr->kind)
+			{
+				case ExprKind::NumberLit:
+				case ExprKind::StringLit:
+				case ExprKind::BooleanLit:
+				case ExprKind::CharacterLit:
+				case ExprKind::SymbolLit:
+				case ExprKind::UnknownLit:
+				case ExprKind::VarRef:
+				case ExprKind::PrimRef:
+					return;
+				case ExprKind::Let:
+					emit_let_bindings(expr);
+					for (Expr* form : expr->let.body)
+					{
+						emit_ignoring_result(form);
+					}
+					return;
+				case ExprKind::SetBang:
+					emit_set_bang(expr);
+					return;
+				case ExprKind::SetRef:
+					emit_set_ref(expr);
+					return;
+				default:
+					emit_to_any_reg(expr);
+					return;
+			}
 		}
 
 		void emit_prologue(Expr* lambda)
@@ -4563,6 +4626,11 @@ namespace
 				}
 				if (is_anf_temp(expr->let.names[i]))
 				{
+					if (!db.binding_used(expr->let.owner, sb + i))
+					{
+						emit_ignoring_result(val);
+						continue;
+					}
 					std::optional<uint16_t> target = sink_target(expr, home);
 					if (target)
 					{
@@ -5316,6 +5384,8 @@ namespace
 Bytecode Compiler::compile()
 {
 	Program& program = ast();
+
+	collect_used_bindings(program);
 
 	LirProgram lir;
 	LirEmitter emitter{*this, lir};
