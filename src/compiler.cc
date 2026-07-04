@@ -503,6 +503,13 @@ struct Compiler
 	void push_lambda_scope(Expr* lambda);
 	void pop_lambda_scope();
 	bool prim_binding_lowerable(ResolvedBinding b, std::string_view prim);
+	struct PrimLowering
+	{
+		enum class Kind { None, Arith, Ref };
+		Kind kind{};
+		Opcode op{};
+	};
+	PrimLowering prim_call_lowering(Expr* call);
 	void record_ref(ResolvedBinding b);
 	void record_set(ResolvedBinding b, bool is_init, Expr* value);
 	void resolve_bindings(Program& program);
@@ -2982,6 +2989,34 @@ bool Compiler::is_self_tail_call(Expr* expr, Expr* current)
 		   && get(lb.bound_init, proc_binding.breadth) == current;
 }
 
+Compiler::PrimLowering Compiler::prim_call_lowering(Expr* call)
+{
+	if (!flags_.specialize_ops)
+	{
+		return {};
+	}
+	Expr* proc = call->call.proc;
+	if (proc->kind != ExprKind::VarRef || call->call.args.size() != 2)
+	{
+		return {};
+	}
+	std::string_view name = proc->var_ref.name;
+	std::optional<Opcode> arith = binary_arith_opcode(name);
+	if (!arith && name != "ref")
+	{
+		return {};
+	}
+	if (!prim_binding_lowerable(binding(proc), name))
+	{
+		return {};
+	}
+	if (arith)
+	{
+		return {PrimLowering::Kind::Arith, *arith};
+	}
+	return {PrimLowering::Kind::Ref, Opcode::ldf};
+}
+
 bool Compiler::is_intrinsic_callee(Expr* expr, Expr* current)
 {
 	if (!flags_.specialize_ops)
@@ -2992,17 +3027,7 @@ bool Compiler::is_intrinsic_callee(Expr* expr, Expr* current)
 	{
 		return true;
 	}
-	Expr* proc = expr->call.proc;
-	if (proc->kind != ExprKind::VarRef || expr->call.args.size() != 2)
-	{
-		return false;
-	}
-	std::string_view name = proc->var_ref.name;
-	if (!binary_arith_opcode(name) && name != "ref")
-	{
-		return false;
-	}
-	return prim_binding_lowerable(binding(proc), name);
+	return prim_call_lowering(expr).kind != PrimLowering::Kind::None;
 }
 
 void Compiler::collect_intrinsic_callees(Expr* expr, Expr* current)
@@ -3043,35 +3068,30 @@ void Compiler::select_call_op(Expr* expr, Expr* current)
 
 	ResolvedBinding proc_binding = binding(proc);
 
+	PrimLowering pl = prim_call_lowering(expr);
+
 	// Two-arg arithmetic: rr, or rk when the rhs is a number literal.
-	if (expr->call.args.size() == 2)
+	if (pl.kind == PrimLowering::Kind::Arith)
 	{
-		std::string_view name = proc->var_ref.name;
-		std::optional<Opcode> arith = binary_arith_opcode(name);
-		if (arith && prim_binding_lowerable(proc_binding, name))
+		Opcode op = pl.op;
+		if (expr->call.args[1]->kind == ExprKind::NumberLit)
 		{
-			Opcode op = *arith;
-			if (expr->call.args[1]->kind == ExprKind::NumberLit)
+			switch (op)
 			{
-				switch (op)
-				{
-					case Opcode::sub: op = Opcode::subk; break;
-					case Opcode::add: op = Opcode::addk; break;
-					case Opcode::mul: op = Opcode::mulk; break;
-					case Opcode::div: op = Opcode::divk; break;
-					case Opcode::eq:  op = Opcode::eqk;  break;
-					case Opcode::lt:  op = Opcode::ltk;  break;
-					default:          break;   // no rk form for le/gt/ge
-				}
+				case Opcode::sub: op = Opcode::subk; break;
+				case Opcode::add: op = Opcode::addk; break;
+				case Opcode::mul: op = Opcode::mulk; break;
+				case Opcode::div: op = Opcode::divk; break;
+				case Opcode::eq:  op = Opcode::eqk;  break;
+				case Opcode::lt:  op = Opcode::ltk;  break;
+				default:          break;   // no rk form for le/gt/ge
 			}
-			sel.op = op;
-			return;
 		}
+		sel.op = op;
+		return;
 	}
 
-	if (proc->var_ref.name == "ref"
-		&& expr->call.args.size() == 2
-		&& prim_binding_lowerable(proc_binding, "ref"))
+	if (pl.kind == PrimLowering::Kind::Ref)
 	{
 		select_field_op(expr, current, expr->call.args[0], expr->call.args[1], false);
 		return;
@@ -3826,7 +3846,7 @@ namespace
 						return;
 					}
 					ResolvedBinding b = db.binding(expr);
-					if (b.lambda == lambda || b.lambda == db.toplevel_lambda_)
+					if (b.lambda == lambda)
 					{
 						return;
 					}
@@ -3834,6 +3854,20 @@ namespace
 					if (seen.insert(key).second)
 					{
 						out.push_back({expr->var_ref.name, b});
+					}
+					return;
+				}
+				case ExprKind::Call:
+				{
+					// A proc ref that op selection will lower to an intrinsic never
+					// becomes an upvalue; parameterizing it would block the lowering.
+					if (db.prim_call_lowering(expr).kind == Compiler::PrimLowering::Kind::None)
+					{
+						collect_captures_in(expr->call.proc, lambda, self_name, out, seen);
+					}
+					for (Expr* arg : expr->call.args)
+					{
+						collect_captures_in(arg, lambda, self_name, out, seen);
 					}
 					return;
 				}
