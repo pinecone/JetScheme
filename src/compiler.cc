@@ -1883,6 +1883,77 @@ Expr* Compiler::make_boolean_lit(bool value, SourceLoc loc)
 	return e;
 }
 
+template <typename F>
+static void walk_children(Expr* expr, F&& f)
+{
+	switch (expr->kind)
+	{
+		case ExprKind::NumberLit:
+		case ExprKind::StringLit:
+		case ExprKind::BooleanLit:
+		case ExprKind::CharacterLit:
+		case ExprKind::SymbolLit:
+		case ExprKind::UnknownLit:
+		case ExprKind::VarRef:
+		case ExprKind::PrimRef:
+			break;
+
+		case ExprKind::Call:
+			f(expr->call.proc);
+			for (Expr*& arg : expr->call.args)
+			{
+				f(arg);
+			}
+			break;
+
+		case ExprKind::Apply:
+			f(expr->apply.proc);
+			f(expr->apply.args);
+			break;
+
+		case ExprKind::Lambda:
+			for (Expr*& form : expr->lambda.body)
+			{
+				f(form);
+			}
+			break;
+
+		case ExprKind::Let:
+			for (Expr*& val : expr->let.vals)
+			{
+				f(val);
+			}
+			for (Expr*& form : expr->let.body)
+			{
+				f(form);
+			}
+			break;
+
+		case ExprKind::SetBang:
+			f(expr->set_bang.value);
+			break;
+
+		case ExprKind::SetRef:
+			f(expr->set_ref.obj);
+			f(expr->set_ref.key);
+			f(expr->set_ref.value);
+			break;
+
+		case ExprKind::If:
+			f(expr->if_.test);
+			f(expr->if_.consequent);
+			if (expr->if_.alternate)
+			{
+				f(expr->if_.alternate);
+			}
+			break;
+
+		default:
+			JET_DIE("%d:%d: walk_children: unhandled ExprKind %d (not ANF?)",
+					 expr->loc.line, expr->loc.col, static_cast<int>(expr->kind));
+	}
+}
+
 Expr* Compiler::expand(Expr* expr)
 {
 	switch (expr->kind)
@@ -2001,41 +2072,20 @@ Expr* Compiler::expand(Expr* expr)
 		}
 
 		case ExprKind::Call:
-			expr->call.proc = expand(expr->call.proc);
-			for (uint32_t i = 0; i < expr->call.args.size(); ++i)
-			{
-				expr->call.args[i] = expand(expr->call.args[i]);
-			}
-			return expr;
 		case ExprKind::Apply:
-			expr->apply.proc = expand(expr->apply.proc);
-			expr->apply.args = expand(expr->apply.args);
+		case ExprKind::SetBang:
+		case ExprKind::SetRef:
+		case ExprKind::If:
+			walk_children(expr, [&](Expr*& c) { c = expand(c); });
 			return expr;
+
 		case ExprKind::Lambda:
-			for (uint32_t i = 0; i < expr->lambda.body.size(); ++i)
-			{
-				expr->lambda.body[i] = expand(expr->lambda.body[i]);
-			}
+			walk_children(expr, [&](Expr*& c) { c = expand(c); });
 			expr->lambda.body = hoist_defines_in_body(expr->lambda.body, expr->loc);
 			return expr;
+
 		case ExprKind::Define:
 			expr->define.value = expand(expr->define.value);
-			return expr;
-		case ExprKind::SetBang:
-			expr->set_bang.value = expand(expr->set_bang.value);
-			return expr;
-		case ExprKind::SetRef:
-			expr->set_ref.obj = expand(expr->set_ref.obj);
-			expr->set_ref.key = expand(expr->set_ref.key);
-			expr->set_ref.value = expand(expr->set_ref.value);
-			return expr;
-		case ExprKind::If:
-			expr->if_.test = expand(expr->if_.test);
-			expr->if_.consequent = expand(expr->if_.consequent);
-			if (expr->if_.alternate)
-			{
-				expr->if_.alternate = expand(expr->if_.alternate);
-			}
 			return expr;
 		default:
 			return expr;
@@ -2044,14 +2094,7 @@ Expr* Compiler::expand(Expr* expr)
 
 Expr* Compiler::expand_let(Expr* expr)
 {
-	for (uint32_t i = 0; i < expr->let.vals.size(); ++i)
-	{
-		expr->let.vals[i] = expand(expr->let.vals[i]);
-	}
-	for (uint32_t i = 0; i < expr->let.body.size(); ++i)
-	{
-		expr->let.body[i] = expand(expr->let.body[i]);
-	}
+	walk_children(expr, [&](Expr*& c) { c = expand(c); });
 	expr->let.body = hoist_defines_in_body(expr->let.body, expr->loc);
 	return expr;
 }
@@ -2233,21 +2276,8 @@ Expr* Compiler::compute_anf(Expr* expr)
 			return expr;
 
 		case ExprKind::Lambda:
-			for (uint32_t i = 0; i < expr->lambda.body.size(); ++i)
-			{
-				expr->lambda.body[i] = compute_anf(expr->lambda.body[i]);
-			}
-			return expr;
-
 		case ExprKind::Let:
-			for (uint32_t i = 0; i < expr->let.vals.size(); ++i)
-			{
-				expr->let.vals[i] = compute_anf(expr->let.vals[i]);
-			}
-			for (uint32_t i = 0; i < expr->let.body.size(); ++i)
-			{
-				expr->let.body[i] = compute_anf(expr->let.body[i]);
-			}
+			walk_children(expr, [&](Expr*& c) { c = compute_anf(c); });
 			return expr;
 
 		case ExprKind::If:
@@ -2327,77 +2357,6 @@ Expr* Compiler::compute_anf(Expr* expr)
 
 		default:
 			JET_DIE("%d:%d: anf: unhandled ExprKind %d (surface form not expanded?)",
-					 expr->loc.line, expr->loc.col, static_cast<int>(expr->kind));
-	}
-}
-
-template <typename F>
-static void walk_children(Expr* expr, F&& f)
-{
-	switch (expr->kind)
-	{
-		case ExprKind::NumberLit:
-		case ExprKind::StringLit:
-		case ExprKind::BooleanLit:
-		case ExprKind::CharacterLit:
-		case ExprKind::SymbolLit:
-		case ExprKind::UnknownLit:
-		case ExprKind::VarRef:
-		case ExprKind::PrimRef:
-			break;
-
-		case ExprKind::Call:
-			f(expr->call.proc);
-			for (Expr* arg : expr->call.args)
-			{
-				f(arg);
-			}
-			break;
-
-		case ExprKind::Apply:
-			f(expr->apply.proc);
-			f(expr->apply.args);
-			break;
-
-		case ExprKind::Lambda:
-			for (Expr* form : expr->lambda.body)
-			{
-				f(form);
-			}
-			break;
-
-		case ExprKind::Let:
-			for (Expr* val : expr->let.vals)
-			{
-				f(val);
-			}
-			for (Expr* form : expr->let.body)
-			{
-				f(form);
-			}
-			break;
-
-		case ExprKind::SetBang:
-			f(expr->set_bang.value);
-			break;
-
-		case ExprKind::SetRef:
-			f(expr->set_ref.obj);
-			f(expr->set_ref.key);
-			f(expr->set_ref.value);
-			break;
-
-		case ExprKind::If:
-			f(expr->if_.test);
-			f(expr->if_.consequent);
-			if (expr->if_.alternate)
-			{
-				f(expr->if_.alternate);
-			}
-			break;
-
-		default:
-			JET_DIE("%d:%d: walk_children: unhandled ExprKind %d (not ANF?)",
 					 expr->loc.line, expr->loc.col, static_cast<int>(expr->kind));
 	}
 }
@@ -3426,27 +3385,22 @@ namespace
 							}
 						}
 					}
-					expr->call.proc = walk(expr->call.proc);
-					for (uint32_t i = 0; i < expr->call.args.size(); ++i)
-					{
-						expr->call.args[i] = walk(expr->call.args[i]);
-					}
+					walk_children(expr, [&](Expr*& c) { c = walk(c); });
 					return expr;
 				}
 
 				case ExprKind::Apply:
-					expr->apply.proc = walk(expr->apply.proc);
-					expr->apply.args = walk(expr->apply.args);
+				case ExprKind::SetBang:
+				case ExprKind::SetRef:
+				case ExprKind::If:
+					walk_children(expr, [&](Expr*& c) { c = walk(c); });
 					return expr;
 
 				case ExprKind::Lambda:
 				{
 					bool guard = candidate_lambdas.count(expr) && active.insert(expr).second;
 					hosts.push_back(expr);
-					for (uint32_t i = 0; i < expr->lambda.body.size(); ++i)
-					{
-						expr->lambda.body[i] = walk(expr->lambda.body[i]);
-					}
+					walk_children(expr, [&](Expr*& c) { c = walk(c); });
 					hosts.pop_back();
 					if (guard)
 					{
@@ -3472,35 +3426,9 @@ namespace
 							}
 						}
 					}
-					for (uint32_t i = 0; i < expr->let.vals.size(); ++i)
-					{
-						expr->let.vals[i] = walk(expr->let.vals[i]);
-					}
-					for (uint32_t i = 0; i < expr->let.body.size(); ++i)
-					{
-						expr->let.body[i] = walk(expr->let.body[i]);
-					}
+					walk_children(expr, [&](Expr*& c) { c = walk(c); });
 					return expr;
 				}
-
-				case ExprKind::SetBang:
-					expr->set_bang.value = walk(expr->set_bang.value);
-					return expr;
-
-				case ExprKind::SetRef:
-					expr->set_ref.obj = walk(expr->set_ref.obj);
-					expr->set_ref.key = walk(expr->set_ref.key);
-					expr->set_ref.value = walk(expr->set_ref.value);
-					return expr;
-
-				case ExprKind::If:
-					expr->if_.test = walk(expr->if_.test);
-					expr->if_.consequent = walk(expr->if_.consequent);
-					if (expr->if_.alternate)
-					{
-						expr->if_.alternate = walk(expr->if_.alternate);
-					}
-					return expr;
 
 				default:
 					JET_DIE("%d:%d: anf-inline: unhandled ExprKind %d", expr->loc.line,
