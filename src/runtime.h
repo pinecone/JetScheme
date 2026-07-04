@@ -32,7 +32,7 @@ Atom is_list(Atom a);
 
 void init_lists(Env& e);
 
-template <class Out>
+template <typename Out>
 Out list_to_args(Atom list, Out out)
 {
 	for (Atom x = list; !is_type<jet::Type::EmptyList>(x); x = cdr(x))
@@ -171,10 +171,10 @@ inline void check_arity(Arity a, size_t actual)
 	}
 }
 
-template <class F>
+template <typename F>
 struct PrimTraits;
 
-template <class R, class... A>
+template <typename R, typename... A>
 struct PrimTraits<R (*)(A...)>
 {
 	using Ret = R;
@@ -256,7 +256,7 @@ inline bool is_positive_integer(Atom num)
 
 void init_number(Env& env);
 
-template <class op_t>
+template <typename op_t>
 JET_ALWAYS_INLINE inline Atom fold(Atom* first, Atom* last, Number result)
 {
 	while (first != last)
@@ -266,21 +266,21 @@ JET_ALWAYS_INLINE inline Atom fold(Atom* first, Atom* last, Number result)
 	return box(result);
 }
 
-template <class op_t>
+template <typename op_t>
 JET_ALWAYS_INLINE inline Atom folding_op(Atom* first, Atom* last)
 {
 	Number result = slow_unbox<Number>(*first++);
 	return fold<op_t>(first, last, result);
 }
 
-template <class op_t, int init>
+template <typename op_t, int init>
 JET_ALWAYS_INLINE inline Atom folding_op(Atom* first, Atom* last)
 {
 	Number result = last - first < 2 ? init : slow_unbox<Number>(*first++);
 	return fold<op_t>(first, last, result);
 }
 
-template <class op_t>
+template <typename op_t>
 JET_ALWAYS_INLINE inline Atom folding_pred(Atom* first, Atom* last)
 {
 	bool result = true;
@@ -294,37 +294,37 @@ JET_ALWAYS_INLINE inline Atom folding_pred(Atom* first, Atom* last)
 	return box(result);
 }
 
-template <class op_t>
+template <typename op_t>
 Atom arith_op(Atom* first, Atom*)
 {
 	return box(op_t()(slow_unbox<Number>(first[0]), slow_unbox<Number>(first[1])));
 }
 
-template <class T, T (*op)()>
+template <typename T, T (*op)()>
 Atom arith_nullary_fun(Atom*, Atom*)
 {
 	return box(Number(op()));
 }
 
-template <class T, T (*op)(T)>
+template <typename T, T (*op)(T)>
 Atom arith_unary_fun(Atom* first, Atom*)
 {
 	return box(op(slow_unbox<Number>(*first)));
 }
 
-template <class T, bool (*op)(T)>
+template <typename T, bool (*op)(T)>
 Atom arith_unary_pred(Atom* first, Atom*)
 {
 	return box(op(slow_unbox<Number>(*first)));
 }
 
-template <class T, T (*op)(T, T)>
+template <typename T, T (*op)(T, T)>
 Atom arith_binary_fun(Atom* first, Atom*)
 {
 	return box(op(slow_unbox<Number>(first[0]), slow_unbox<Number>(first[1])));
 }
 
-template <class T>
+template <typename T>
 bool compare_objects(Atom obj1, Atom obj2)
 {
 	decltype(box_unbox_t<T>::unbox(obj1)) a = unbox<T>(obj1);

@@ -84,19 +84,19 @@ void init_lists(Env& e)
 	e.bind("set-cdr!", make_prim<set_cdr>());
 }
 
-template <class T>
+template <typename T>
 struct modulus
 {
 	Number operator()(T a, T b) { return static_cast<int>(a) % static_cast<int>(b); }
 };
 
-template <class T>
+template <typename T>
 struct max
 {
 	T operator()(T a, T b) { return std::max(a, b); }
 };
 
-template <class T>
+template <typename T>
 struct min
 {
 	T operator()(T a, T b) { return std::min(a, b); }
@@ -108,19 +108,19 @@ static int32_t to_int32(Number x)
 	return static_cast<int32_t>(static_cast<int64_t>(x));
 }
 
-template <class T>
+template <typename T>
 struct bit_and
 {
 	Number operator()(T a, T b) { return static_cast<Number>(to_int32(a) & to_int32(b)); }
 };
 
-template <class T>
+template <typename T>
 struct bit_ior
 {
 	Number operator()(T a, T b) { return static_cast<Number>(to_int32(a) | to_int32(b)); }
 };
 
-template <class T>
+template <typename T>
 struct bit_xor
 {
 	Number operator()(T a, T b) { return static_cast<Number>(to_int32(a) ^ to_int32(b)); }
@@ -768,7 +768,7 @@ static Atom string_fill_bang(Atom* first, Atom* last)
 	return Atom();
 }
 
-template <class Op>
+template <typename Op>
 static Atom string_folding_pred(Atom* first, Atom* last)
 {
 	JET_DIE_UNLESS(last - first >= 2, "string comparison expects at least 2 arguments");
@@ -968,7 +968,7 @@ static Atom integer_to_char(Atom n)
 	return box(static_cast<Character>(static_cast<uint8_t>(v)));
 }
 
-template <class Op>
+template <typename Op>
 static Atom char_folding_pred(Atom* first, Atom* last)
 {
 	JET_DIE_UNLESS(last - first >= 2, "char comparison expects at least 2 arguments");
@@ -983,7 +983,7 @@ static Atom char_folding_pred(Atom* first, Atom* last)
 	return box(result);
 }
 
-template <class Cmp>
+template <typename Cmp>
 struct ch_ci
 {
 	bool operator()(Character a, Character b) { return Cmp{}(std::tolower(a), std::tolower(b)); }

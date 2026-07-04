@@ -116,7 +116,7 @@ struct Gc
 
 inline Gc* g_gc = nullptr;
 
-template <class T, class... Args>
+template <typename T, typename... Args>
 T* gc_alloc(int tag, Args&&... args)
 {
 	void* mem = g_gc->alloc(sizeof(T), tag);
@@ -142,19 +142,19 @@ constexpr int type_to_tag(jet::Type t)
 	}
 }
 
-template <class T>
+template <typename T>
 void gc_destroy(void* p)
 {
 	// No free -- GC owns the memory.
 	static_cast<T*>(p)->~T();
 }
 
-template <class T>
+template <typename T>
 struct box_unbox_t
 {
 	static constexpr int tag = type_to_tag(dynamic_type<T>::id);
 
-	template <class... Args>
+	template <typename... Args>
 	static Atom box(Args&&... args)
 	{
 		T* obj = gc_alloc<T>(tag, static_cast<Args&&>(args)...);
@@ -205,7 +205,7 @@ enum class ConstTag : uint8_t
 	Lambda
 };
 
-template <class T>
+template <typename T>
 inline Code* advance_type(Code* code, T& out)
 {
 	out = *reinterpret_cast<T*>(code);
@@ -239,7 +239,7 @@ class Env
 		return x == items_.end() ? nullptr : &x->second;
 	}
 
-	template <class F>
+	template <typename F>
 	void scan(F&& f)
 	{
 		for (auto& [k, v] : items_)

@@ -212,7 +212,7 @@ struct Slot;
 class StructType;
 struct Struct;
 
-template <class T>
+template <typename T>
 struct dynamic_type;
 
 template <>
@@ -242,7 +242,7 @@ struct dynamic_type<OPort>
 	static constexpr jet::Type id = jet::Type::OPort;
 };
 
-template <class T>
+template <typename T>
 struct box_unbox_t;
 
 template <>
@@ -290,26 +290,26 @@ inline void type_check(Atom a, jet::Type t)
 	}
 }
 
-template <class T>
+template <typename T>
 Atom box(T&& init)
 {
 	return box_unbox_t<typename std::remove_reference<T>::type>::box(static_cast<T&&>(init));
 }
 
-template <class T, class... Args>
+template <typename T, typename... Args>
 Atom box(Args&&... args)
 {
 	return box_unbox_t<T>::box(static_cast<Args&&>(args)...);
 }
 
-template <class T>
+template <typename T>
 decltype(auto) unbox(Atom a)
 {
 	// Unchecked. Caller has proven the type.
 	return box_unbox_t<T>::unbox(a);
 }
 
-template <class T>
+template <typename T>
 decltype(auto) slow_unbox(Atom a)
 {
 	type_check(a, dynamic_type<T>::id);

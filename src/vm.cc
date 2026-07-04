@@ -559,7 +559,7 @@ JET_NOINLINE JET_PRESERVE_NONE static void die_set_bad_value(VM_OP_PARAMS)
 	JET_DIE("set!/ref: incompatible value type for receiver");
 }
 
-template <class T>
+template <typename T>
 static Atom container_load(T& c, size_t i)
 {
 	if constexpr (std::is_same_v<T, String>)
@@ -598,7 +598,7 @@ static Atom slow_ref_struct(Atom obj, Atom key)
 // Register-ISA shape handlers recover their full operand struct via
 // pc - sizeof(OP_*): the dispatch opcode advanced pc past exactly one struct.
 
-template <class T>
+template <typename T>
 JET_PRESERVE_NONE static void fast_ldf(VM_OP_PARAMS)
 {
 	OP_ldf* op = reinterpret_cast<OP_ldf*>(pc - sizeof(OP_ldf));
@@ -636,7 +636,7 @@ JET_PRESERVE_NONE static void fast_ldf(VM_OP_PARAMS)
 	DISPATCH();
 }
 
-template <class T>
+template <typename T>
 JET_PRESERVE_NONE static void fast_stf(VM_OP_PARAMS)
 {
 	OP_stf* op = reinterpret_cast<OP_stf*>(pc - sizeof(OP_stf));
@@ -760,7 +760,7 @@ JET_PRESERVE_NONE static void fast_stf_struct(VM_OP_PARAMS)
 	DISPATCH();
 }
 
-template <class T>
+template <typename T>
 JET_PRESERVE_NONE static void fast_ldfk(VM_OP_PARAMS)
 {
 	OP_ldfk* op = reinterpret_cast<OP_ldfk*>(pc - sizeof(OP_ldfk));
@@ -793,7 +793,7 @@ JET_PRESERVE_NONE static void fast_ldfk(VM_OP_PARAMS)
 	DISPATCH();
 }
 
-template <class T>
+template <typename T>
 JET_PRESERVE_NONE static void fast_stfk(VM_OP_PARAMS)
 {
 	OP_stfk* op = reinterpret_cast<OP_stfk*>(pc - sizeof(OP_stfk));
@@ -986,7 +986,7 @@ static VmOp field_install_stfk(FieldIc* ic, Atom obj)
 	return shape->stfk_handler;
 }
 
-template<class Op, auto InstallHandler>
+template<typename Op, auto InstallHandler>
 JET_PRESERVE_NONE static void op_field_reg(VM_OP_PARAMS)
 {
 	Op* op = reinterpret_cast<Op*>(pc);
