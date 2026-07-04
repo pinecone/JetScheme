@@ -11,6 +11,7 @@
 #include <string>
 #include <string_view>
 #include <sys/mman.h>
+#include <type_traits>
 
 using GcDestructor = void(*)(void*);
 static GcDestructor gc_destructor_table[jet_tag::TAG_MAX] = {};
@@ -1374,18 +1375,52 @@ JET_PRESERVE_NONE static void op_cs_impl(VM_OP_PARAMS)
 	JET_MUSTTAIL return stub(VM_OP_ARGS);
 }
 
-template <int N, bool is_tail>
+enum class CdKind
+{
+	Local,
+	Upvalue,
+	Self
+};
+
+template <bool is_tail, CdKind kind>
+static constexpr Opcode cd_base_opcode()
+{
+	if constexpr (kind == CdKind::Local)
+	{
+		return is_tail ? Opcode::cdlt_0 : Opcode::cdl_0;
+	}
+	else if constexpr (kind == CdKind::Upvalue)
+	{
+		return is_tail ? Opcode::cdut_0 : Opcode::cdu_0;
+	}
+	else
+	{
+		static_assert(!is_tail, "self tail calls lower to recurw");
+		return Opcode::cds_0;
+	}
+}
+
+template <CdKind kind>
+using OP_cd_of = std::conditional_t<kind == CdKind::Self, OP_cds, OP_cd>;
+
+template <int N, bool is_tail, CdKind kind>
 JET_NOINLINE JET_PRESERVE_NONE static void op_cd_miss(VM_OP_PARAMS)
 {
-	JET_PROFILE_IC_MISS(static_cast<uint8_t>(is_tail ? Opcode::cdt_0 : Opcode::cd_0) + N);
-	OP_cd* op = reinterpret_cast<OP_cd*>(pc);
+	JET_PROFILE_IC_MISS(static_cast<uint8_t>(cd_base_opcode<is_tail, kind>()) + N);
+	OP_cd_of<kind>* op = reinterpret_cast<OP_cd_of<kind>*>(pc);
 	pc += sizeof(*op);
-	IcDirectSource src = static_cast<IcDirectSource>(op->src);
-	callee = src == IcDirectSource::Local
-		? stack_base[frame_base + op->idx]
-		: src == IcDirectSource::SelfClosure
-		? Atom::make_tagged(jet_tag::procedure, frame->closure)
-		: frame->closure->captures[op->idx];
+	if constexpr (kind == CdKind::Local)
+	{
+		callee = stack_base[frame_base + op->idx];
+	}
+	else if constexpr (kind == CdKind::Upvalue)
+	{
+		callee = frame->closure->captures[op->idx];
+	}
+	else
+	{
+		callee = Atom::make_tagged(jet_tag::procedure, frame->closure);
+	}
 	VmOp stub = resolve_call_stub(callee, op->nargs, is_tail);
 	op->ic_atom = callee.bits;
 	op->ic_stub = reinterpret_cast<uint64_t>(stub);
@@ -1394,20 +1429,27 @@ JET_NOINLINE JET_PRESERVE_NONE static void op_cd_miss(VM_OP_PARAMS)
 	JET_MUSTTAIL return stub(VM_OP_ARGS);
 }
 
-template <int N, bool is_tail>
+template <int N, bool is_tail, CdKind kind>
 JET_PRESERVE_NONE static void op_cd_impl(VM_OP_PARAMS)
 {
 	JET_GC_CHECK();
-	OP_cd* op = reinterpret_cast<OP_cd*>(pc);
-	IcDirectSource src = static_cast<IcDirectSource>(op->src);
-	Atom current = src == IcDirectSource::Local
-		? stack_base[frame_base + op->idx]
-		: src == IcDirectSource::SelfClosure
-		? Atom::make_tagged(jet_tag::procedure, frame->closure)
-		: frame->closure->captures[op->idx];
+	OP_cd_of<kind>* op = reinterpret_cast<OP_cd_of<kind>*>(pc);
+	Atom current{};
+	if constexpr (kind == CdKind::Local)
+	{
+		current = stack_base[frame_base + op->idx];
+	}
+	else if constexpr (kind == CdKind::Upvalue)
+	{
+		current = frame->closure->captures[op->idx];
+	}
+	else
+	{
+		current = Atom::make_tagged(jet_tag::procedure, frame->closure);
+	}
 	if (op->ic_atom != current.bits) [[unlikely]]
 	{
-		JET_MUSTTAIL return op_cd_miss<N, is_tail>(VM_OP_ARGS);
+		JET_MUSTTAIL return op_cd_miss<N, is_tail, kind>(VM_OP_ARGS);
 	}
 	pc += sizeof(*op);
 	callee = current;
@@ -1434,23 +1476,50 @@ static constexpr auto& op_cst_5 = op_cs_impl<5, true>;
 static constexpr auto& op_cst_6 = op_cs_impl<6, true>;
 static constexpr auto& op_cst_7 = op_cs_impl<7, true>;
 
-static constexpr auto& op_cd_0 = op_cd_impl<0, false>;
-static constexpr auto& op_cd_1 = op_cd_impl<1, false>;
-static constexpr auto& op_cd_2 = op_cd_impl<2, false>;
-static constexpr auto& op_cd_3 = op_cd_impl<3, false>;
-static constexpr auto& op_cd_4 = op_cd_impl<4, false>;
-static constexpr auto& op_cd_5 = op_cd_impl<5, false>;
-static constexpr auto& op_cd_6 = op_cd_impl<6, false>;
-static constexpr auto& op_cd_7 = op_cd_impl<7, false>;
+static constexpr auto& op_cdl_0 = op_cd_impl<0, false, CdKind::Local>;
+static constexpr auto& op_cdl_1 = op_cd_impl<1, false, CdKind::Local>;
+static constexpr auto& op_cdl_2 = op_cd_impl<2, false, CdKind::Local>;
+static constexpr auto& op_cdl_3 = op_cd_impl<3, false, CdKind::Local>;
+static constexpr auto& op_cdl_4 = op_cd_impl<4, false, CdKind::Local>;
+static constexpr auto& op_cdl_5 = op_cd_impl<5, false, CdKind::Local>;
+static constexpr auto& op_cdl_6 = op_cd_impl<6, false, CdKind::Local>;
+static constexpr auto& op_cdl_7 = op_cd_impl<7, false, CdKind::Local>;
 
-static constexpr auto& op_cdt_0 = op_cd_impl<0, true>;
-static constexpr auto& op_cdt_1 = op_cd_impl<1, true>;
-static constexpr auto& op_cdt_2 = op_cd_impl<2, true>;
-static constexpr auto& op_cdt_3 = op_cd_impl<3, true>;
-static constexpr auto& op_cdt_4 = op_cd_impl<4, true>;
-static constexpr auto& op_cdt_5 = op_cd_impl<5, true>;
-static constexpr auto& op_cdt_6 = op_cd_impl<6, true>;
-static constexpr auto& op_cdt_7 = op_cd_impl<7, true>;
+static constexpr auto& op_cdlt_0 = op_cd_impl<0, true, CdKind::Local>;
+static constexpr auto& op_cdlt_1 = op_cd_impl<1, true, CdKind::Local>;
+static constexpr auto& op_cdlt_2 = op_cd_impl<2, true, CdKind::Local>;
+static constexpr auto& op_cdlt_3 = op_cd_impl<3, true, CdKind::Local>;
+static constexpr auto& op_cdlt_4 = op_cd_impl<4, true, CdKind::Local>;
+static constexpr auto& op_cdlt_5 = op_cd_impl<5, true, CdKind::Local>;
+static constexpr auto& op_cdlt_6 = op_cd_impl<6, true, CdKind::Local>;
+static constexpr auto& op_cdlt_7 = op_cd_impl<7, true, CdKind::Local>;
+
+static constexpr auto& op_cdu_0 = op_cd_impl<0, false, CdKind::Upvalue>;
+static constexpr auto& op_cdu_1 = op_cd_impl<1, false, CdKind::Upvalue>;
+static constexpr auto& op_cdu_2 = op_cd_impl<2, false, CdKind::Upvalue>;
+static constexpr auto& op_cdu_3 = op_cd_impl<3, false, CdKind::Upvalue>;
+static constexpr auto& op_cdu_4 = op_cd_impl<4, false, CdKind::Upvalue>;
+static constexpr auto& op_cdu_5 = op_cd_impl<5, false, CdKind::Upvalue>;
+static constexpr auto& op_cdu_6 = op_cd_impl<6, false, CdKind::Upvalue>;
+static constexpr auto& op_cdu_7 = op_cd_impl<7, false, CdKind::Upvalue>;
+
+static constexpr auto& op_cdut_0 = op_cd_impl<0, true, CdKind::Upvalue>;
+static constexpr auto& op_cdut_1 = op_cd_impl<1, true, CdKind::Upvalue>;
+static constexpr auto& op_cdut_2 = op_cd_impl<2, true, CdKind::Upvalue>;
+static constexpr auto& op_cdut_3 = op_cd_impl<3, true, CdKind::Upvalue>;
+static constexpr auto& op_cdut_4 = op_cd_impl<4, true, CdKind::Upvalue>;
+static constexpr auto& op_cdut_5 = op_cd_impl<5, true, CdKind::Upvalue>;
+static constexpr auto& op_cdut_6 = op_cd_impl<6, true, CdKind::Upvalue>;
+static constexpr auto& op_cdut_7 = op_cd_impl<7, true, CdKind::Upvalue>;
+
+static constexpr auto& op_cds_0 = op_cd_impl<0, false, CdKind::Self>;
+static constexpr auto& op_cds_1 = op_cd_impl<1, false, CdKind::Self>;
+static constexpr auto& op_cds_2 = op_cd_impl<2, false, CdKind::Self>;
+static constexpr auto& op_cds_3 = op_cd_impl<3, false, CdKind::Self>;
+static constexpr auto& op_cds_4 = op_cd_impl<4, false, CdKind::Self>;
+static constexpr auto& op_cds_5 = op_cd_impl<5, false, CdKind::Self>;
+static constexpr auto& op_cds_6 = op_cd_impl<6, false, CdKind::Self>;
+static constexpr auto& op_cds_7 = op_cd_impl<7, false, CdKind::Self>;
 
 JET_PRESERVE_NONE static void op_skip(VM_OP_PARAMS)
 {

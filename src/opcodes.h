@@ -57,8 +57,11 @@
 	X(applyw,              "apply")                                                                          \
 	JET_REPLICATE(X, cs,  "cs")                                                                              \
 	JET_REPLICATE(X, cst, "cst")                                                                             \
-	JET_REPLICATE(X, cd,  "cd")                                                                              \
-	JET_REPLICATE(X, cdt, "cdt")                                                                             \
+	JET_REPLICATE(X, cdl,  "cdl")                                                                            \
+	JET_REPLICATE(X, cdlt, "cdlt")                                                                           \
+	JET_REPLICATE(X, cdu,  "cdu")                                                                            \
+	JET_REPLICATE(X, cdut, "cdut")                                                                           \
+	JET_REPLICATE(X, cds,  "cds")                                                                            \
 	X(ldf,                 "ldf")                                                                            \
 	X(stf,                 "stf")                                                                            \
 	X(ldfk,                "ldfk")                                                                           \
@@ -179,18 +182,18 @@ struct OP_cs
 	uint64_t ic_stub;
 	uint64_t ic_version;
 };
-enum class IcDirectSource : uint8_t
-{
-	Local = 0,
-	Upvalue = 1,
-	SelfClosure = 2
-};
 struct OP_cd
 {
 	uint16_t w;
 	uint16_t idx;
 	uint16_t nargs;
-	uint8_t src;
+	uint64_t ic_atom;
+	uint64_t ic_stub;
+};
+struct OP_cds
+{
+	uint16_t w;
+	uint16_t nargs;
 	uint64_t ic_atom;
 	uint64_t ic_stub;
 };
@@ -299,10 +302,16 @@ inline size_t opcode_step(uint8_t op, const uint8_t* operands)
 #undef X
 			return OPCODE_SIZE + sizeof(OP_cs);
 #define X(name, disp) case Opcode::name:
-			JET_REPLICATE(X, cd, "cd")
-			JET_REPLICATE(X, cdt, "cdt")
+			JET_REPLICATE(X, cdl, "cdl")
+			JET_REPLICATE(X, cdlt, "cdlt")
+			JET_REPLICATE(X, cdu, "cdu")
+			JET_REPLICATE(X, cdut, "cdut")
 #undef X
 			return OPCODE_SIZE + sizeof(OP_cd);
+#define X(name, disp) case Opcode::name:
+			JET_REPLICATE(X, cds, "cds")
+#undef X
+			return OPCODE_SIZE + sizeof(OP_cds);
 		case Opcode::ldf:
 			return OPCODE_SIZE + sizeof(OP_ldf);
 		case Opcode::stf:

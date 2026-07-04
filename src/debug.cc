@@ -198,8 +198,22 @@ bool is_cd_op(uint8_t op)
 	{                                                                                                        \
 		return true;                                                                                         \
 	}
-	JET_REPLICATE(X, cd, "cd")
-	JET_REPLICATE(X, cdt, "cdt")
+	JET_REPLICATE(X, cdl, "cdl")
+	JET_REPLICATE(X, cdlt, "cdlt")
+	JET_REPLICATE(X, cdu, "cdu")
+	JET_REPLICATE(X, cdut, "cdut")
+#undef X
+	return false;
+}
+
+bool is_cds_op(uint8_t op)
+{
+#define X(name, disp)                                                                                        \
+	if (op == static_cast<uint8_t>(Opcode::name))                                                            \
+	{                                                                                                        \
+		return true;                                                                                         \
+	}
+	JET_REPLICATE(X, cds, "cds")
 #undef X
 	return false;
 }
@@ -215,12 +229,13 @@ void decode_args(FILE* out, uint8_t op, Code* p)
 	if (is_cd_op(op))
 	{
 		OP_cd* o = reinterpret_cast<OP_cd*>(p);
-		const char* src = o->src == static_cast<uint8_t>(IcDirectSource::Local)
-			? "local"
-			: o->src == static_cast<uint8_t>(IcDirectSource::SelfClosure)
-			? "self"
-			: "upvalue";
-		std::fprintf(out, " w=%u src=%s idx=%u nargs=%u", o->w, src, o->idx, o->nargs);
+		std::fprintf(out, " w=%u idx=%u nargs=%u", o->w, o->idx, o->nargs);
+		return;
+	}
+	if (is_cds_op(op))
+	{
+		OP_cds* o = reinterpret_cast<OP_cds*>(p);
+		std::fprintf(out, " w=%u nargs=%u", o->w, o->nargs);
 		return;
 	}
 	switch (static_cast<Opcode>(op))

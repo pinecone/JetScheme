@@ -522,7 +522,7 @@ struct Compiler
 		{
 			struct { uint16_t addr; } var;     // register / upvalue idx of ref/set
 			struct { uint16_t upvalue_idx; } call_ic_slot;
-			struct { uint8_t src; uint16_t idx; } call_ic_direct;
+			struct { uint16_t idx; } call_ic_direct;
 		} u;
 	};
 	std::vector<std::optional<OpSelection>> selected_ops_;
@@ -3085,9 +3085,7 @@ void Compiler::select_call_op(Expr* expr, Expr* current)
 		if (!get(lb.reassigned_after_init, proc_binding.breadth)
 			&& get(lb.bound_init, proc_binding.breadth) == current)
 		{
-			sel.op = Opcode::cd_0;
-			sel.u.call_ic_direct.src = static_cast<uint8_t>(IcDirectSource::SelfClosure);
-			sel.u.call_ic_direct.idx = 0;
+			sel.op = Opcode::cds_0;
 			return;
 		}
 	}
@@ -3108,10 +3106,9 @@ void Compiler::select_call_op(Expr* expr, Expr* current)
 	// Callee in an unboxed binding: direct IC.
 	if (!slot)
 	{
-		sel.op = Opcode::cd_0;
 		if (proc_binding.lambda == current)
 		{
-			sel.u.call_ic_direct.src = static_cast<uint8_t>(IcDirectSource::Local);
+			sel.op = Opcode::cdl_0;
 			sel.u.call_ic_direct.idx = static_cast<uint16_t>(proc_binding.breadth);
 		}
 		else
@@ -3119,7 +3116,7 @@ void Compiler::select_call_op(Expr* expr, Expr* current)
 			std::optional<uint16_t> found = find_upvalue(current, proc_binding.lambda,
 														 static_cast<uint32_t>(proc_binding.breadth));
 			JET_DIE_UNLESS(found, "codegen: cacheable call missing upvalue entry");
-			sel.u.call_ic_direct.src = static_cast<uint8_t>(IcDirectSource::Upvalue);
+			sel.op = Opcode::cdu_0;
 			sel.u.call_ic_direct.idx = *found;
 		}
 	}
@@ -4052,9 +4049,8 @@ namespace
 			struct { uint32_t id; uint16_t src; } label;             // label; if_false/skip target
 			struct { uint32_t id; uint16_t a; uint16_t b; } if_cmp;  // if_eq..if_ltk; rk holds the pool idx in b
 			// One payload for every call op: callw/tcall read callee, cs/cst
-			// read upvalue_idx, cd/cdt read src+idx, recurw/applyw only w+nargs.
-			struct { uint16_t w; uint16_t nargs; uint16_t callee; uint16_t upvalue_idx; uint16_t idx;
-					 uint8_t src; } call;
+			// read upvalue_idx, cdl/cdu read idx, cds/recurw/applyw only w+nargs.
+			struct { uint16_t w; uint16_t nargs; uint16_t callee; uint16_t upvalue_idx; uint16_t idx; } call;
 			struct { uint16_t dst; uint16_t pool_idx; uint16_t first_capture; uint16_t n_captures; } closure;
 			struct { uint16_t dst; uint16_t a; uint16_t b; } arith;  // rr; rk holds the pool idx in b
 			struct { uint16_t dst; uint16_t obj; uint16_t key; uint16_t val; } field;  // ldf stf; *k holds the pool idx in key
@@ -4410,8 +4406,7 @@ namespace
 			{
 				sel.u.var.addr = alias(sel.u.var.addr);
 			}
-			else if (sel.op == Opcode::cd_0
-					 && sel.u.call_ic_direct.src == static_cast<uint8_t>(IcDirectSource::Local))
+			else if (sel.op == Opcode::cdl_0)
 			{
 				sel.u.call_ic_direct.idx = alias(sel.u.call_ic_direct.idx);
 			}
@@ -4594,10 +4589,17 @@ namespace
 					i.op = tail ? Opcode::cst_0 : Opcode::cs_0;
 					i.u.call.upvalue_idx = sel.u.call_ic_slot.upvalue_idx;
 					break;
-				case Opcode::cd_0:
-					i.op = tail ? Opcode::cdt_0 : Opcode::cd_0;
-					i.u.call.src = sel.u.call_ic_direct.src;
+				case Opcode::cdl_0:
+					i.op = tail ? Opcode::cdlt_0 : Opcode::cdl_0;
 					i.u.call.idx = sel.u.call_ic_direct.idx;
+					break;
+				case Opcode::cdu_0:
+					i.op = tail ? Opcode::cdut_0 : Opcode::cdu_0;
+					i.u.call.idx = sel.u.call_ic_direct.idx;
+					break;
+				case Opcode::cds_0:
+					JET_DIE_WHEN(tail, "%d:%d: codegen: self direct call in tail position escaped recurw",
+								  expr->loc.line, expr->loc.col);
 					break;
 				case Opcode::callw:
 					i.op = tail ? Opcode::tcall : Opcode::callw;
@@ -4642,7 +4644,9 @@ namespace
 			{
 				case Opcode::callw:
 				case Opcode::cs_0:
-				case Opcode::cd_0:
+				case Opcode::cdl_0:
+				case Opcode::cdu_0:
+				case Opcode::cds_0:
 				case Opcode::recurw:
 					return true;
 				default:
@@ -4888,8 +4892,11 @@ namespace
 		// land on distinct asm dispatch tails (Ertl & Gregg 2003).
 		size_t v_cs = 0;
 		size_t v_cst = 0;
-		size_t v_cd = 0;
-		size_t v_cdt = 0;
+		size_t v_cdl = 0;
+		size_t v_cdlt = 0;
+		size_t v_cdu = 0;
+		size_t v_cdut = 0;
+		size_t v_cds = 0;
 
 		static size_t encoded_size(const LirInst& i)
 		{
@@ -5165,15 +5172,30 @@ namespace
 					break;
 				}
 
-				case Opcode::cd_0:
-				case Opcode::cdt_0:
+				case Opcode::cdl_0:
+				case Opcode::cdlt_0:
+				case Opcode::cdu_0:
+				case Opcode::cdut_0:
 				{
-					emit_replicated(bc, i.op, i.op == Opcode::cdt_0 ? v_cdt : v_cd);
+					size_t& counter = i.op == Opcode::cdl_0 ? v_cdl
+						: i.op == Opcode::cdlt_0 ? v_cdlt
+						: i.op == Opcode::cdu_0 ? v_cdu
+						: v_cdut;
+					emit_replicated(bc, i.op, counter);
 					OP_cd op{};
 					op.w = i.u.call.w;
 					op.idx = i.u.call.idx;
 					op.nargs = i.u.call.nargs;
-					op.src = i.u.call.src;
+					emit_operand(bc, op);
+					break;
+				}
+
+				case Opcode::cds_0:
+				{
+					emit_replicated(bc, i.op, v_cds);
+					OP_cds op{};
+					op.w = i.u.call.w;
+					op.nargs = i.u.call.nargs;
 					emit_operand(bc, op);
 					break;
 				}
