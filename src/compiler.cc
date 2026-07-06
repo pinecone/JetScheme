@@ -4201,7 +4201,7 @@ namespace
 		uint16_t alias(uint16_t r)
 		{
 			std::unordered_map<uint16_t, uint16_t>& m = current_lambda().reg_alias;
-			std::unordered_map<uint16_t, uint16_t>::iterator it = m.find(r);
+			auto it = m.find(r);
 			return it == m.end() ? r : it->second;
 		}
 
@@ -4209,7 +4209,7 @@ namespace
 		// ahead of emit_call reaching the site.
 		uint16_t claim_call_window(Expr* call_expr, size_t nargs)
 		{
-			std::unordered_map<uint32_t, uint16_t>::iterator it = call_windows.find(call_expr->id);
+			auto it = call_windows.find(call_expr->id);
 			if (it == call_windows.end())
 			{
 				it = call_windows.emplace(call_expr->id, alloc_window(nargs)).first;
@@ -4946,7 +4946,7 @@ namespace
 				{
 					uint32_t l_alt = prog.next_label++;
 					uint32_t l_end = prog.next_label++;
-					std::unordered_map<uint32_t, Expr*>::iterator fused = fused_tests.find(expr->id);
+					auto fused = fused_tests.find(expr->id);
 					if (fused != fused_tests.end())
 					{
 						Expr* cmp = fused->second;

@@ -235,7 +235,7 @@ class Env
 
 	Atom* lookup(std::string_view name)
 	{
-		items_t::iterator x = items_.find(std::string(name));
+		auto x = items_.find(std::string(name));
 		return x == items_.end() ? nullptr : &x->second;
 	}
 

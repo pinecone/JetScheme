@@ -488,8 +488,8 @@ static void print_vector(Vec& v, std::string& out)
 	out += "#(";
 	if (!v.empty())
 	{
-		Vec::iterator end = --v.end();
-		for (Vec::iterator it = v.begin(); it != end; ++it)
+		auto end = --v.end();
+		for (auto it = v.begin(); it != end; ++it)
 		{
 			print_vector_element<print>(*it, out);
 		}
@@ -606,7 +606,7 @@ Atom write_to(Atom a, std::string& out)
 		{
 			out += '"';
 			String& s = *unbox<String>(a);
-			for (String::const_iterator it = s.begin(); it != s.end(); ++it)
+			for (auto it = s.begin(); it != s.end(); ++it)
 			{
 				write_escaped_char(*it, out);
 			}
