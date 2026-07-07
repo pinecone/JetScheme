@@ -4696,32 +4696,54 @@ namespace
 			{
 				case Opcode::recurw:
 				{
-					bool clobber = false;
+					std::vector<uint16_t> src_reg(nargs, UINT16_MAX);
 					for (uint16_t k = 0; k < nargs; ++k)
 					{
 						Expr* arg = expr->call.args[k];
 						if (arg->kind == ExprKind::VarRef)
 						{
 							Compiler::OpSelection arg_sel = selection(arg, "recur arg");
-							if (arg_sel.op == Opcode::mov && arg_sel.u.var.addr < nargs && arg_sel.u.var.addr != k)
+							if (arg_sel.op == Opcode::mov)
 							{
-								clobber = true;
-								break;
+								src_reg[k] = arg_sel.u.var.addr;
 							}
 						}
 					}
-					if (!clobber)
+					std::unordered_map<uint16_t, uint16_t> saved;
+					for (uint16_t k = 0; k < nargs; ++k)
 					{
-						for (uint16_t k = 0; k < nargs; ++k)
+						uint16_t src = src_reg[k];
+						if (src < nargs && src != k && src_reg[src] != src)
+						{
+							if (saved.find(src) == saved.end())
+							{
+								uint16_t t = alloc_reg();
+								emit_mov(t, src);
+								saved[src] = t;
+							}
+						}
+					}
+					for (uint16_t k = 0; k < nargs; ++k)
+					{
+						uint16_t src = src_reg[k];
+						if (src == k)
+						{
+							continue;
+						}
+						auto it = saved.find(src);
+						if (it != saved.end())
+						{
+							emit_mov(k, it->second);
+						}
+						else
 						{
 							emit_to_reg(expr->call.args[k], k);
 						}
-						i.u.call.w = 0;
-						i.u.call.nargs = nargs;
-						emit(i);
-						return 0;
 					}
-					break;
+					i.u.call.w = 0;
+					i.u.call.nargs = nargs;
+					emit(i);
+					return 0;
 				}
 				case Opcode::cs_0:
 					i.op = tail ? Opcode::cst_0 : Opcode::cs_0;
