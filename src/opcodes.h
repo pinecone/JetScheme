@@ -51,10 +51,10 @@
 	X(if_eqk,              "ifeqk")                                                                          \
 	X(if_ltk,              "ifltk")                                                                          \
 	X(retv,                "ret")                                                                            \
-	X(callw,               "call")                                                                           \
+	X(call,               "call")                                                                           \
 	X(tcall,               "tcall")                                                                          \
-	X(recurw,              "recur")                                                                          \
-	X(applyw,              "apply")                                                                          \
+	X(recur,              "recur")                                                                          \
+	X(apply,              "apply")                                                                          \
 	JET_REPLICATE(X, cs,  "cs")                                                                              \
 	JET_REPLICATE(X, cst, "cst")                                                                             \
 	JET_REPLICATE(X, cdl,  "cdl")                                                                            \
@@ -157,18 +157,18 @@ struct OP_retv
 {
 	uint16_t src;
 };
-struct OP_callw
+struct OP_call
 {
 	uint16_t w;
 	uint16_t callee;
 	uint16_t nargs;
 };
-struct OP_recurw
+struct OP_recur
 {
 	uint16_t w;
 	uint16_t nargs;
 };
-struct OP_applyw
+struct OP_apply
 {
 	uint16_t w;
 };
@@ -289,13 +289,13 @@ inline size_t opcode_step(uint8_t op, const uint8_t* operands)
 			return OPCODE_SIZE + sizeof(OP_if_cmp);
 		case Opcode::retv:
 			return OPCODE_SIZE + sizeof(OP_retv);
-		case Opcode::callw:
+		case Opcode::call:
 		case Opcode::tcall:
-			return OPCODE_SIZE + sizeof(OP_callw);
-		case Opcode::recurw:
-			return OPCODE_SIZE + sizeof(OP_recurw);
-		case Opcode::applyw:
-			return OPCODE_SIZE + sizeof(OP_applyw);
+			return OPCODE_SIZE + sizeof(OP_call);
+		case Opcode::recur:
+			return OPCODE_SIZE + sizeof(OP_recur);
+		case Opcode::apply:
+			return OPCODE_SIZE + sizeof(OP_apply);
 #define X(name, disp) case Opcode::name:
 			JET_REPLICATE(X, cs, "cs")
 			JET_REPLICATE(X, cst, "cst")

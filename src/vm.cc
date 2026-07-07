@@ -338,7 +338,7 @@ LoadedProgram load_program(Code* bytecode, size_t bytecode_size, Env& primitives
 }
 
 constexpr size_t STACK_CAPACITY = 1 << 20;
-// applyw's list splat writes above the frame before its overflow check runs;
+// apply's list splat writes above the frame before its overflow check runs;
 // the slack below the true end absorbs the overshoot.
 constexpr size_t STACK_SLACK = 4096;
 
@@ -1266,10 +1266,10 @@ JET_PRESERVE_NONE static void op_retv(VM_OP_PARAMS)
 	} while (0)
 
 template <bool is_tail>
-JET_PRESERVE_NONE static void op_callw_impl(VM_OP_PARAMS)
+JET_PRESERVE_NONE static void op_call_impl(VM_OP_PARAMS)
 {
 	JET_GC_CHECK();
-	OP_callw* op = reinterpret_cast<OP_callw*>(pc);
+	OP_call* op = reinterpret_cast<OP_call*>(pc);
 	pc += sizeof(*op);
 	callee = stack_base[frame_base + op->callee];
 	JET_CALL_WINDOW(op->w, op->nargs);
@@ -1283,12 +1283,12 @@ JET_PRESERVE_NONE static void op_callw_impl(VM_OP_PARAMS)
 	}
 }
 
-static constexpr auto& op_callw = op_callw_impl<false>;
-static constexpr auto& op_tcall = op_callw_impl<true>;
+static constexpr auto& op_call = op_call_impl<false>;
+static constexpr auto& op_tcall = op_call_impl<true>;
 
-JET_NOINLINE JET_PRESERVE_NONE static void slow_recurw(VM_OP_PARAMS)
+JET_NOINLINE JET_PRESERVE_NONE static void slow_recur(VM_OP_PARAMS)
 {
-	OP_recurw* op = reinterpret_cast<OP_recurw*>(pc);
+	OP_recur* op = reinterpret_cast<OP_recur*>(pc);
 	Lambda& la = *frame->closure;
 	Atom* dst = stack_base + frame_base;
 	Atom* src = stack_base + frame_base + op->w;
@@ -1306,22 +1306,22 @@ JET_NOINLINE JET_PRESERVE_NONE static void slow_recurw(VM_OP_PARAMS)
 	DISPATCH();
 }
 
-JET_PRESERVE_NONE static void op_recurw(VM_OP_PARAMS)
+JET_PRESERVE_NONE static void op_recur(VM_OP_PARAMS)
 {
 	JET_GC_CHECK();
-	OP_recurw* op = reinterpret_cast<OP_recurw*>(pc);
+	OP_recur* op = reinterpret_cast<OP_recur*>(pc);
 	if (op->w != 0)
 	{
-		JET_MUSTTAIL return slow_recurw(VM_OP_ARGS);
+		JET_MUSTTAIL return slow_recur(VM_OP_ARGS);
 	}
 	pc = frame->closure->code;
 	DISPATCH();
 }
 
-JET_PRESERVE_NONE static void op_applyw(VM_OP_PARAMS)
+JET_PRESERVE_NONE static void op_apply(VM_OP_PARAMS)
 {
 	JET_GC_CHECK();
-	OP_applyw* op = reinterpret_cast<OP_applyw*>(pc);
+	OP_apply* op = reinterpret_cast<OP_apply*>(pc);
 	pc += sizeof(*op);
 	callee = stack_base[frame_base + op->w];
 	Atom args_list = stack_base[frame_base + op->w + 1];
@@ -1395,7 +1395,7 @@ static constexpr Opcode cd_base_opcode()
 	}
 	else
 	{
-		static_assert(!is_tail, "self tail calls lower to recurw");
+		static_assert(!is_tail, "self tail calls lower to recur");
 		return Opcode::cds_0;
 	}
 }

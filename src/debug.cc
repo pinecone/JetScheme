@@ -330,21 +330,21 @@ void decode_args(FILE* out, uint8_t op, Code* p)
 		case Opcode::retv:
 			std::fprintf(out, " src=%u", reinterpret_cast<OP_retv*>(p)->src);
 			break;
-		case Opcode::callw:
+		case Opcode::call:
 		case Opcode::tcall:
 		{
-			OP_callw* o = reinterpret_cast<OP_callw*>(p);
+			OP_call* o = reinterpret_cast<OP_call*>(p);
 			std::fprintf(out, " w=%u callee=%u nargs=%u", o->w, o->callee, o->nargs);
 			break;
 		}
-		case Opcode::recurw:
+		case Opcode::recur:
 		{
-			OP_recurw* o = reinterpret_cast<OP_recurw*>(p);
+			OP_recur* o = reinterpret_cast<OP_recur*>(p);
 			std::fprintf(out, " w=%u nargs=%u", o->w, o->nargs);
 			break;
 		}
-		case Opcode::applyw:
-			std::fprintf(out, " w=%u", reinterpret_cast<OP_applyw*>(p)->w);
+		case Opcode::apply:
+			std::fprintf(out, " w=%u", reinterpret_cast<OP_apply*>(p)->w);
 			break;
 		case Opcode::ldf:
 		{

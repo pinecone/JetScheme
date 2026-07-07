@@ -3083,7 +3083,7 @@ void Compiler::select_call_op(Expr* expr, Expr* current)
 {
 	Expr* proc = expr->call.proc;
 	OpSelection& sel = selected_ops_[expr->id].emplace();
-	sel.op = Opcode::callw;
+	sel.op = Opcode::call;
 
 	if (!flags_.specialize_ops)
 	{
@@ -3093,7 +3093,7 @@ void Compiler::select_call_op(Expr* expr, Expr* current)
 	// Self-tail-call: recur.
 	if (is_self_tail_call(expr, current))
 	{
-		sel.op = Opcode::recurw;
+		sel.op = Opcode::recur;
 		return;
 	}
 
@@ -4113,8 +4113,8 @@ namespace
 			struct { uint16_t src; } ret;                            // retv
 			struct { uint32_t id; uint16_t src; } label;             // label; if_false/skip target
 			struct { uint32_t id; uint16_t a; uint16_t b; } if_cmp;  // if_eq..if_ltk; rk holds the pool idx in b
-			// One payload for every call op: callw/tcall read callee, cs/cst
-			// read upvalue_idx, cdl/cdu read idx, cds/recurw/applyw only w+nargs.
+			// One payload for every call op: call/tcall read callee, cs/cst
+			// read upvalue_idx, cdl/cdu read idx, cds/recur/apply only w+nargs.
 			struct { uint16_t w; uint16_t nargs; uint16_t callee; uint16_t upvalue_idx; uint16_t idx; } call;
 			struct { uint16_t dst; uint16_t pool_idx; uint16_t first_capture; uint16_t n_captures; } closure;
 			struct { uint16_t dst; uint16_t a; uint16_t b; } arith;  // rr; rk holds the pool idx in b
@@ -4618,7 +4618,7 @@ namespace
 						fused_tests[expr->let.body[0]->id] = val;
 						continue;
 					}
-					if (is_call_shaped(sel.op) && sel.op != Opcode::recurw)
+					if (is_call_shaped(sel.op) && sel.op != Opcode::recur)
 					{
 						current_lambda().reg_alias[home] = emit_call(val, sel);
 						continue;
@@ -4694,7 +4694,7 @@ namespace
 			LirInst i = inst(sel.op);
 			switch (sel.op)
 			{
-				case Opcode::recurw:
+				case Opcode::recur:
 				{
 					std::vector<uint16_t> src_reg(nargs, UINT16_MAX);
 					for (uint16_t k = 0; k < nargs; ++k)
@@ -4758,11 +4758,11 @@ namespace
 					i.u.call.idx = sel.u.call_ic_direct.idx;
 					break;
 				case Opcode::cds_0:
-					JET_DIE_WHEN(tail, "%d:%d: codegen: self direct call in tail position escaped recurw",
+					JET_DIE_WHEN(tail, "%d:%d: codegen: self direct call in tail position escaped recur",
 								  expr->loc.line, expr->loc.col);
 					break;
-				case Opcode::callw:
-					i.op = tail ? Opcode::tcall : Opcode::callw;
+				case Opcode::call:
+					i.op = tail ? Opcode::tcall : Opcode::call;
 					i.u.call.callee = emit_to_any_reg(expr->call.proc);
 					break;
 				default:
@@ -4783,7 +4783,7 @@ namespace
 			uint16_t w = alloc_window(2);
 			emit_to_reg(expr->apply.proc, w);
 			emit_to_reg(expr->apply.args, static_cast<uint16_t>(w + 1));
-			LirInst i = inst(Opcode::applyw);
+			LirInst i = inst(Opcode::apply);
 			i.u.call.w = w;
 			emit(i);
 			return w;
@@ -4802,12 +4802,12 @@ namespace
 		{
 			switch (op)
 			{
-				case Opcode::callw:
+				case Opcode::call:
 				case Opcode::cs_0:
 				case Opcode::cdl_0:
 				case Opcode::cdu_0:
 				case Opcode::cds_0:
-				case Opcode::recurw:
+				case Opcode::recur:
 					return true;
 				default:
 					return false;
@@ -5289,11 +5289,11 @@ namespace
 					break;
 				}
 
-				case Opcode::callw:
+				case Opcode::call:
 				case Opcode::tcall:
 				{
 					emit_opcode(bc, i.op);
-					OP_callw op{};
+					OP_call op{};
 					op.w = i.u.call.w;
 					op.callee = i.u.call.callee;
 					op.nargs = i.u.call.nargs;
@@ -5301,20 +5301,20 @@ namespace
 					break;
 				}
 
-				case Opcode::recurw:
+				case Opcode::recur:
 				{
-					emit_opcode(bc, Opcode::recurw);
-					OP_recurw op{};
+					emit_opcode(bc, Opcode::recur);
+					OP_recur op{};
 					op.w = i.u.call.w;
 					op.nargs = i.u.call.nargs;
 					emit_operand(bc, op);
 					break;
 				}
 
-				case Opcode::applyw:
+				case Opcode::apply:
 				{
-					emit_opcode(bc, Opcode::applyw);
-					OP_applyw op{};
+					emit_opcode(bc, Opcode::apply);
+					OP_apply op{};
 					op.w = i.u.call.w;
 					emit_operand(bc, op);
 					break;
