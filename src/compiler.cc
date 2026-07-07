@@ -4624,6 +4624,15 @@ namespace
 						continue;
 					}
 				}
+				if (val->kind == ExprKind::VarRef)
+				{
+					Compiler::OpSelection sel = selection(val, "var access");
+					if (sel.op == Opcode::mov)
+					{
+						current_lambda().reg_alias[home] = sel.u.var.addr;
+						continue;
+					}
+				}
 				if (is_anf_temp(expr->let.names[i]))
 				{
 					if (!db.binding_used(expr->let.owner, sb + i))
