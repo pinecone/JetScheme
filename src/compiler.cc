@@ -4695,7 +4695,34 @@ namespace
 			switch (sel.op)
 			{
 				case Opcode::recurw:
+				{
+					bool clobber = false;
+					for (uint16_t k = 0; k < nargs; ++k)
+					{
+						Expr* arg = expr->call.args[k];
+						if (arg->kind == ExprKind::VarRef)
+						{
+							Compiler::OpSelection arg_sel = selection(arg, "recur arg");
+							if (arg_sel.op == Opcode::mov && arg_sel.u.var.addr < nargs && arg_sel.u.var.addr != k)
+							{
+								clobber = true;
+								break;
+							}
+						}
+					}
+					if (!clobber)
+					{
+						for (uint16_t k = 0; k < nargs; ++k)
+						{
+							emit_to_reg(expr->call.args[k], k);
+						}
+						i.u.call.w = 0;
+						i.u.call.nargs = nargs;
+						emit(i);
+						return 0;
+					}
 					break;
+				}
 				case Opcode::cs_0:
 					i.op = tail ? Opcode::cst_0 : Opcode::cs_0;
 					i.u.call.upvalue_idx = sel.u.call_ic_slot.upvalue_idx;
