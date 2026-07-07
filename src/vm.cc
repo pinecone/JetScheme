@@ -1292,7 +1292,16 @@ JET_NOINLINE JET_PRESERVE_NONE static void slow_recurw(VM_OP_PARAMS)
 	Lambda& la = *frame->closure;
 	Atom* dst = stack_base + frame_base;
 	Atom* src = stack_base + frame_base + op->w;
-	std::memmove(dst, src, op->nargs * sizeof(Atom));
+	size_t nargs = op->nargs;
+	switch (nargs)
+	{
+		case 0: break;
+		case 1: __builtin_memmove(dst, src, 1 * sizeof(Atom)); break;
+		case 2: __builtin_memmove(dst, src, 2 * sizeof(Atom)); break;
+		case 3: __builtin_memmove(dst, src, 3 * sizeof(Atom)); break;
+		case 4: __builtin_memmove(dst, src, 4 * sizeof(Atom)); break;
+		default: std::memmove(dst, src, nargs * sizeof(Atom)); break;
+	}
 	pc = la.code;
 	DISPATCH();
 }
@@ -1301,23 +1310,11 @@ JET_PRESERVE_NONE static void op_recurw(VM_OP_PARAMS)
 {
 	JET_GC_CHECK();
 	OP_recurw* op = reinterpret_cast<OP_recurw*>(pc);
-	Lambda& la = *frame->closure;
 	if (op->w != 0)
 	{
-		Atom* dst = stack_base + frame_base;
-		Atom* src = stack_base + frame_base + op->w;
-		size_t nargs = op->nargs;
-		switch (nargs)
-		{
-			case 0: break;
-			case 1: __builtin_memmove(dst, src, 1 * sizeof(Atom)); break;
-			case 2: __builtin_memmove(dst, src, 2 * sizeof(Atom)); break;
-			case 3: __builtin_memmove(dst, src, 3 * sizeof(Atom)); break;
-			case 4: __builtin_memmove(dst, src, 4 * sizeof(Atom)); break;
-			default: JET_MUSTTAIL return slow_recurw(VM_OP_ARGS);
-		}
+		JET_MUSTTAIL return slow_recurw(VM_OP_ARGS);
 	}
-	pc = la.code;
+	pc = frame->closure->code;
 	DISPATCH();
 }
 
