@@ -30,21 +30,6 @@ namespace
 	} gc_init;
 } // namespace
 
-static void link_opcode_handlers(Code* begin, Code* end)
-{
-	// The op tag at p[VM_OP_SLOT_SIZE] is left in place so trace/profile can
-	// recover it.
-	Code* p = begin;
-	while (p < end)
-	{
-		uint8_t op = p[VM_OP_SLOT_SIZE];
-		size_t step = opcode_step(op, p + OPCODE_SIZE);
-		VmOp h = dispatch_table[op];
-		std::memcpy(p, &h, sizeof(h));
-		p += step;
-	}
-}
-
 static inline void set_bit(uint64_t* bits, size_t i)
 {
 	bits[i / 64] |= 1ULL << (i % 64);
@@ -232,6 +217,65 @@ void Gc::sweep()
 
 	alloc_since_gc = 0;
 	gc_threshold = objects.size() < 256 ? 256 : static_cast<uint32_t>(objects.size());
+}
+
+void collect(VmState& s)
+{
+	JET_PROFILE_GC;
+	JET_PROFILE_GC_TIMER;
+	Gc& gc = *g_gc;
+	gc.begin_mark();
+
+	// Scan every frame-claimed slot, not just up to stack_top: enclosing frames
+	// reach above the innermost extent, and marking their stale slots keeps the
+	// referents alive so no slot below the frontier ever dangles.
+	Atom* scan_frontier = s.stack_top;
+	for (Frame& frame : s.frames)
+	{
+		if (s.stack_base + frame.top > scan_frontier)
+		{
+			scan_frontier = s.stack_base + frame.top;
+		}
+	}
+
+	for (Atom* p = s.stack_base; p < scan_frontier; ++p)
+	{
+		gc.mark_atom(p->bits);
+	}
+
+	for (Frame& frame : s.frames)
+	{
+		if (frame.closure)
+		{
+			Atom proc_atom = Atom::make_tagged(jet_tag::procedure, frame.closure);
+			gc.mark_atom(proc_atom.bits);
+		}
+	}
+
+	for (size_t i = 0; i < s.n_constants; ++i)
+	{
+		gc.mark_atom(s.constants[i].bits);
+	}
+
+	gc.sweep();
+
+	std::memset(scan_frontier, 0, static_cast<size_t>(s.stack_watermark - scan_frontier) * sizeof(Atom));
+	s.stack_watermark = scan_frontier;
+}
+
+static void link_opcode_handlers(Code* begin, Code* end)
+{
+	// The op tag at p[VM_OP_SLOT_SIZE] is left in place so trace/profile can
+	// recover it.
+	Code* p = begin;
+	while (p < end)
+	{
+		uint8_t op = p[VM_OP_SLOT_SIZE];
+		size_t step = opcode_step(op, p + OPCODE_SIZE);
+		VmOp h = dispatch_table[op];
+		std::memcpy(p, &h, sizeof(h));
+		p += step;
+	}
 }
 
 static Code* decode_constant(Code* p, Atom& out, Env& env)
@@ -521,11 +565,6 @@ JET_PRESERVE_NONE static void slow_call(VM_OP_PARAMS)
 
 static constexpr auto& slow_call_tail = slow_call<true>;
 static constexpr auto& slow_call_notail = slow_call<false>;
-
-JET_PRESERVE_NONE static void op_halt(VM_OP_PARAMS)
-{
-	s.stack_top = stack_top;
-}
 
 JET_NOINLINE JET_PRESERVE_NONE static void gc_then_dispatch(VM_OP_PARAMS)
 {
@@ -1256,6 +1295,29 @@ JET_PRESERVE_NONE static void op_retv(VM_OP_PARAMS)
 	DISPATCH();
 }
 
+JET_PRESERVE_NONE static void op_halt(VM_OP_PARAMS)
+{
+	s.stack_top = stack_top;
+}
+
+JET_PRESERVE_NONE static void op_skip(VM_OP_PARAMS)
+{
+	OP_skip* op = reinterpret_cast<OP_skip*>(pc);
+	pc += sizeof(*op);
+	pc += op->size;
+	DISPATCH();
+}
+
+JET_PRESERVE_NONE static void op_unknown(VM_OP_PARAMS)
+{
+	JET_DIE("unknown opcode 0x%02x. it could be anything", pc[-1]);
+}
+
+JET_PRESERVE_NONE static void op_label(VM_OP_PARAMS)
+{
+	JET_DIE("label pseudo-op reached the VM; LIR emit failed to strip it");
+}
+
 #define JET_CALL_WINDOW(w_, nargs_)                                                                          \
 	do                                                                                                       \
 	{                                                                                                        \
@@ -1521,68 +1583,6 @@ static constexpr auto& op_cds_5 = op_cd_impl<5, false, CdKind::Self>;
 static constexpr auto& op_cds_6 = op_cd_impl<6, false, CdKind::Self>;
 static constexpr auto& op_cds_7 = op_cd_impl<7, false, CdKind::Self>;
 
-JET_PRESERVE_NONE static void op_skip(VM_OP_PARAMS)
-{
-	OP_skip* op = reinterpret_cast<OP_skip*>(pc);
-	pc += sizeof(*op);
-	pc += op->size;
-	DISPATCH();
-}
-
-JET_PRESERVE_NONE static void op_unknown(VM_OP_PARAMS)
-{
-	JET_DIE("unknown opcode 0x%02x. it could be anything", pc[-1]);
-}
-
-JET_PRESERVE_NONE static void op_label(VM_OP_PARAMS)
-{
-	JET_DIE("label pseudo-op reached the VM; LIR emit failed to strip it");
-}
-
-void collect(VmState& s)
-{
-	JET_PROFILE_GC;
-	JET_PROFILE_GC_TIMER;
-	Gc& gc = *g_gc;
-	gc.begin_mark();
-
-	// Scan every frame-claimed slot, not just up to stack_top: enclosing frames
-	// reach above the innermost extent, and marking their stale slots keeps the
-	// referents alive so no slot below the frontier ever dangles.
-	Atom* scan_frontier = s.stack_top;
-	for (Frame& frame : s.frames)
-	{
-		if (s.stack_base + frame.top > scan_frontier)
-		{
-			scan_frontier = s.stack_base + frame.top;
-		}
-	}
-
-	for (Atom* p = s.stack_base; p < scan_frontier; ++p)
-	{
-		gc.mark_atom(p->bits);
-	}
-
-	for (Frame& frame : s.frames)
-	{
-		if (frame.closure)
-		{
-			Atom proc_atom = Atom::make_tagged(jet_tag::procedure, frame.closure);
-			gc.mark_atom(proc_atom.bits);
-		}
-	}
-
-	for (size_t i = 0; i < s.n_constants; ++i)
-	{
-		gc.mark_atom(s.constants[i].bits);
-	}
-
-	gc.sweep();
-
-	std::memset(scan_frontier, 0, static_cast<size_t>(s.stack_watermark - scan_frontier) * sizeof(Atom));
-	s.stack_watermark = scan_frontier;
-}
-
 void eval(Frame& init_frame, Atom* constants, size_t n_constants, size_t initial_stack_size)
 {
 	std::unique_ptr<Atom[]> stack_buffer{new Atom[STACK_CAPACITY]};
@@ -1639,3 +1639,4 @@ namespace
 		}
 	} dispatch_init;
 } // namespace
+
