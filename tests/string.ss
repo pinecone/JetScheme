@@ -3,7 +3,14 @@
 ;; append
 (define x "h")
 (define y "amburger")
-($check (eqv? "hamburger hamburger" (string-append x y " " x y)))
+($check (equal? "hamburger hamburger" (string-append x y " " x y)))
+
+;; eqv?/eq? on strings are pointer identity, not value.
+($check (not (eqv? (string-append "a" "b") "ab")))
+($check (not (eq? (string-append "a" "b") "ab")))
+(define same-str "hello")
+($check (eqv? same-str same-str))
+($check (eq? same-str same-str))
 ($check (string=? "" (string-append)))
 
 ;; predicates

@@ -356,7 +356,7 @@ bool is_eqv(Atom obj1, Atom obj2)
 		case jet::Type::Pair:
 			return compare_objects<Cons>(obj1, obj2);
 		case jet::Type::Vector:
-			return compare_objects<Vec>(obj1, obj2);
+			return obj1.as_ptr() == obj2.as_ptr();
 		case jet::Type::Primitive:
 			return compare_objects<Prim>(obj1, obj2);
 		case jet::Type::Character:
@@ -365,7 +365,7 @@ bool is_eqv(Atom obj1, Atom obj2)
 		case jet::Type::Eof:
 			return true;
 		case jet::Type::String:
-			return compare_objects<String>(obj1, obj2);
+			return obj1.as_ptr() == obj2.as_ptr();
 		case jet::Type::Struct:
 			return compare_objects<Struct>(obj1, obj2);
 		case jet::Type::StructType:
@@ -387,30 +387,35 @@ static bool equal(Atom obj1, Atom obj2)
 		return false;
 	}
 
-	if (obj1.type() == jet::Type::Pair)
+	switch (obj1.type())
 	{
-		return equal(car(obj1), car(obj2)) && equal(cdr(obj1), cdr(obj2));
-	}
+		case jet::Type::Pair:
+			return equal(car(obj1), car(obj2)) && equal(cdr(obj1), cdr(obj2));
 
-	if (obj1.type() == jet::Type::Vector)
-	{
-		Vec& v1 = *unbox<Vec>(obj1);
-		Vec& v2 = *unbox<Vec>(obj2);
-		if (v1.size() != v2.size())
+		case jet::Type::Vector:
 		{
-			return false;
-		}
-		for (size_t i = 0; i < v1.size(); ++i)
-		{
-			if (!equal(v1[i], v2[i]))
+			Vec& v1 = *unbox<Vec>(obj1);
+			Vec& v2 = *unbox<Vec>(obj2);
+			if (v1.size() != v2.size())
 			{
 				return false;
 			}
+			for (auto it1 = v1.begin(), it2 = v2.begin(); it1 != v1.end(); ++it1, ++it2)
+			{
+				if (!equal(*it1, *it2))
+				{
+					return false;
+				}
+			}
+			return true;
 		}
-		return true;
-	}
 
-	return is_eqv(obj1, obj2);
+		case jet::Type::String:
+			return *unbox<String>(obj1) == *unbox<String>(obj2);
+
+		default:
+			return is_eqv(obj1, obj2);
+	}
 }
 
 static Atom eqv_prim(Atom* first, Atom*)
