@@ -187,8 +187,13 @@
 
 ;;; ports
 (define open-input-file (%prim "open-input-file"))
+(define open-output-file (%prim "open-output-file"))
 (define close-input-port (%prim "close-input-port"))
+(define close-output-port (%prim "close-output-port"))
 (define read-char (%prim "read-char"))
+(define write-char (%prim "write-char"))
+(define input-port? (%prim "input-port?"))
+(define output-port? (%prim "output-port?"))
 (define eof-object? (%prim "eof-object?"))
 
 ;;; vectors

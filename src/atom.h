@@ -30,8 +30,7 @@
 	X(Symbol,     symbol,      Symbol)     \
 	X(String,     string,      String)     \
 	X(Vector,     vector,      Vec)        \
-	X(IPort,      iport,       IPortFile)  \
-	X(OPort,      oport,       OPortFile)  \
+	X(Port,       port,       Port)        \
 	X(Slot,       slot,        Slot)       \
 	X(StructType, struct_type, StructType) \
 	X(Struct,     struct_,     Struct)
@@ -48,8 +47,7 @@
 	X(Symbol,    "symbol")                \
 	X(String,    "string")                \
 	X(Vector,    "vector")                \
-	X(IPort,     "input port")            \
-	X(OPort,     "output port")           \
+	X(Port,     "port")                  \
 	X(Slot,      "slot")                  \
 	X(StructType,"struct type")           \
 	X(Struct,    "struct")                \
@@ -206,6 +204,7 @@ struct Prim;
 class Symbol;
 class IPort;
 class OPort;
+class Port;
 class IPortFile;
 class OPortFile;
 struct Slot;
@@ -229,17 +228,25 @@ JET_HEAP_TYPES(X)
 #undef X
 // clang-format on
 
-// IPortFile/OPortFile are the concrete heap types in JET_HEAP_TYPES; the
-// abstract bases are what unbox<>() callers reference.
 template <>
 struct dynamic_type<IPort>
 {
-	static constexpr jet::Type id = jet::Type::IPort;
+	static constexpr jet::Type id = jet::Type::Port;
 };
 template <>
 struct dynamic_type<OPort>
 {
-	static constexpr jet::Type id = jet::Type::OPort;
+	static constexpr jet::Type id = jet::Type::Port;
+};
+template <>
+struct dynamic_type<IPortFile>
+{
+	static constexpr jet::Type id = jet::Type::Port;
+};
+template <>
+struct dynamic_type<OPortFile>
+{
+	static constexpr jet::Type id = jet::Type::Port;
 };
 
 template <typename T>

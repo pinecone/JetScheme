@@ -360,13 +360,23 @@ inline bool is_true(Atom a)
 class Port
 {
   public:
+	enum class Mode : uint8_t { Input, Output };
+
+	Port(Mode m) : mode_{m} {}
 	virtual void close() = 0;
 	virtual ~Port() = default;
+
+	bool is_input() const { return mode_ == Mode::Input; }
+	bool is_output() const { return mode_ == Mode::Output; }
+
+  private:
+	Mode mode_;
 };
 
 class IPort : public Port
 {
   public:
+	IPort() : Port{Mode::Input} {}
 	virtual char read_byte() = 0;
 	virtual char peek_byte() = 0;
 	virtual size_t read_bytes(char* p, size_t n) = 0;
@@ -376,6 +386,7 @@ class IPort : public Port
 class OPort : public Port
 {
   public:
+	OPort() : Port{Mode::Output} {}
 	virtual void write_byte(char c) = 0;
 };
 

@@ -370,8 +370,7 @@ bool is_eqv(Atom obj1, Atom obj2)
 			return compare_objects<Struct>(obj1, obj2);
 		case jet::Type::StructType:
 			return compare_objects<StructType>(obj1, obj2);
-		case jet::Type::IPort:
-		case jet::Type::OPort:
+		case jet::Type::Port:
 		case jet::Type::Slot:
 			return obj1.as_ptr() == obj2.as_ptr();
 		case jet::Type::Unknown:
@@ -1047,34 +1046,58 @@ void init_sys(Env& e)
 
 static Atom close_input_port(Atom p)
 {
-	slow_unbox<IPort>(p)->close();
+	Port* port = slow_unbox<Port>(p);
+	JET_DIE_UNLESS(port->is_input(), "close-input-port: not an input port");
+	port->close();
 	return Atom();
 }
 
 static Atom close_output_port(Atom p)
 {
-	slow_unbox<OPort>(p)->close();
+	Port* port = slow_unbox<Port>(p);
+	JET_DIE_UNLESS(port->is_output(), "close-output-port: not an output port");
+	port->close();
 	return Atom();
 }
 
 Atom read_char(Atom p)
 {
-	IPort* ip = slow_unbox<IPort>(p);
+	IPort* ip = static_cast<IPort*>(slow_unbox<Port>(p));
+	JET_DIE_UNLESS(ip->is_input(), "read-char: not an input port");
 	Character c = ip->read_byte();
 	return ip->eof() ? make_eof() : box(c);
 }
 
 static Atom write_char(Atom c, Atom p)
 {
-	OPort* op = slow_unbox<OPort>(p);
+	OPort* op = static_cast<OPort*>(slow_unbox<Port>(p));
+	JET_DIE_UNLESS(op->is_output(), "write-char: not an output port");
 	op->write_byte(slow_unbox<Character>(c));
 	return Atom();
 }
 
+static Atom is_input_port(Atom p)
+{
+	if (!is_type<jet::Type::Port>(p))
+	{
+		return box(false);
+	}
+	return box(slow_unbox<Port>(p)->is_input());
+}
+
+static Atom is_output_port(Atom p)
+{
+	if (!is_type<jet::Type::Port>(p))
+	{
+		return box(false);
+	}
+	return box(slow_unbox<Port>(p)->is_output());
+}
+
 void init_port(Env& e)
 {
-	e.bind("input-port?", make_prim<is_type<jet::Type::IPort>>());
-	e.bind("output-port?", make_prim<is_type<jet::Type::OPort>>());
+	e.bind("input-port?", make_prim<is_input_port>());
+	e.bind("output-port?", make_prim<is_output_port>());
 
 	e.bind("close-input-port", make_prim<close_input_port>());
 	e.bind("close-output-port", make_prim<close_output_port>());

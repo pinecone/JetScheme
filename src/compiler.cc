@@ -5518,7 +5518,9 @@ namespace
 
 	Atom read_port(Atom p)
 	{
-		IPort* port = slow_unbox<IPort>(p);
+		Port* base = slow_unbox<Port>(p);
+		JET_DIE_UNLESS(base->is_input(), "read: not an input port");
+		IPort* port = static_cast<IPort*>(base);
 		Arena arena;
 		LexState lex{port, arena, 0};
 		lex.read_mode = true;
