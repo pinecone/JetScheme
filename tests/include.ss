@@ -1,6 +1,6 @@
 ;; Test include form
 
-(include "inc_helper.ss")
+(include "inc-helper.ss")
 
 ;; Definitions from included file are visible
 ($check (= 42 inc-value))

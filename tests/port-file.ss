@@ -1,5 +1,5 @@
 ;; File I/O
-(define x (open-input-file "port_file.ss"))
+(define x (open-input-file "port-file.ss"))
 ;; First char of this file is ';'
 ($check (eqv? #\; (read-char x)))
 ($check (input-port? x))
