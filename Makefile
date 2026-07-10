@@ -13,8 +13,6 @@
 #		make bench-debug				cross-language benches against debug
 #		make bench-profile			cross-language benches against profile (prints opcode histogram)
 #
-#		make cross-bench				alias for bench
-#
 #		make clean							wipe build/
 #
 # Object files live under build/<variant>/ so all three variants coexist.
@@ -70,7 +68,6 @@ DEPS := $(ALL_OBJ:.o=.d)
 .PHONY: all release debug profile all-variants \
 				test test-debug test-profile \
 				bench bench-debug bench-profile \
-				cross-bench cross-bench-debug cross-bench-profile \
 				ab-cross-bench clean
 .DEFAULT_GOAL := all
 
@@ -108,15 +105,6 @@ bench-debug: debug
 	cd bench && JET=../build/jet-debug ./run-cross-bench
 
 bench-profile: profile
-	cd bench && JET=../build/jet-profile ./run-cross-bench
-
-cross-bench: release
-	cd bench && JET=../build/jet ./run-cross-bench
-
-cross-bench-debug: debug
-	cd bench && JET=../build/jet-debug ./run-cross-bench
-
-cross-bench-profile: profile
 	cd bench && JET=../build/jet-profile ./run-cross-bench
 
 # Builds its own worktree of REF (default HEAD), so no build dependency.
