@@ -606,6 +606,10 @@ static Atom container_load(T& c, size_t i)
 	{
 		return box(static_cast<Character>(static_cast<uint8_t>(c[i])));
 	}
+	else if constexpr (std::is_same_v<T, ByteVector>)
+	{
+		return box(Number(c[i]));
+	}
 	else
 	{
 		return c[i];
@@ -685,7 +689,7 @@ JET_PRESERVE_NONE static void fast_stf(VM_OP_PARAMS)
 	Atom value = stack_base[frame_base + op->val];
 	T& c = *unbox<T>(callee);
 
-	auto write = [&](size_t idx) -> bool {
+	auto&& write = [&](size_t idx) -> bool {
 		if constexpr (std::is_same_v<T, String>)
 		{
 			if (!is_type<jet::Type::Character>(value)) [[unlikely]]
@@ -693,6 +697,14 @@ JET_PRESERVE_NONE static void fast_stf(VM_OP_PARAMS)
 				return false;
 			}
 			c[idx] = static_cast<char>(unbox<Character>(value));
+		}
+		else if constexpr (std::is_same_v<T, ByteVector>)
+		{
+			if (!is_byte(value)) [[unlikely]]
+			{
+				return false;
+			}
+			c[idx] = static_cast<uint8_t>(unbox<Number>(value));
 		}
 		else
 		{
@@ -842,7 +854,7 @@ JET_PRESERVE_NONE static void fast_stfk(VM_OP_PARAMS)
 	T& c = *unbox<T>(callee);
 	size_t idx = ic->ic_extra1;
 
-	auto write = [&](size_t i) -> bool {
+	auto&& write = [&](size_t i) -> bool {
 		if constexpr (std::is_same_v<T, String>)
 		{
 			if (!is_type<jet::Type::Character>(value)) [[unlikely]]
@@ -850,6 +862,14 @@ JET_PRESERVE_NONE static void fast_stfk(VM_OP_PARAMS)
 				return false;
 			}
 			c[i] = static_cast<char>(unbox<Character>(value));
+		}
+		else if constexpr (std::is_same_v<T, ByteVector>)
+		{
+			if (!is_byte(value)) [[unlikely]]
+			{
+				return false;
+			}
+			c[i] = static_cast<uint8_t>(unbox<Number>(value));
 		}
 		else
 		{
@@ -951,7 +971,7 @@ JET_PRESERVE_NONE static void fast_stfk_struct(VM_OP_PARAMS)
 	DISPATCH();
 }
 
-ObjShape g_shape_by_tag[16] = {};
+ObjShape g_shape_by_tag[jet_tag::HEAP_END] = {};
 
 namespace
 {
@@ -969,6 +989,11 @@ namespace
 												fast_ldfk<String>,
 												fast_stfk<String>,
 												string_ref};
+			g_shape_by_tag[jet_tag::bytevector] = {fast_ldf<ByteVector>,
+												   fast_stf<ByteVector>,
+												   fast_ldfk<ByteVector>,
+												   fast_stfk<ByteVector>,
+												   bytevector_u8_ref};
 			g_shape_by_tag[jet_tag::struct_] = {fast_ldf_struct,
 												 fast_stf_struct,
 												 fast_ldfk_struct,

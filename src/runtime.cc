@@ -336,6 +336,133 @@ void init_vecs(Env& e)
 	e.bind("vector", make_prim<vector_ctor>(n_ary()));
 }
 
+static void die_unless_byte(Atom b)
+{
+	JET_DIE_UNLESS(is_byte(b), "bytevector: byte must be exact integer in [0,255], given %g", unbox<Number>(b));
+}
+
+Atom bytevector_u8_ref(Atom bv, Atom k)
+{
+	JET_DIE_UNLESS(is_positive_integer(k), "bytevector-u8-ref expects positive integer, given %g",
+					unbox<Number>(k));
+	size_t index = unbox<Number>(k);
+	ByteVector& mbv = *slow_unbox<ByteVector>(bv);
+	JET_DIE_UNLESS(index < mbv.size(), "bytevector-u8-ref index %zu out of bounds", index);
+	return box(Number(mbv[index]));
+}
+
+static Atom bytevector_u8_set(Atom bv, Atom k, Atom b)
+{
+	JET_DIE_UNLESS(is_positive_integer(k), "bytevector-u8-set! expects positive integer, given %g",
+					unbox<Number>(k));
+	size_t index = unbox<Number>(k);
+	ByteVector& mbv = *slow_unbox<ByteVector>(bv);
+	JET_DIE_UNLESS(index < mbv.size(), "bytevector-u8-set! index %zu out of bounds", index);
+	die_unless_byte(b);
+	mbv[index] = static_cast<uint8_t>(unbox<Number>(b));
+	return b;
+}
+
+static Atom bytevector_length(Atom bv)
+{
+	return box(Number(slow_unbox<ByteVector>(bv)->size()));
+}
+
+static Atom make_bytevector(Atom k, Atom fill)
+{
+	JET_DIE_UNLESS(is_positive_integer(k), "make-bytevector expects positive integer, given %g",
+					unbox<Number>(k));
+	die_unless_byte(fill);
+	return box(ByteVector(unbox<Number>(k), static_cast<uint8_t>(unbox<Number>(fill))));
+}
+
+static Atom bytevector_ctor(Atom* first, Atom* last)
+{
+	ByteVector result;
+	result.reserve(last - first);
+	for (Atom* p = first; p != last; ++p)
+	{
+		die_unless_byte(*p);
+		result.push_back(static_cast<uint8_t>(unbox<Number>(*p)));
+	}
+	return box(std::move(result));
+}
+
+static Atom bytevector_copy(Atom bv, Atom start, Atom end)
+{
+	JET_DIE_UNLESS(is_positive_integer(start), "bytevector-copy expects positive integer start, given %g",
+					unbox<Number>(start));
+	JET_DIE_UNLESS(is_positive_integer(end), "bytevector-copy expects positive integer end, given %g",
+					unbox<Number>(end));
+	ByteVector& src = *slow_unbox<ByteVector>(bv);
+	size_t s = unbox<Number>(start);
+	size_t e = unbox<Number>(end);
+	JET_DIE_UNLESS(s <= e && e <= src.size(), "bytevector-copy range %zu..%zu out of bounds", s, e);
+	return box(ByteVector(src.begin() + s, src.begin() + e));
+}
+
+static Atom bytevector_copy_bang(Atom to, Atom at, Atom from, Atom start, Atom end)
+{
+	JET_DIE_UNLESS(is_positive_integer(at), "bytevector-copy! expects positive integer at, given %g",
+					unbox<Number>(at));
+	JET_DIE_UNLESS(is_positive_integer(start), "bytevector-copy! expects positive integer start, given %g",
+					unbox<Number>(start));
+	JET_DIE_UNLESS(is_positive_integer(end), "bytevector-copy! expects positive integer end, given %g",
+					unbox<Number>(end));
+	ByteVector& dst = *slow_unbox<ByteVector>(to);
+	ByteVector& src = *slow_unbox<ByteVector>(from);
+	size_t a = unbox<Number>(at);
+	size_t s = unbox<Number>(start);
+	size_t e = unbox<Number>(end);
+	JET_DIE_UNLESS(s <= e && e <= src.size(), "bytevector-copy! source range %zu..%zu out of bounds", s, e);
+	JET_DIE_UNLESS(a + (e - s) <= dst.size(), "bytevector-copy! destination range out of bounds");
+	if (to.as_ptr() == from.as_ptr() && a > s)
+	{
+		for (size_t i = e; i > s; --i)
+		{
+			dst[a + (i - 1 - s)] = src[i - 1];
+		}
+	}
+	else
+	{
+		for (size_t i = s; i < e; ++i)
+		{
+			dst[a + (i - s)] = src[i];
+		}
+	}
+	return to;
+}
+
+static Atom bytevector_append(Atom* first, Atom* last)
+{
+	ByteVector result;
+	size_t total = 0;
+	for (Atom* p = first; p != last; ++p)
+	{
+		total += slow_unbox<ByteVector>(*p)->size();
+	}
+	result.reserve(total);
+	for (Atom* p = first; p != last; ++p)
+	{
+		ByteVector& part = *slow_unbox<ByteVector>(*p);
+		result.insert(result.end(), part.begin(), part.end());
+	}
+	return box(std::move(result));
+}
+
+void init_bytevectors(Env& e)
+{
+	e.bind("bytevector?", make_prim<is_type<jet::Type::ByteVector>>());
+	e.bind("bytevector-length", make_prim<bytevector_length>());
+	e.bind("bytevector-u8-ref", make_prim<bytevector_u8_ref>());
+	e.bind("bytevector-u8-set!", make_prim<bytevector_u8_set>());
+	e.bind("make-bytevector", make_prim<make_bytevector>());
+	e.bind("bytevector", make_prim<bytevector_ctor>(n_ary()));
+	e.bind("bytevector-copy", make_prim<bytevector_copy>());
+	e.bind("bytevector-copy!", make_prim<bytevector_copy_bang>());
+	e.bind("bytevector-append", make_prim<bytevector_append>(n_ary()));
+}
+
 bool is_eqv(Atom obj1, Atom obj2)
 {
 	if (obj1.type() != obj2.type())
@@ -365,6 +492,8 @@ bool is_eqv(Atom obj1, Atom obj2)
 		case jet::Type::Eof:
 			return true;
 		case jet::Type::String:
+			return obj1.as_ptr() == obj2.as_ptr();
+		case jet::Type::ByteVector:
 			return obj1.as_ptr() == obj2.as_ptr();
 		case jet::Type::Struct:
 			return compare_objects<Struct>(obj1, obj2);
@@ -412,6 +541,9 @@ static bool equal(Atom obj1, Atom obj2)
 
 		case jet::Type::String:
 			return *unbox<String>(obj1) == *unbox<String>(obj2);
+
+		case jet::Type::ByteVector:
+			return *unbox<ByteVector>(obj1) == *unbox<ByteVector>(obj2);
 
 		default:
 			return is_eqv(obj1, obj2);
@@ -502,6 +634,22 @@ static void print_vector(Vec& v, std::string& out)
 	out += ')';
 }
 
+static void print_bytevector(ByteVector& v, std::string& out)
+{
+	out += "#u8(";
+	for (size_t i = 0; i < v.size(); ++i)
+	{
+		if (i > 0)
+		{
+			out += ' ';
+		}
+		char buf[4];
+		auto r = std::to_chars(buf, buf + sizeof(buf), v[i]);
+		out.append(buf, r.ptr - buf);
+	}
+	out += ')';
+}
+
 static Atom display_to(Atom a, std::string& out)
 {
 	switch (a.type())
@@ -537,6 +685,10 @@ static Atom display_to(Atom a, std::string& out)
 
 		case jet::Type::Vector:
 			print_vector<display_to>(*unbox<Vec>(a), out);
+			break;
+
+		case jet::Type::ByteVector:
+			print_bytevector(*unbox<ByteVector>(a), out);
 			break;
 
 		case jet::Type::EmptyList:
@@ -624,6 +776,10 @@ Atom write_to(Atom a, std::string& out)
 
 		case jet::Type::Vector:
 			print_vector<write_to>(*unbox<Vec>(a), out);
+			break;
+
+		case jet::Type::ByteVector:
+			print_bytevector(*unbox<ByteVector>(a), out);
 			break;
 
 		case jet::Type::Struct:
@@ -968,7 +1124,7 @@ static Number char_to_integer(Atom c)
 static Atom integer_to_char(Atom n)
 {
 	Number v = slow_unbox<Number>(n);
-	JET_DIE_UNLESS(is_integer(v) && v >= 0 && v <= 255, "integer->char: out of range %g", v);
+	JET_DIE_UNLESS(is_byte(n), "integer->char: out of range %g", v);
 	return box(static_cast<Character>(static_cast<uint8_t>(v)));
 }
 
@@ -1285,6 +1441,7 @@ void init_primitives(Env& e)
 	init_number(e);
 	init_lists(e);
 	init_vecs(e);
+	init_bytevectors(e);
 	init_equivalence(e);
 	init_symbols(e);
 	init_display_primitives(e);

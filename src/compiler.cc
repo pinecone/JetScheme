@@ -694,6 +694,20 @@ namespace
 					emit(TokenKind::Character, intern(buf), start);
 					break;
 
+				case 'u':
+					buf += advance();
+					if (peek() != '8')
+					{
+						JET_DIE("%d:%d: invalid # syntax", line, col);
+					}
+					buf += advance();
+					if (peek() != '(')
+					{
+						JET_DIE("%d:%d: invalid # syntax", line, col);
+					}
+					emit(TokenKind::Hash, intern(buf), start);
+					break;
+
 				case '(':
 					// Leave the '(' in the stream; it lexes as LParen next.
 					emit(TokenKind::Hash, intern(buf), start);
@@ -1072,6 +1086,10 @@ namespace
 					return parse_datum();
 				}
 				case TokenKind::Hash:
+					if (peek().text == "#u8")
+					{
+						return parse_quoted_bytevector();
+					}
 					return parse_quoted_vector();
 				case TokenKind::LParen:
 					return parse_paren_form();
@@ -1729,6 +1747,10 @@ namespace
 					return parse_quoted_list();
 
 				case TokenKind::Hash:
+					if (peek().text == "#u8")
+					{
+						return parse_quoted_bytevector();
+					}
 					return parse_quoted_vector();
 
 				default:
@@ -1805,6 +1827,29 @@ namespace
 
 			Expr* e = make_expr(ExprKind::Call, loc);
 			e->call.proc = vec_ref;
+			e->call.args = make_slice(elems);
+			return e;
+		}
+
+		Expr* parse_quoted_bytevector()
+		{
+			// #u8(a b c) -> Call{VarRef{"bytevector"}, [a, b, c]}.
+			SourceLoc loc = peek().loc;
+			advance();
+			expect(TokenKind::LParen);
+
+			std::vector<Expr*> elems;
+			while (peek().kind != TokenKind::RParen)
+			{
+				elems.push_back(parse_datum());
+			}
+			expect(TokenKind::RParen);
+
+			Expr* bv_ref = make_expr(ExprKind::VarRef, loc);
+			bv_ref->var_ref.name = arena.copy_string("bytevector");
+
+			Expr* e = make_expr(ExprKind::Call, loc);
+			e->call.proc = bv_ref;
 			e->call.args = make_slice(elems);
 			return e;
 		}
@@ -5508,6 +5553,17 @@ namespace
 						v.push_back(datum_to_atom(e->call.args[i]));
 					}
 					return box(std::move(v));
+				}
+				if (name == "bytevector")
+				{
+					ByteVector bv;
+					bv.reserve(e->call.args.size());
+					for (uint32_t i = 0; i < e->call.args.size(); ++i)
+					{
+						Atom byte_val = datum_to_atom(e->call.args[i]);
+						bv.push_back(static_cast<uint8_t>(unbox<Number>(byte_val)));
+					}
+					return box(std::move(bv));
 				}
 				JET_DIE("datum_to_atom: unexpected call proc");
 			}

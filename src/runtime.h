@@ -70,6 +70,9 @@ void init_vecs(Env& e);
 
 Atom string_ref(Atom s, Atom k);
 
+Atom bytevector_u8_ref(Atom bv, Atom k);
+void init_bytevectors(Env& e);
+
 class StructType
 {
   public:
@@ -252,6 +255,11 @@ inline bool is_positive_integer(Atom num)
 {
 	Number n = slow_unbox<Number>(num);
 	return is_integer(n) && n >= 0;
+}
+
+inline bool is_byte(Atom a)
+{
+	return is_positive_integer(a) && unbox<Number>(a) <= 255;
 }
 
 void init_number(Env& env);

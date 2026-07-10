@@ -327,7 +327,7 @@ struct ObjShape
 	Atom (*slow_ref)(Atom, Atom);
 };
 
-extern ObjShape g_shape_by_tag[16];
+extern ObjShape g_shape_by_tag[jet_tag::HEAP_END];
 
 inline ObjShape* shape_of(Atom a)
 {

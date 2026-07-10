@@ -204,6 +204,17 @@
 (define vector-length (%prim "vector-length"))
 (define vector? (%prim "vector?"))
 
+;;; bytevectors
+(define bytevector (%prim "bytevector"))
+(define make-bytevector (%prim "make-bytevector"))
+(define (bytevector-u8-ref bv i) (ref bv i))
+(define (bytevector-u8-set! bv i x) (setf! (ref bv i) x))
+(define bytevector-length (%prim "bytevector-length"))
+(define bytevector? (%prim "bytevector?"))
+(define bytevector-copy (%prim "bytevector-copy"))
+(define bytevector-copy! (%prim "bytevector-copy!"))
+(define bytevector-append (%prim "bytevector-append"))
+
 ;;; strings
 (define string? (%prim "string?"))
 (define string-append (%prim "string-append"))

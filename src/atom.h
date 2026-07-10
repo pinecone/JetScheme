@@ -30,6 +30,7 @@
 	X(Symbol,     symbol,      Symbol)     \
 	X(String,     string,      String)     \
 	X(Vector,     vector,      Vec)        \
+	X(ByteVector, bytevector, ByteVector)  \
 	X(Port,       port,       Port)        \
 	X(Slot,       slot,        Slot)       \
 	X(StructType, struct_type, StructType) \
@@ -47,6 +48,7 @@
 	X(Symbol,    "symbol")                \
 	X(String,    "string")                \
 	X(Vector,    "vector")                \
+	X(ByteVector,"bytevector")            \
 	X(Port,     "port")                  \
 	X(Slot,      "slot")                  \
 	X(StructType,"struct type")           \
@@ -70,6 +72,7 @@ namespace jet
 using Character = uint8_t;
 using Number = double;
 using String = std::string;
+using ByteVector = std::vector<uint8_t>;
 
 // NaN boxing layout:
 //
