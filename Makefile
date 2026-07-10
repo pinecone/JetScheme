@@ -9,13 +9,11 @@
 #		make test-debug					run tests against debug binary
 #		make test-profile				run tests against profile binary
 #
-#		make bench							run benches against release binary
-#		make bench-debug				run benches against debug binary
-#		make bench-profile			run benches against profile binary (prints opcode histogram)
+#		make bench							run cross-language benches against release binary
+#		make bench-debug				cross-language benches against debug
+#		make bench-profile			cross-language benches against profile (prints opcode histogram)
 #
-#		make cross-bench				run cross-language benches against release binary
-#		make cross-bench-debug	cross-language benches against debug
-#		make cross-bench-profile cross-language benches against profile
+#		make cross-bench				alias for bench
 #
 #		make clean							wipe build/
 #
@@ -104,26 +102,26 @@ test-profile: profile
 	cd tests && JET=../build/jet-profile ./run-tests
 
 bench: release
-	cd tests && JET=../build/jet ./run-bench
+	cd bench && JET=../build/jet ./run-cross-bench
 
 bench-debug: debug
-	cd tests && JET=../build/jet-debug ./run-bench
+	cd bench && JET=../build/jet-debug ./run-cross-bench
 
 bench-profile: profile
-	cd tests && JET=../build/jet-profile ./run-bench
+	cd bench && JET=../build/jet-profile ./run-cross-bench
 
 cross-bench: release
-	cd tests/cross-bench && JET=../../build/jet ./run-cross-bench
+	cd bench && JET=../build/jet ./run-cross-bench
 
 cross-bench-debug: debug
-	cd tests/cross-bench && JET=../../build/jet-debug ./run-cross-bench
+	cd bench && JET=../build/jet-debug ./run-cross-bench
 
 cross-bench-profile: profile
-	cd tests/cross-bench && JET=../../build/jet-profile ./run-cross-bench
+	cd bench && JET=../build/jet-profile ./run-cross-bench
 
 # Builds its own worktree of REF (default HEAD), so no build dependency.
 ab-cross-bench:
-	cd tests/cross-bench && ./ab-cross $(REF)
+	cd bench && ./ab-cross $(REF)
 
 clean:
 	rm -rf $(BUILD)

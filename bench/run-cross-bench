@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-JET = Path(os.environ.get("JET", HERE / ".." / ".." / "build" / "jet"))
+JET = Path(os.environ.get("JET", HERE / ".." / "build" / "jet"))
 LUA_CMD = shlex.split(os.environ.get("LUA", "")) or ([shutil.which("lua")] if shutil.which("lua") else [])
 
 BENCHES = sorted(p.stem for p in HERE.glob("bench-*.ss"))
