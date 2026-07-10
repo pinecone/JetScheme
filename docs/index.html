@@ -60,7 +60,7 @@
 
   <h3>Language</h3>
   <p>The language tracks R7RS-small with the following deviations:</p>
-  <p><strong>All numbers are 64-bit doubles.</strong> No exact/inexact tower, no rationals, no bignums. <code>exact?</code> is true for integral doubles. <code>integer?</code> likewise.</p>
+  <p><strong>No numeric tower; all numbers are just 64-bit doubles.</strong> <code>exact?</code> and <code>integer?</code> are <code>#t</code> for integral doubles.
   <p><strong>Strings and characters are byte-level.</strong> Storage is UTF-8; <code>string-length</code>, <code>string-ref</code>, <code>string-set!</code>, <code>char-&gt;integer</code> are byte-indexed. Bytewise compare gives correct codepoint order on valid UTF-8. Char predicates, <code>char-upcase</code>/<code>-downcase</code>, <code>string-upcase</code>/<code>-downcase</code> are ASCII-only.</p>
 
   <h3>SRFI</h3>
