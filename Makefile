@@ -52,7 +52,7 @@ JET_BIN := $(BUILD)/jet$(SUFFIX)
 
 CXXFLAGS := -std=c++20 -fno-exceptions -fno-rtti -fno-strict-aliasing \
 						-Wall -Werror -pipe -Wold-style-cast -Wextra -Wno-unused-parameter \
-						$(OPT) $(PROFILE_DEF) -I$(SRC) -I$(BUILD)
+						$(OPT) $(PROFILE_DEF) -I$(SRC)
 
 LDFLAGS	 := $(LDOPT)
 
