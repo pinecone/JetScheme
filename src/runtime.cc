@@ -84,11 +84,11 @@ void init_lists(Env& e)
 	e.bind("set-cdr!", make_prim<set_cdr>());
 }
 
-template <typename T>
-struct modulus
+static Number jet_modulo(Number a, Number b)
 {
-	Number operator()(T a, T b) { return static_cast<int>(a) % static_cast<int>(b); }
-};
+	JET_DIE_UNLESS(b != 0, "modulo: division by zero");
+	return a - std::floor(a / b) * b;
+}
 
 template <typename T>
 struct max
@@ -232,7 +232,7 @@ void init_number(Env& e)
 	e.bind(">", make_prim<folding_pred<greater<Number>>>(at_least(2)));
 	e.bind(">=", make_prim<folding_pred<greater_equal<Number>>>(at_least(2)));
 
-	e.bind("modulo", make_prim<arith_op<::modulus<Number>>>(exactly(2)));
+	e.bind("modulo", make_prim<arith_binary_fun<Number, jet_modulo>>(exactly(2)));
 	e.bind("max", make_prim<folding_op<::max<Number>>>(at_least(1)));
 	e.bind("min", make_prim<folding_op<::min<Number>>>(at_least(1)));
 

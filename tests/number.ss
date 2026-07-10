@@ -28,6 +28,27 @@
 ($check (= 5 (abs 5)))
 ($check (= 1 (modulo 7 3)))
 ($check (= 0 (modulo 6 3)))
+($check (= -1 (modulo -7 -3)))
+($check (= 2 (modulo -7 3)))
+($check (= -2 (modulo 7 -3)))
+($check (= 1.5 (modulo 7.5 2.0)))
+($check (= 0.5 (modulo -7.5 2.0)))
+($check (< (abs (- 1.794 (modulo -6.206 2.0))) 1e-9))
+
+;; Quotient, remainder
+($check (= 2 (quotient 7 3)))
+($check (= -2 (quotient -7 3)))
+($check (= -2 (quotient 7 -3)))
+($check (= 1 (remainder 7 3)))
+($check (= -1 (remainder -7 3)))
+($check (= 1 (remainder 7 -3)))
+($check (= 3.0 (quotient 7.5 2.0)))
+($check (= 1.5 (remainder 7.5 2.0)))
+
+;; quotient + remainder reconstruct dividend (truncation division)
+($check (= 7 (+ (* (quotient 7 3) 3) (remainder 7 3))))
+($check (= -7 (+ (* (quotient -7 3) 3) (remainder -7 3))))
+($check (= 7 (+ (* (quotient 7 -3) -3) (remainder 7 -3))))
 
 ;; Exponentiation
 ($check (= 8 (expt 2 3)))
