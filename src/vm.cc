@@ -352,6 +352,8 @@ static Code* decode_constant(Code* p, Atom& out, Env& env)
 			Code* lambda_code = p;
 			p += code_size;
 			link_opcode_handlers(lambda_code, lambda_code + code_size);
+			const char* lambda_name = reinterpret_cast<const char*>(p);
+			p += strlen(lambda_name) + 1;
 			out = box<Lambda>(lambda_code, arity, n_locals, static_cast<uint16_t>(0));
 			return p;
 		}
@@ -1664,4 +1666,3 @@ namespace
 		}
 	} dispatch_init;
 } // namespace
-

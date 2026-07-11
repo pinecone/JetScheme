@@ -432,6 +432,7 @@ struct LambdaBlock
 	size_t arity;
 	bool is_n_ary;
 	uint16_t n_locals;
+	const char* name;
 };
 
 void disasm_code_block(FILE* out, Code* start, size_t size)
@@ -523,10 +524,17 @@ Code* disasm_pool_entry(FILE* out, Code* p, uint32_t idx, std::vector<LambdaBloc
 			size_t code_size;
 			std::memcpy(&code_size, p, sizeof(code_size));
 			p += sizeof(code_size);
-			std::fprintf(out, "arity=%s%zu n_locals=%u code_size=%zu\n",
-						 is_n_ary ? "n-ary≥" : "", arity, n_locals, code_size);
-			lambdas.push_back({idx, p, code_size, arity, is_n_ary, n_locals});
-			return p + code_size;
+			Code* code = p;
+			const char* name = reinterpret_cast<const char*>(code + code_size);
+			std::fprintf(out, "arity=%s%zu n_locals=%u code_size=%zu", is_n_ary ? "n-ary≥" : "", arity,
+						 n_locals, code_size);
+			if (*name)
+			{
+				std::fprintf(out, " name=\"%s\"", name);
+			}
+			std::fputc('\n', out);
+			lambdas.push_back({idx, code, code_size, arity, is_n_ary, n_locals, name});
+			return code + code_size + std::strlen(name) + 1;
 		}
 	}
 	return p;
@@ -563,8 +571,13 @@ void disassemble(FILE* out, Code* bc, size_t bc_size)
 	for (const LambdaBlock& lb : lambdas)
 	{
 		std::fputc('\n', out);
-		std::fprintf(out, "=== lambda [%u] (%zu bytes, arity=%s%zu, n_locals=%u) ===\n",
-					 lb.pool_idx, lb.size, lb.is_n_ary ? "n-ary≥" : "", lb.arity, lb.n_locals);
+		std::fprintf(out, "=== lambda [%u]", lb.pool_idx);
+		if (*lb.name)
+		{
+			std::fprintf(out, " %s", lb.name);
+		}
+		std::fprintf(out, " (%zu bytes, arity=%s%zu, n_locals=%u) ===\n", lb.size,
+					 lb.is_n_ary ? "n-ary≥" : "", lb.arity, lb.n_locals);
 		disasm_code_block(out, lb.code, lb.size);
 	}
 }

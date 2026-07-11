@@ -275,6 +275,7 @@ struct Expr
 			Slice<bool> captured_before_init_locals;
 			Slice<bool> reassigned_after_init_locals;
 			Slice<UpvalueRef> upvalues;
+			std::string_view lambda_name;
 		} lambda;
 		struct
 		{
@@ -1206,6 +1207,7 @@ namespace
 			e->lambda.params = make_string_slice(params);
 			e->lambda.is_variadic = is_variadic;
 			e->lambda.body = make_slice(body);
+			e->lambda.lambda_name = {};
 			return e;
 		}
 
@@ -1237,6 +1239,7 @@ namespace
 				lam->lambda.params = make_string_slice(params);
 				lam->lambda.is_variadic = false;
 				lam->lambda.body = make_slice(body);
+				lam->lambda.lambda_name = name;
 
 				Expr* e = make_expr(ExprKind::Define, loc);
 				e->define.name = name;
@@ -1247,6 +1250,11 @@ namespace
 			std::string_view name = expect_identifier("define");
 			Expr* value = parse_expr();
 			expect(TokenKind::RParen);
+
+			if (value->kind == ExprKind::Lambda && value->lambda.lambda_name.empty())
+			{
+				value->lambda.lambda_name = name;
+			}
 
 			Expr* e = make_expr(ExprKind::Define, loc);
 			e->define.name = name;
@@ -1409,6 +1417,7 @@ namespace
 			lam->lambda.params = make_string_slice(names);
 			lam->lambda.is_variadic = false;
 			lam->lambda.body = make_slice(body);
+			lam->lambda.lambda_name = loop_name;
 
 			Expr* var = make_expr(ExprKind::VarRef, loc);
 			var->var_ref.name = loop_name;
@@ -1917,6 +1926,7 @@ Program& Compiler::ast()
 		toplevel_lambda_->lambda.params = {};
 		toplevel_lambda_->lambda.is_variadic = false;
 		toplevel_lambda_->lambda.body = {};
+		toplevel_lambda_->lambda.lambda_name = {};
 		toplevel_lambda_->lambda.names = arena.copy_slice(toplevel_names_.ordered);
 
 		resolve_bindings(*ast_);
@@ -4179,6 +4189,7 @@ namespace
 		// high water (static per lambda) and never shrinks.
 		uint32_t n_regs = 0;
 		uint16_t pool_slot = 0;   // unused for the toplevel (index 0)
+		std::string_view lambda_name;
 		// Coalesced bindings: named register -> the call-window register the value
 		// actually lives in. Write-once per register (the name frame never shrinks).
 		std::unordered_map<uint16_t, uint16_t> reg_alias;
@@ -4470,6 +4481,7 @@ namespace
 			prog.lambdas.emplace_back();
 			prog.lambdas[idx].is_variadic = expr->lambda.is_variadic;
 			prog.lambdas[idx].n_params = expr->lambda.params.size();
+			prog.lambdas[idx].lambda_name = expr->lambda.lambda_name;
 			// names is the named-register high water (the resolver's name frame
 			// only grows); the variadic formula can exceed it by the rest slot.
 			uint32_t n_named = static_cast<uint32_t>(
@@ -5151,7 +5163,7 @@ namespace
 
 		void fill_lambda_entry(uint16_t slot)
 		{
-			// Pool entry: [tag=Lambda][is_n_ary][n_params if !is_n_ary][n_regs][code_size][bytes...]
+			// Pool entry: [tag=Lambda][is_n_ary][n_params if !is_n_ary][n_regs][code_size][bytes...][name\0]
 			LirLambda& L = prog.lambdas[static_cast<uint32_t>(prog.pool_to_lambda[slot])];
 			Bytecode body = emit_code(L);
 
@@ -5169,6 +5181,11 @@ namespace
 			size_t code_size = body.size();
 			entry.append(reinterpret_cast<char*>(&code_size), sizeof(code_size));
 			entry.append(reinterpret_cast<char*>(body.data()), code_size);
+			if (!L.lambda_name.empty())
+			{
+				entry.append(L.lambda_name.data(), L.lambda_name.size());
+			}
+			entry.push_back('\0');
 			prog.pool[slot] = std::move(entry);
 		}
 
