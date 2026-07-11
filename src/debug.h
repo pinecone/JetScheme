@@ -59,6 +59,7 @@ struct Profile
 	uint64_t op_ticks[256];
 	uint64_t ic_misses[256];
 	uint64_t pair_after[256][256];
+	uint64_t pair_ticks[256][256];
 	uint64_t lambda_calls;
 	uint64_t prim_calls;
 	uint64_t gc_collections;
@@ -90,12 +91,14 @@ inline uint64_t profile_ticks()
 	do                                                                                                       \
 	{                                                                                                        \
 		uint64_t _jet_now = profile_ticks();                                                                \
+		uint8_t _jet_op = (op);                                                                             \
 		if (g_profile.last_stamp != 0) [[likely]]                                                           \
 		{                                                                                                    \
-			g_profile.op_ticks[g_profile.last_op] += _jet_now - g_profile.last_stamp;                       \
+			uint64_t _jet_delta = _jet_now - g_profile.last_stamp;                                         \
+			g_profile.op_ticks[g_profile.last_op] += _jet_delta;                                           \
+			g_profile.pair_ticks[g_profile.last_op][_jet_op] += _jet_delta;                                \
 		}                                                                                                    \
 		g_profile.last_stamp = _jet_now;                                                                    \
-		uint8_t _jet_op = (op);                                                                             \
 		++g_profile.op_counts[_jet_op];                                                                     \
 		++g_profile.pair_after[g_profile.last_op][_jet_op];                                                 \
 		g_profile.last_op = _jet_op;                                                                        \
