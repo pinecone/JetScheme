@@ -24,7 +24,7 @@ from math import comb
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-REPO = HERE.parent.parent
+REPO = HERE.parent
 DEFAULT_BENCHES = sorted(p.stem for p in HERE.glob("bench-*.ss"))
 
 
