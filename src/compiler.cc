@@ -543,6 +543,7 @@ struct Compiler
 		} u;
 	};
 	std::vector<std::optional<OpSelection>> selected_ops_;
+	std::unordered_map<uint32_t, Expr*> fused_if_tests_;
 	void run_op_selection(Program& program);
 	void select_ops_in(Expr* expr, Expr* current);
 	void select_call_op(Expr* expr, Expr* current);
@@ -2957,6 +2958,10 @@ namespace
 		}
 		if (name == "=")
 		{
+			return Opcode::numeq;
+		}
+		if (name == "eq?")
+		{
 			return Opcode::eq;
 		}
 		if (name == "<")
@@ -2997,6 +3002,7 @@ void Compiler::run_op_selection(Program& program)
 	}
 
 	selected_ops_.assign(next_expr_id_ + 1, std::nullopt);
+	fused_if_tests_.clear();
 	for (Expr* form : program.forms)
 	{
 		select_ops_in(form, toplevel_lambda_);
@@ -3165,7 +3171,8 @@ void Compiler::select_call_op(Expr* expr, Expr* current)
 	if (pl.kind == PrimLowering::Kind::Arith)
 	{
 		Opcode op = pl.op;
-		if (expr->call.args[1]->kind == ExprKind::NumberLit)
+		if (expr->call.args[1]->kind == ExprKind::NumberLit
+			|| (op == Opcode::eq && is_literal_key(expr->call.args[1])))
 		{
 			switch (op)
 			{
@@ -3173,7 +3180,8 @@ void Compiler::select_call_op(Expr* expr, Expr* current)
 				case Opcode::add: op = Opcode::addk; break;
 				case Opcode::mul: op = Opcode::mulk; break;
 				case Opcode::div: op = Opcode::divk; break;
-				case Opcode::eq:  op = Opcode::eqk;  break;
+				case Opcode::numeq:  op = Opcode::numeqk;  break;
+				case Opcode::eq:     op = Opcode::eqk;     break;
 				case Opcode::lt:  op = Opcode::ltk;  break;
 				default:          break;   // no rk form for le/gt/ge
 			}
@@ -3238,54 +3246,83 @@ void Compiler::select_call_op(Expr* expr, Expr* current)
 // branch arm -- (or x y) expands to (if %t %t y) -- keeps the compare unfused.
 void Compiler::select_if_cmp(Expr* expr)
 {
-	if (expr->let.names.size() != 1 || expr->let.body.size() != 1 || !is_anf_temp(expr->let.names[0]))
+	for (uint32_t i = 0; i < expr->let.names.size(); ++i)
 	{
-		return;
-	}
-	Expr* val = expr->let.vals[0];
-	Expr* if_e = expr->let.body[0];
-	if (val->kind != ExprKind::Call || if_e->kind != ExprKind::If
-		|| if_e->if_.test->kind != ExprKind::VarRef || !selected_ops_[val->id])
-	{
-		return;
-	}
-	Opcode fused;
-	switch (selected_ops_[val->id]->op)
-	{
-		case Opcode::eq:  fused = Opcode::if_eq;  break;
-		case Opcode::lt:  fused = Opcode::if_lt;  break;
-		case Opcode::le:  fused = Opcode::if_le;  break;
-		case Opcode::gt:  fused = Opcode::if_gt;  break;
-		case Opcode::ge:  fused = Opcode::if_ge;  break;
-		case Opcode::eqk: fused = Opcode::if_eqk; break;
-		case Opcode::ltk: fused = Opcode::if_ltk; break;
-		default:          return;
-	}
-	ResolvedBinding temp = binding(if_e->if_.test);
-	if (temp.lambda != expr->let.owner || temp.breadth != expr->let.slot_base)
-	{
-		return;
-	}
-	bool reread = false;
-	auto&& scan = [&](Expr* e, auto&& self) -> void
-	{
-		if (e->kind == ExprKind::VarRef || e->kind == ExprKind::SetBang)
+		if (!is_anf_temp(expr->let.names[i]))
 		{
-			ResolvedBinding b = binding(e);
-			reread = reread || (b.lambda == temp.lambda && b.breadth == temp.breadth);
+			continue;
 		}
-		walk_children(e, [&](Expr* c) { self(c, self); });
-	};
-	scan(if_e->if_.consequent, scan);
-	if (if_e->if_.alternate)
-	{
-		scan(if_e->if_.alternate, scan);
+		Expr* val = expr->let.vals[i];
+		while (val->kind == ExprKind::Let && val->let.body.size() == 1)
+		{
+			val = val->let.body[0];
+		}
+		if (val->kind != ExprKind::Call || !selected_ops_[val->id])
+		{
+			continue;
+		}
+		Opcode fused;
+		switch (selected_ops_[val->id]->op)
+		{
+			case Opcode::numeq:   fused = Opcode::if_numeq;  break;
+			case Opcode::eq:      fused = Opcode::if_eq;      break;
+			case Opcode::lt:      fused = Opcode::if_lt;      break;
+			case Opcode::le:      fused = Opcode::if_le;      break;
+			case Opcode::gt:      fused = Opcode::if_gt;      break;
+			case Opcode::ge:      fused = Opcode::if_ge;      break;
+			case Opcode::numeqk:  fused = Opcode::if_numeqk; break;
+			case Opcode::eqk:     fused = Opcode::if_eqk;     break;
+			case Opcode::ltk:     fused = Opcode::if_ltk;     break;
+			default:              continue;
+		}
+		ResolvedBinding temp{.lambda = expr->let.owner, .breadth = expr->let.slot_base + i};
+		Expr* if_e = nullptr;
+		bool multiple_tests = false;
+		auto&& find_test = [&](Expr* e, auto&& self) -> void
+		{
+			if (e->kind == ExprKind::If && e->if_.test->kind == ExprKind::VarRef
+				&& e->if_.test->var_ref.name == expr->let.names[i])
+			{
+				if (if_e)
+				{
+					multiple_tests = true;
+				}
+				else
+				{
+					if_e = e;
+				}
+			}
+			walk_children(e, [&](Expr* child) { self(child, self); });
+		};
+		for (Expr* body : expr->let.body)
+		{
+			find_test(body, find_test);
+		}
+		if (!if_e || multiple_tests)
+		{
+			continue;
+		}
+		bool reread = false;
+		auto&& scan = [&](Expr* e, auto&& self) -> void
+		{
+			if (e->kind == ExprKind::VarRef || e->kind == ExprKind::SetBang)
+			{
+				ResolvedBinding b = binding(e);
+				reread = reread || (b.lambda == temp.lambda && b.breadth == temp.breadth);
+			}
+			walk_children(e, [&](Expr* child) { self(child, self); });
+		};
+		scan(if_e->if_.consequent, scan);
+		if (if_e->if_.alternate)
+		{
+			scan(if_e->if_.alternate, scan);
+		}
+		if (!reread)
+		{
+			selected_ops_[val->id]->op = fused;
+			fused_if_tests_[if_e->id] = val;
+		}
 	}
-	if (reread)
-	{
-		return;
-	}
-	selected_ops_[val->id]->op = fused;
 }
 
 void Compiler::select_field_op(Expr* expr, Expr* current, Expr* receiver, Expr* key, bool is_set)
@@ -4219,7 +4256,6 @@ namespace
 
 		// Compares reselected as fused branch ops: the let binding skips them and
 		// the consuming If emits them, keyed by the If expr id.
-		std::unordered_map<uint32_t, Expr*> fused_tests{};
 
 		LirLambda& current_lambda()
 		{
@@ -4672,7 +4708,6 @@ namespace
 					Compiler::OpSelection sel = selection(val, "Call");
 					if (is_if_cmp(sel.op))
 					{
-						fused_tests[expr->let.body[0]->id] = val;
 						continue;
 					}
 					if (is_call_shaped(sel.op) && sel.op != Opcode::recur)
@@ -4875,11 +4910,13 @@ namespace
 		{
 			switch (op)
 			{
+				case Opcode::if_numeq:
 				case Opcode::if_eq:
 				case Opcode::if_lt:
 				case Opcode::if_le:
 				case Opcode::if_gt:
 				case Opcode::if_ge:
+				case Opcode::if_numeqk:
 				case Opcode::if_eqk:
 				case Opcode::if_ltk:
 					return true;
@@ -5000,6 +5037,7 @@ namespace
 						case Opcode::sub:
 						case Opcode::mul:
 						case Opcode::div:
+						case Opcode::numeq:
 						case Opcode::eq:
 						case Opcode::lt:
 						case Opcode::le:
@@ -5009,12 +5047,13 @@ namespace
 						case Opcode::subk:
 						case Opcode::mulk:
 						case Opcode::divk:
+						case Opcode::numeqk:
 						case Opcode::eqk:
 						case Opcode::ltk:
 						{
 							bool k = sel.op == Opcode::addk || sel.op == Opcode::subk
 									 || sel.op == Opcode::mulk || sel.op == Opcode::divk
-									 || sel.op == Opcode::eqk || sel.op == Opcode::ltk;
+								 || sel.op == Opcode::numeqk || sel.op == Opcode::eqk || sel.op == Opcode::ltk;
 							LirInst i = inst(sel.op);
 							i.u.arith.dst = dst;
 							i.u.arith.a = emit_to_any_reg(expr->call.args[0]);
@@ -5061,15 +5100,16 @@ namespace
 				{
 					uint32_t l_alt = prog.next_label++;
 					uint32_t l_end = prog.next_label++;
-					auto fused = fused_tests.find(expr->id);
-					if (fused != fused_tests.end())
+					auto fused = db.fused_if_tests_.find(expr->id);
+					if (fused != db.fused_if_tests_.end())
 					{
 						Expr* cmp = fused->second;
 						Compiler::OpSelection sel = selection(cmp, "fused test");
 						LirInst i = inst(sel.op);
 						i.u.if_cmp.id = l_alt;
 						i.u.if_cmp.a = emit_to_any_reg(cmp->call.args[0]);
-						i.u.if_cmp.b = sel.op == Opcode::if_eqk || sel.op == Opcode::if_ltk
+						i.u.if_cmp.b = sel.op == Opcode::if_numeqk || sel.op == Opcode::if_eqk
+									   || sel.op == Opcode::if_ltk
 										   ? intern_literal_key(cmp->call.args[1])
 										   : emit_to_any_reg(cmp->call.args[1]);
 						emit(i);
@@ -5283,6 +5323,7 @@ namespace
 				case Opcode::sub:
 				case Opcode::mul:
 				case Opcode::div:
+				case Opcode::numeq:
 				case Opcode::eq:
 				case Opcode::lt:
 				case Opcode::le:
@@ -5292,6 +5333,7 @@ namespace
 				case Opcode::subk:
 				case Opcode::mulk:
 				case Opcode::divk:
+				case Opcode::numeqk:
 				case Opcode::eqk:
 				case Opcode::ltk:
 				{
@@ -5315,11 +5357,13 @@ namespace
 					break;
 				}
 
+				case Opcode::if_numeq:
 				case Opcode::if_eq:
 				case Opcode::if_lt:
 				case Opcode::if_le:
 				case Opcode::if_gt:
 				case Opcode::if_ge:
+				case Opcode::if_numeqk:
 				case Opcode::if_eqk:
 				case Opcode::if_ltk:
 				{

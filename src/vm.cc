@@ -1092,11 +1092,12 @@ JET_ALWAYS_INLINE static Atom div_op(Atom a, Atom b)
 	JET_DIE_UNLESS(is_type<jet::Type::Number>(a) && is_type<jet::Type::Number>(b), "/: expected numbers");
 	return box<Number>(unbox<Number>(a) / unbox<Number>(b));
 }
-JET_ALWAYS_INLINE static Atom eq_op(Atom a, Atom b)
+JET_ALWAYS_INLINE static Atom numeq_op(Atom a, Atom b)
 {
 	JET_DIE_UNLESS(is_type<jet::Type::Number>(a) && is_type<jet::Type::Number>(b), "=: expected numbers");
 	return box(unbox<Number>(a) == unbox<Number>(b));
 }
+JET_ALWAYS_INLINE static Atom eq_op(Atom a, Atom b) { return box(is_eqv(a, b)); }
 JET_ALWAYS_INLINE static Atom lt_op(Atom a, Atom b)
 {
 	JET_DIE_UNLESS(is_type<jet::Type::Number>(a) && is_type<jet::Type::Number>(b), "<: expected numbers");
@@ -1253,7 +1254,8 @@ static constexpr auto& op_add  = op_binop_rr_impl<add_op>;
 static constexpr auto& op_sub  = op_binop_rr_impl<sub_op>;
 static constexpr auto& op_mul  = op_binop_rr_impl<mul_op>;
 static constexpr auto& op_div  = op_binop_rr_impl<div_op>;
-static constexpr auto& op_eq   = op_binop_rr_impl<eq_op>;
+static constexpr auto& op_numeq   = op_binop_rr_impl<numeq_op>;
+static constexpr auto& op_eq      = op_binop_rr_impl<eq_op>;
 static constexpr auto& op_lt   = op_binop_rr_impl<lt_op>;
 static constexpr auto& op_le   = op_binop_rr_impl<le_op>;
 static constexpr auto& op_gt   = op_binop_rr_impl<gt_op>;
@@ -1262,7 +1264,8 @@ static constexpr auto& op_addk = op_binop_rk_impl<add_op>;
 static constexpr auto& op_subk = op_binop_rk_impl<sub_op>;
 static constexpr auto& op_mulk = op_binop_rk_impl<mul_op>;
 static constexpr auto& op_divk = op_binop_rk_impl<div_op>;
-static constexpr auto& op_eqk  = op_binop_rk_impl<eq_op>;
+static constexpr auto& op_numeqk  = op_binop_rk_impl<numeq_op>;
+static constexpr auto& op_eqk     = op_binop_rk_impl<eq_op>;
 static constexpr auto& op_ltk  = op_binop_rk_impl<lt_op>;
 
 JET_PRESERVE_NONE static void op_if_false(VM_OP_PARAMS)
@@ -1300,12 +1303,14 @@ JET_PRESERVE_NONE static void op_if_cmp_rk_impl(VM_OP_PARAMS)
 	DISPATCH();
 }
 
-static constexpr auto& op_if_eq  = op_if_cmp_rr_impl<eq_op>;
+static constexpr auto& op_if_numeq  = op_if_cmp_rr_impl<numeq_op>;
+static constexpr auto& op_if_eq     = op_if_cmp_rr_impl<eq_op>;
 static constexpr auto& op_if_lt  = op_if_cmp_rr_impl<lt_op>;
 static constexpr auto& op_if_le  = op_if_cmp_rr_impl<le_op>;
 static constexpr auto& op_if_gt  = op_if_cmp_rr_impl<gt_op>;
 static constexpr auto& op_if_ge  = op_if_cmp_rr_impl<ge_op>;
-static constexpr auto& op_if_eqk = op_if_cmp_rk_impl<eq_op>;
+static constexpr auto& op_if_numeqk = op_if_cmp_rk_impl<numeq_op>;
+static constexpr auto& op_if_eqk    = op_if_cmp_rk_impl<eq_op>;
 static constexpr auto& op_if_ltk = op_if_cmp_rk_impl<lt_op>;
 
 JET_PRESERVE_NONE static void op_retv(VM_OP_PARAMS)

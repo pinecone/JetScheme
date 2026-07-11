@@ -31,6 +31,7 @@
 	X(sub,                 "sub")                                                                            \
 	X(mul,                 "mul")                                                                            \
 	X(div,                 "div")                                                                            \
+	X(numeq,               "numeq")                                                                          \
 	X(eq,                  "eq")                                                                             \
 	X(lt,                  "lt")                                                                             \
 	X(le,                  "le")                                                                             \
@@ -40,14 +41,17 @@
 	X(subk,                "subk")                                                                           \
 	X(mulk,                "mulk")                                                                           \
 	X(divk,                "divk")                                                                           \
+	X(numeqk,              "numeqk")                                                                         \
 	X(eqk,                 "eqk")                                                                            \
 	X(ltk,                 "ltk")                                                                            \
 	X(if_false,            "if")                                                                             \
+	X(if_numeq,            "ifnumeq")                                                                        \
 	X(if_eq,               "ifeq")                                                                           \
 	X(if_lt,               "iflt")                                                                           \
 	X(if_le,               "ifle")                                                                           \
 	X(if_gt,               "ifgt")                                                                           \
 	X(if_ge,               "ifge")                                                                           \
+	X(if_numeqk,           "ifnumeqk")                                                                       \
 	X(if_eqk,              "ifeqk")                                                                          \
 	X(if_ltk,              "ifltk")                                                                          \
 	X(retv,                "ret")                                                                            \
@@ -264,6 +268,7 @@ inline size_t opcode_step(uint8_t op, const uint8_t* operands)
 		case Opcode::sub:
 		case Opcode::mul:
 		case Opcode::div:
+		case Opcode::numeq:
 		case Opcode::eq:
 		case Opcode::lt:
 		case Opcode::le:
@@ -274,16 +279,19 @@ inline size_t opcode_step(uint8_t op, const uint8_t* operands)
 		case Opcode::subk:
 		case Opcode::mulk:
 		case Opcode::divk:
+		case Opcode::numeqk:
 		case Opcode::eqk:
 		case Opcode::ltk:
 			return OPCODE_SIZE + sizeof(OP_binop_rr);
 		case Opcode::if_false:
 			return OPCODE_SIZE + sizeof(OP_if_false);
+		case Opcode::if_numeq:
 		case Opcode::if_eq:
 		case Opcode::if_lt:
 		case Opcode::if_le:
 		case Opcode::if_gt:
 		case Opcode::if_ge:
+		case Opcode::if_numeqk:
 		case Opcode::if_eqk:
 		case Opcode::if_ltk:
 			return OPCODE_SIZE + sizeof(OP_if_cmp);

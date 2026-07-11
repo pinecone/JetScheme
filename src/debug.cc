@@ -283,6 +283,7 @@ void decode_args(FILE* out, uint8_t op, Code* p)
 		case Opcode::sub:
 		case Opcode::mul:
 		case Opcode::div:
+		case Opcode::numeq:
 		case Opcode::eq:
 		case Opcode::lt:
 		case Opcode::le:
@@ -297,6 +298,7 @@ void decode_args(FILE* out, uint8_t op, Code* p)
 		case Opcode::subk:
 		case Opcode::mulk:
 		case Opcode::divk:
+		case Opcode::numeqk:
 		case Opcode::eqk:
 		case Opcode::ltk:
 		{
@@ -310,6 +312,7 @@ void decode_args(FILE* out, uint8_t op, Code* p)
 			std::fprintf(out, " src=%u size=%u", o->src, o->size);
 			break;
 		}
+		case Opcode::if_numeq:
 		case Opcode::if_eq:
 		case Opcode::if_lt:
 		case Opcode::if_le:
@@ -320,6 +323,7 @@ void decode_args(FILE* out, uint8_t op, Code* p)
 			std::fprintf(out, " a=%u b=%u size=%u", o->a, o->b, o->size);
 			break;
 		}
+		case Opcode::if_numeqk:
 		case Opcode::if_eqk:
 		case Opcode::if_ltk:
 		{
