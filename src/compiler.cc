@@ -475,7 +475,7 @@ struct Compiler
 
 	std::vector<ResolvedBinding> bindings_;
 	std::vector<bool> tail_cache_;
-	std::unordered_set<uint64_t> used_bindings_;
+	std::unordered_map<uint64_t, uint32_t> binding_use_counts_;
 
 	// Compile-time chain of enclosing lambdas during binding resolution.
 	// Index 0 is a synthesized toplevel lambda whose names are the program's
@@ -519,8 +519,9 @@ struct Compiler
 	PrimLowering prim_call_lowering(Expr* call);
 	void record_ref(ResolvedBinding b);
 	void record_set(ResolvedBinding b, bool is_init, Expr* value);
-	void collect_used_bindings(Program& program);
-	void collect_used_bindings_in(Expr* expr);
+	void collect_binding_uses(Program& program);
+	void collect_binding_uses_in(Expr* expr);
+	uint32_t binding_use_count(Expr* owner, uint32_t breadth);
 	bool binding_used(Expr* owner, uint32_t breadth);
 	void resolve_bindings(Program& program);
 	void run_optimization_passes(Program& program);
@@ -543,11 +544,12 @@ struct Compiler
 		} u;
 	};
 	std::vector<std::optional<OpSelection>> selected_ops_;
-	std::unordered_map<uint32_t, Expr*> fused_if_tests_;
+	std::unordered_map<uint32_t, Expr*> branch_fusions_;
 	void run_op_selection(Program& program);
 	void select_ops_in(Expr* expr, Expr* current);
 	void select_call_op(Expr* expr, Expr* current);
-	void select_if_cmp(Expr* expr);
+	void collect_branch_fusion_facts(Program& program);
+	void select_branch_fusions();
 	void select_field_op(Expr* expr, Expr* current, Expr* receiver, Expr* key, bool is_set);
 	void select_var_op(Expr* expr, Expr* current, bool is_set);
 
@@ -2656,31 +2658,37 @@ void Compiler::resolve_bindings(Program& program)
 	recompute_lambda_bindings(program);
 }
 
-void Compiler::collect_used_bindings_in(Expr* expr)
+void Compiler::collect_binding_uses_in(Expr* expr)
 {
 	if (expr->kind == ExprKind::VarRef || expr->kind == ExprKind::SetBang)
 	{
 		ResolvedBinding b = bindings_[expr->id];
 		if (b.lambda)
 		{
-			used_bindings_.insert(binding_key(b));
+			++binding_use_counts_[binding_key(b)];
 		}
 	}
-	walk_children(expr, [&](Expr* e) { collect_used_bindings_in(e); });
+	walk_children(expr, [&](Expr* e) { collect_binding_uses_in(e); });
 }
 
-void Compiler::collect_used_bindings(Program& program)
+void Compiler::collect_binding_uses(Program& program)
 {
-	used_bindings_.clear();
+	binding_use_counts_.clear();
 	for (Expr* form : program.forms)
 	{
-		collect_used_bindings_in(form);
+		collect_binding_uses_in(form);
 	}
+}
+
+uint32_t Compiler::binding_use_count(Expr* owner, uint32_t breadth)
+{
+	auto found = binding_use_counts_.find(binding_key({.lambda = owner, .breadth = breadth}));
+	return found == binding_use_counts_.end() ? 0 : found->second;
 }
 
 bool Compiler::binding_used(Expr* owner, uint32_t breadth)
 {
-	return used_bindings_.count(binding_key({.lambda = owner, .breadth = breadth})) != 0;
+	return binding_use_count(owner, breadth) != 0;
 }
 
 void Compiler::run_optimization_passes(Program& program)
@@ -2995,18 +3003,20 @@ void Compiler::run_op_selection(Program& program)
 		collect_intrinsic_callees(form, toplevel_lambda_);
 	}
 	recompute_lambda_bindings(program);
+	collect_binding_uses(program);
 
 	for (Expr* L : all_lambdas_)
 	{
 		freeze_lambda(L);
 	}
 
+	collect_branch_fusion_facts(program);
 	selected_ops_.assign(next_expr_id_ + 1, std::nullopt);
-	fused_if_tests_.clear();
 	for (Expr* form : program.forms)
 	{
 		select_ops_in(form, toplevel_lambda_);
 	}
+	select_branch_fusions();
 }
 
 void Compiler::select_ops_in(Expr* expr, Expr* current)
@@ -3044,11 +3054,6 @@ void Compiler::select_ops_in(Expr* expr, Expr* current)
 		case ExprKind::SetRef:
 			walk_children(expr, [&](Expr* e) { select_ops_in(e, current); });
 			select_field_op(expr, current, expr->set_ref.obj, expr->set_ref.key, true);
-			break;
-
-		case ExprKind::Let:
-			walk_children(expr, [&](Expr* e) { select_ops_in(e, current); });
-			select_if_cmp(expr);
 			break;
 
 		default:
@@ -3241,87 +3246,104 @@ void Compiler::select_call_op(Expr* expr, Expr* current)
 	}
 }
 
-// ANF spells a branch on a compare as (let ((%t (< a b))) (if %t C A)): reselect the compare
-// as the fused branch op. The fold drops the write to %t, so any second ref to the temp in a
-// branch arm -- (or x y) expands to (if %t %t y) -- keeps the compare unfused.
-void Compiler::select_if_cmp(Expr* expr)
+void Compiler::collect_branch_fusion_facts(Program& program)
 {
-	for (uint32_t i = 0; i < expr->let.names.size(); ++i)
+	branch_fusions_.clear();
+	struct Candidate
 	{
-		if (!is_anf_temp(expr->let.names[i]))
+		Expr* producer;
+		Expr* branch = nullptr;
+		uint32_t uses;
+	};
+	std::unordered_map<uint64_t, Candidate> candidates;
+	auto&& collect_candidates = [&](Expr* expr, auto&& self) -> void
+	{
+		if (expr->kind == ExprKind::Let)
 		{
-			continue;
+			for (uint32_t i = 0; i < expr->let.names.size(); ++i)
+			{
+				if (!is_anf_temp(expr->let.names[i]))
+				{
+					continue;
+				}
+				Expr* value = expr->let.vals[i];
+				while (value->kind == ExprKind::Let && value->let.body.size() == 1)
+				{
+					value = value->let.body[0];
+				}
+				if (value->kind == ExprKind::Call)
+				{
+					ResolvedBinding binding{.lambda = expr->let.owner, .breadth = expr->let.slot_base + i};
+					uint32_t uses = binding_use_count(binding.lambda, binding.breadth);
+					candidates.emplace(binding_key(binding), Candidate{value, nullptr, uses});
+				}
+			}
 		}
-		Expr* val = expr->let.vals[i];
-		while (val->kind == ExprKind::Let && val->let.body.size() == 1)
+		walk_children(expr, [&](Expr* child) { self(child, self); });
+	};
+	for (Expr* form : program.forms)
+	{
+		collect_candidates(form, collect_candidates);
+	}
+	auto&& candidate_for = [&](Expr* expr) -> Candidate*
+	{
+		ResolvedBinding binding = bindings_[expr->id];
+		if (!binding.lambda)
 		{
-			val = val->let.body[0];
+			return nullptr;
 		}
-		if (val->kind != ExprKind::Call || !selected_ops_[val->id])
+		auto found = candidates.find(binding_key(binding));
+		return found == candidates.end() ? nullptr : &found->second;
+	};
+	auto&& collect_branches = [&](Expr* expr, auto&& self) -> void
+	{
+		if (expr->kind == ExprKind::If && expr->if_.test->kind == ExprKind::VarRef)
 		{
-			continue;
+			Candidate* candidate = candidate_for(expr->if_.test);
+			if (candidate)
+			{
+				candidate->branch = expr;
+			}
 		}
+		walk_children(expr, [&](Expr* child) { self(child, self); });
+	};
+	for (Expr* form : program.forms)
+	{
+		collect_branches(form, collect_branches);
+	}
+	for (const std::pair<const uint64_t, Candidate>& entry : candidates)
+	{
+		const Candidate& candidate = entry.second;
+		if (candidate.uses == 1 && candidate.branch)
+		{
+			branch_fusions_[candidate.branch->id] = candidate.producer;
+		}
+	}
+}
+
+void Compiler::select_branch_fusions()
+{
+	for (auto it = branch_fusions_.begin(); it != branch_fusions_.end();)
+	{
+		Expr* comparison = it->second;
 		Opcode fused;
-		switch (selected_ops_[val->id]->op)
+		switch (selected_ops_[comparison->id]->op)
 		{
-			case Opcode::numeq:   fused = Opcode::if_numeq;  break;
-			case Opcode::eq:      fused = Opcode::if_eq;      break;
-			case Opcode::lt:      fused = Opcode::if_lt;      break;
-			case Opcode::le:      fused = Opcode::if_le;      break;
-			case Opcode::gt:      fused = Opcode::if_gt;      break;
-			case Opcode::ge:      fused = Opcode::if_ge;      break;
-			case Opcode::numeqk:  fused = Opcode::if_numeqk; break;
-			case Opcode::eqk:     fused = Opcode::if_eqk;     break;
-			case Opcode::ltk:     fused = Opcode::if_ltk;     break;
-			default:              continue;
+			case Opcode::numeq:  fused = Opcode::if_numeq;  break;
+			case Opcode::eq:     fused = Opcode::if_eq;      break;
+			case Opcode::lt:     fused = Opcode::if_lt;      break;
+			case Opcode::le:     fused = Opcode::if_le;      break;
+			case Opcode::gt:     fused = Opcode::if_gt;      break;
+			case Opcode::ge:     fused = Opcode::if_ge;      break;
+			case Opcode::numeqk: fused = Opcode::if_numeqk; break;
+			case Opcode::eqk:    fused = Opcode::if_eqk;     break;
+			case Opcode::ltk:    fused = Opcode::if_ltk;     break;
+			default:
+				it = branch_fusions_.erase(it);
+				continue;
 		}
-		ResolvedBinding temp{.lambda = expr->let.owner, .breadth = expr->let.slot_base + i};
-		Expr* if_e = nullptr;
-		bool multiple_tests = false;
-		auto&& find_test = [&](Expr* e, auto&& self) -> void
-		{
-			if (e->kind == ExprKind::If && e->if_.test->kind == ExprKind::VarRef
-				&& e->if_.test->var_ref.name == expr->let.names[i])
-			{
-				if (if_e)
-				{
-					multiple_tests = true;
-				}
-				else
-				{
-					if_e = e;
-				}
-			}
-			walk_children(e, [&](Expr* child) { self(child, self); });
-		};
-		for (Expr* body : expr->let.body)
-		{
-			find_test(body, find_test);
-		}
-		if (!if_e || multiple_tests)
-		{
-			continue;
-		}
-		bool reread = false;
-		auto&& scan = [&](Expr* e, auto&& self) -> void
-		{
-			if (e->kind == ExprKind::VarRef || e->kind == ExprKind::SetBang)
-			{
-				ResolvedBinding b = binding(e);
-				reread = reread || (b.lambda == temp.lambda && b.breadth == temp.breadth);
-			}
-			walk_children(e, [&](Expr* child) { self(child, self); });
-		};
-		scan(if_e->if_.consequent, scan);
-		if (if_e->if_.alternate)
-		{
-			scan(if_e->if_.alternate, scan);
-		}
-		if (!reread)
-		{
-			selected_ops_[val->id]->op = fused;
-			fused_if_tests_[if_e->id] = val;
-		}
+		selected_ops_[comparison->id]->op = fused;
+		++it;
 	}
 }
 
@@ -4254,9 +4276,6 @@ namespace
 		// the Call expr id.
 		std::unordered_map<uint32_t, uint16_t> call_windows{};
 
-		// Compares reselected as fused branch ops: the let binding skips them and
-		// the consuming If emits them, keyed by the If expr id.
-
 		LirLambda& current_lambda()
 		{
 			// prog.lambdas reallocates as nested lambdas append; never hold the
@@ -5100,8 +5119,8 @@ namespace
 				{
 					uint32_t l_alt = prog.next_label++;
 					uint32_t l_end = prog.next_label++;
-					auto fused = db.fused_if_tests_.find(expr->id);
-					if (fused != db.fused_if_tests_.end())
+					auto fused = db.branch_fusions_.find(expr->id);
+					if (fused != db.branch_fusions_.end())
 					{
 						Expr* cmp = fused->second;
 						Compiler::OpSelection sel = selection(cmp, "fused test");
@@ -5548,8 +5567,6 @@ namespace
 Bytecode Compiler::compile()
 {
 	Program& program = ast();
-
-	collect_used_bindings(program);
 
 	LirProgram lir;
 	LirEmitter emitter{*this, lir};
