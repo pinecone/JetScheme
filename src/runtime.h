@@ -349,6 +349,19 @@ bool compare_objects(Atom obj1, Atom obj2)
 
 bool is_eqv(Atom a, Atom b);
 
+inline bool is_eq(Atom a, Atom b)
+{
+	if (a.bits == b.bits)
+	{
+		return true;
+	}
+	if (a.is_tagged() && b.is_tagged() && a.tag() == jet_tag::symbol && b.tag() == jet_tag::symbol)
+	{
+		return *unbox<Symbol>(a) == *unbox<Symbol>(b);
+	}
+	return false;
+}
+
 void init_equivalence(Env& e);
 
 Atom display(Atom a);

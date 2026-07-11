@@ -1097,7 +1097,7 @@ JET_ALWAYS_INLINE static Atom numeq_op(Atom a, Atom b)
 	JET_DIE_UNLESS(is_type<jet::Type::Number>(a) && is_type<jet::Type::Number>(b), "=: expected numbers");
 	return box(unbox<Number>(a) == unbox<Number>(b));
 }
-JET_ALWAYS_INLINE static Atom eq_op(Atom a, Atom b) { return box(is_eqv(a, b)); }
+JET_ALWAYS_INLINE static Atom eq_op(Atom a, Atom b) { return box(is_eq(a, b)); }
 JET_ALWAYS_INLINE static Atom lt_op(Atom a, Atom b)
 {
 	JET_DIE_UNLESS(is_type<jet::Type::Number>(a) && is_type<jet::Type::Number>(b), "<: expected numbers");

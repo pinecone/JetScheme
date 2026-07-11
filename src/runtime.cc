@@ -555,6 +555,8 @@ static Atom eqv_prim(Atom* first, Atom*)
 	return box(is_eqv(first[0], first[1]));
 }
 
+static Atom eq_prim(Atom* first, Atom*) { return box(is_eq(first[0], first[1])); }
+
 static Atom equal_prim(Atom* first, Atom*)
 {
 	return box(equal(first[0], first[1]));
@@ -577,7 +579,7 @@ static bool symbol_eq(Atom a, Atom b)
 void init_equivalence(Env& e)
 {
 	e.bind("eqv?", make_prim<eqv_prim>(exactly(2)));
-	e.bind("eq?", make_prim<eqv_prim>(exactly(2)));
+	e.bind("eq?", make_prim<eq_prim>(exactly(2)));
 	e.bind("equal?", make_prim<equal_prim>(exactly(2)));
 	e.bind("boolean=?", make_prim<boolean_eq>());
 	e.bind("symbol=?", make_prim<symbol_eq>());

@@ -49,6 +49,12 @@
 ($check (= 11 ((lambda (x) ((lambda (x) (+ x 1)) (* x 2))) 5)))
 ($check (= 42 ((lambda () 42))))
 
+(define (make-equivalent-procedure) (lambda () #t))
+(define equivalent-procedure-1 (make-equivalent-procedure))
+(define equivalent-procedure-2 (make-equivalent-procedure))
+($check (eq? equivalent-procedure-1 equivalent-procedure-1))
+($check (not (eq? equivalent-procedure-1 equivalent-procedure-2)))
+
 ;; Closure capture: basic make-adder
 (define (make-adder x)
   (lambda (y) (+ y x)))
