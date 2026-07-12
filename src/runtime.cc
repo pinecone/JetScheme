@@ -478,7 +478,14 @@ bool is_eqv(Atom obj1, Atom obj2)
 	}
 }
 
-static bool is_equal(Atom obj1, Atom obj2)
+static Atom eqv_prim(Atom* first, Atom*)
+{
+	return box(is_eqv(first[0], first[1]));
+}
+
+static Atom eq_prim(Atom* first, Atom*) { return box(is_eq(first[0], first[1])); }
+
+static Atom equal_prim(Atom* first, Atom*)
 {
 	struct EqualPair
 	{
@@ -491,36 +498,30 @@ static bool is_equal(Atom obj1, Atom obj2)
 	{
 		size_t operator()(const EqualPair& pair) const
 		{
-			size_t first = std::hash<uint64_t>{}(pair.first);
-			size_t second = std::hash<uint64_t>{}(pair.second);
-			return first ^ (second + 0x9e3779b9 + (first << 6) + (first >> 2));
+			size_t first_hash = std::hash<uint64_t>{}(pair.first);
+			size_t second_hash = std::hash<uint64_t>{}(pair.second);
+			return first_hash ^ (second_hash + 0x9e3779b9 + (first_hash << 6) + (first_hash >> 2));
 		}
 	};
 
 	std::unordered_set<EqualPair, EqualPairHash> seen;
-	auto&& impl = [&seen](auto&& self, Atom a, Atom b) -> bool
-	{
+	auto&& is_equal = [&seen](auto&& self, Atom a, Atom b) -> bool {
 		if (is_eqv(a, b))
 		{
 			return true;
 		}
-
 		if (a.type() != b.type())
 		{
 			return false;
 		}
-
 		switch (a.type())
 		{
 			case jet::Type::Pair:
-			{
 				if (!seen.insert({a.bits, b.bits}).second)
 				{
 					return true;
 				}
 				return self(self, car(a), car(b)) && self(self, cdr(a), cdr(b));
-			}
-
 			case jet::Type::Vector:
 			{
 				Vec& v1 = *unbox<Vec>(a);
@@ -542,30 +543,15 @@ static bool is_equal(Atom obj1, Atom obj2)
 				}
 				return true;
 			}
-
 			case jet::Type::String:
 				return *unbox<String>(a) == *unbox<String>(b);
-
 			case jet::Type::ByteVector:
 				return *unbox<ByteVector>(a) == *unbox<ByteVector>(b);
-
 			default:
 				return false;
 		}
 	};
-	return impl(impl, obj1, obj2);
-}
-
-static Atom eqv_prim(Atom* first, Atom*)
-{
-	return box(is_eqv(first[0], first[1]));
-}
-
-static Atom eq_prim(Atom* first, Atom*) { return box(is_eq(first[0], first[1])); }
-
-static Atom equal_prim(Atom* first, Atom*)
-{
-	return box(is_equal(first[0], first[1]));
+	return box(is_equal(is_equal, first[0], first[1]));
 }
 
 static bool boolean_eq(Atom a, Atom b)
@@ -620,22 +606,19 @@ static void print_list(Cons& v, std::string& out)
 }
 
 template <printer_t print>
-static void print_vector_element(Atom x, std::string& out)
-{
-	print(x, out);
-	out += ' ';
-}
-
-template <printer_t print>
 static void print_vector(Vec& v, std::string& out)
 {
+	auto&& print_vector_element = [](Atom x, std::string& output) {
+		print(x, output);
+		output += ' ';
+	};
 	out += "#(";
 	if (!v.empty())
 	{
 		auto end = --v.end();
 		for (auto it = v.begin(); it != end; ++it)
 		{
-			print_vector_element<print>(*it, out);
+			print_vector_element(*it, out);
 		}
 		print(v.back(), out);
 	}
@@ -739,26 +722,23 @@ static Atom display_to(Atom a, std::string& out)
 	return Atom{};
 }
 
-static void write_escaped_char(char c, std::string& out)
-{
-	static std::string_view emap[256];
-	emap[static_cast<int>('\\')] = "\\";
-	emap[static_cast<int>('\n')] = "\\n";
-	emap[static_cast<int>('\t')] = "\\t";
-
-	std::string_view esc = emap[static_cast<int>(c)];
-	if (!esc.empty())
-	{
-		out += esc;
-	}
-	else
-	{
-		out += c;
-	}
-}
-
 Atom write_to(Atom a, std::string& out)
 {
+	auto&& write_escaped_char = [](char c, std::string& output) {
+		static std::string_view emap[256];
+		emap[static_cast<int>('\\')] = "\\";
+		emap[static_cast<int>('\n')] = "\\n";
+		emap[static_cast<int>('\t')] = "\\t";
+		std::string_view esc = emap[static_cast<int>(c)];
+		if (!esc.empty())
+		{
+			output += esc;
+		}
+		else
+		{
+			output += c;
+		}
+	};
 	switch (a.type())
 	{
 		case jet::Type::Character:
@@ -964,18 +944,9 @@ struct str_ci_le { bool operator()(String& a, String& b) { return ci_cmp(a, b) <
 struct str_ci_gt { bool operator()(String& a, String& b) { return ci_cmp(a, b) >  0; } };
 struct str_ci_ge { bool operator()(String& a, String& b) { return ci_cmp(a, b) >= 0; } };
 
-static int to_lower_byte(unsigned char c)
-{
-	return std::tolower(c);
-}
-
-static int to_upper_byte(unsigned char c)
-{
-	return std::toupper(c);
-}
-
 static Atom string_upcase(Atom s)
 {
+	auto&& to_upper_byte = [](unsigned char c) { return std::toupper(c); };
 	String out = *slow_unbox<String>(s);
 	std::transform(out.begin(), out.end(), out.begin(), to_upper_byte);
 	return box(out);
@@ -983,6 +954,7 @@ static Atom string_upcase(Atom s)
 
 static Atom string_downcase(Atom s)
 {
+	auto&& to_lower_byte = [](unsigned char c) { return std::tolower(c); };
 	String out = *slow_unbox<String>(s);
 	std::transform(out.begin(), out.end(), out.begin(), to_lower_byte);
 	return box(out);

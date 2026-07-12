@@ -1876,20 +1876,6 @@ static std::vector<Token> lex(IPort* port, Arena& arena, uint32_t file_id)
 	return std::move(state.tokens);
 }
 
-static Program parse(std::span<Token> tokens, Arena& arena, std::vector<std::string>& file_table,
-					 uint32_t& next_id)
-{
-	ParseState state{.tokens = tokens, .arena = arena, .file_table = file_table, .next_id = next_id};
-
-	std::vector<Expr*> forms;
-	while (!state.at_end())
-	{
-		forms.push_back(state.parse_expr());
-	}
-
-	return {state.make_slice(forms)};
-}
-
 std::vector<Token>& Compiler::tokens()
 {
 	if (!tokens_)
@@ -1909,7 +1895,16 @@ Program& Compiler::ast()
 			file_table.push_back(filename);
 		}
 		std::vector<Token>& toks = tokens();
-		ast_ = parse(toks, arena, file_table, next_expr_id_);
+		auto&& parse = [&]() -> Program {
+			ParseState state{.tokens = toks, .arena = arena, .file_table = file_table, .next_id = next_expr_id_};
+			std::vector<Expr*> forms;
+			while (!state.at_end())
+			{
+				forms.push_back(state.parse_expr());
+			}
+			return {state.make_slice(forms)};
+		};
+		ast_ = parse();
 		for (uint32_t i = 0; i < ast_->forms.size(); ++i)
 		{
 			ast_->forms[i] = expand(ast_->forms[i]);
@@ -2452,27 +2447,25 @@ Expr* Compiler::compute_anf(Expr* expr)
 	}
 }
 
-static bool is_anf_atom(Expr* e)
-{
-	switch (e->kind)
-	{
-		case ExprKind::NumberLit:
-		case ExprKind::StringLit:
-		case ExprKind::BooleanLit:
-		case ExprKind::CharacterLit:
-		case ExprKind::SymbolLit:
-		case ExprKind::UnknownLit:
-		case ExprKind::VarRef:
-		case ExprKind::PrimRef:
-		case ExprKind::Lambda:
-			return true;
-		default:
-			return false;
-	}
-}
-
 void Compiler::verify_anf(Expr* expr)
 {
+	auto&& is_anf_atom = [](Expr* e) -> bool {
+		switch (e->kind)
+		{
+			case ExprKind::NumberLit:
+			case ExprKind::StringLit:
+			case ExprKind::BooleanLit:
+			case ExprKind::CharacterLit:
+			case ExprKind::SymbolLit:
+			case ExprKind::UnknownLit:
+			case ExprKind::VarRef:
+			case ExprKind::PrimRef:
+			case ExprKind::Lambda:
+				return true;
+			default:
+				return false;
+		}
+	};
 	auto check_atom = [&](Expr* e) {
 		JET_DIE_UNLESS(is_anf_atom(e), "%d:%d: anf: non-atomic operand (kind %d)", e->loc.line,
 						e->loc.col, static_cast<int>(e->kind));

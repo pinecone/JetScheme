@@ -263,106 +263,101 @@ void collect(VmState& s)
 	s.stack_watermark = scan_frontier;
 }
 
-static void link_opcode_handlers(Code* begin, Code* end)
-{
-	// The op tag at p[VM_OP_SLOT_SIZE] is left in place so trace/profile can
-	// recover it.
-	Code* p = begin;
-	while (p < end)
-	{
-		uint8_t op = p[VM_OP_SLOT_SIZE];
-		size_t step = opcode_step(op, p + OPCODE_SIZE);
-		VmOp h = dispatch_table[op];
-		std::memcpy(p, &h, sizeof(h));
-		p += step;
-	}
-}
-
-static Code* decode_constant(InternedSymbols& symbols, Code* p, Atom& out, Env& env)
-{
-	ConstTag tag = static_cast<ConstTag>(*p++);
-	switch (tag)
-	{
-		case ConstTag::Number:
-		{
-			Number n;
-			memcpy(&n, p, sizeof(n));
-			out = box(n);
-			return p + sizeof(n);
-		}
-		case ConstTag::Boolean:
-		{
-			bool v;
-			memcpy(&v, p, sizeof(v));
-			out = box(v);
-			return p + sizeof(v);
-		}
-		case ConstTag::Character:
-		{
-			Character c;
-			memcpy(&c, p, sizeof(c));
-			out = box(c);
-			return p + sizeof(c);
-		}
-		case ConstTag::String:
-		{
-			char* s = reinterpret_cast<char*>(p);
-			out = box(String(s));
-			return p + strlen(s) + 1;
-		}
-		case ConstTag::Symbol:
-		{
-			char* value = reinterpret_cast<char*>(p);
-			out = box(symbols.intern(value));
-			return p + strlen(value) + 1;
-		}
-		case ConstTag::EmptyList:
-			out = box(EmptyList{});
-			return p;
-		case ConstTag::Unknown:
-			out = Atom();
-			return p;
-		case ConstTag::GlobalName:
-		{
-			char* name = reinterpret_cast<char*>(p);
-			Atom* a = env.lookup(name);
-			JET_DIE_UNLESS(a, "unknown primitive in pool: <%s>", name);
-			out = *a;
-			return p + strlen(name) + 1;
-		}
-		case ConstTag::Lambda:
-		{
-			bool is_n_ary;
-			memcpy(&is_n_ary, p, sizeof(is_n_ary));
-			p += sizeof(is_n_ary);
-			Arity arity = n_ary();
-			if (!is_n_ary)
-			{
-				size_t n;
-				memcpy(&n, p, sizeof(n));
-				p += sizeof(n);
-				arity = exactly(n);
-			}
-			uint16_t n_locals;
-			memcpy(&n_locals, p, sizeof(n_locals));
-			p += sizeof(n_locals);
-			size_t code_size;
-			memcpy(&code_size, p, sizeof(code_size));
-			p += sizeof(code_size);
-			Code* lambda_code = p;
-			p += code_size;
-			link_opcode_handlers(lambda_code, lambda_code + code_size);
-			const char* lambda_name = reinterpret_cast<const char*>(p);
-			p += strlen(lambda_name) + 1;
-			out = box<Lambda>(lambda_code, arity, n_locals, static_cast<uint16_t>(0));
-			return p;
-		}
-	}
-	JET_DIE("unknown constant-pool tag <%d>", static_cast<int>(tag));
-}
-
 LoadedProgram load_program(InternedSymbols& symbols, Code* bytecode, size_t n_bytes, Env& env)
 {
+	auto&& link_opcode_handlers = [](Code* begin, Code* end) {
+		// The opcode tag stays in place so trace and profile can recover it.
+		Code* code = begin;
+		while (code < end)
+		{
+			uint8_t op = code[VM_OP_SLOT_SIZE];
+			size_t step = opcode_step(op, code + OPCODE_SIZE);
+			VmOp handler = dispatch_table[op];
+			std::memcpy(code, &handler, sizeof(handler));
+			code += step;
+		}
+	};
+	auto&& decode_constant = [&](Code* code, Atom& out) -> Code* {
+		ConstTag tag = static_cast<ConstTag>(*code++);
+		switch (tag)
+		{
+			case ConstTag::Number:
+			{
+				Number n;
+				memcpy(&n, code, sizeof(n));
+				out = box(n);
+				return code + sizeof(n);
+			}
+			case ConstTag::Boolean:
+			{
+				bool value;
+				memcpy(&value, code, sizeof(value));
+				out = box(value);
+				return code + sizeof(value);
+			}
+			case ConstTag::Character:
+			{
+				Character character;
+				memcpy(&character, code, sizeof(character));
+				out = box(character);
+				return code + sizeof(character);
+			}
+			case ConstTag::String:
+			{
+				char* string = reinterpret_cast<char*>(code);
+				out = box(String(string));
+				return code + strlen(string) + 1;
+			}
+			case ConstTag::Symbol:
+			{
+				char* value = reinterpret_cast<char*>(code);
+				out = box(symbols.intern(value));
+				return code + strlen(value) + 1;
+			}
+			case ConstTag::EmptyList:
+				out = box(EmptyList{});
+				return code;
+			case ConstTag::Unknown:
+				out = Atom();
+				return code;
+			case ConstTag::GlobalName:
+			{
+				char* name = reinterpret_cast<char*>(code);
+				Atom* atom = env.lookup(name);
+				JET_DIE_UNLESS(atom, "unknown primitive in pool: <%s>", name);
+				out = *atom;
+				return code + strlen(name) + 1;
+			}
+			case ConstTag::Lambda:
+			{
+				bool is_n_ary;
+				memcpy(&is_n_ary, code, sizeof(is_n_ary));
+				code += sizeof(is_n_ary);
+				Arity arity = n_ary();
+				if (!is_n_ary)
+				{
+					size_t n;
+					memcpy(&n, code, sizeof(n));
+					code += sizeof(n);
+					arity = exactly(n);
+				}
+				uint16_t n_locals;
+				memcpy(&n_locals, code, sizeof(n_locals));
+				code += sizeof(n_locals);
+				size_t code_size;
+				memcpy(&code_size, code, sizeof(code_size));
+				code += sizeof(code_size);
+				Code* lambda_code = code;
+				code += code_size;
+				link_opcode_handlers(lambda_code, lambda_code + code_size);
+				const char* lambda_name = reinterpret_cast<const char*>(code);
+				code += strlen(lambda_name) + 1;
+				out = box<Lambda>(lambda_code, arity, n_locals, static_cast<uint16_t>(0));
+				return code;
+			}
+		}
+		JET_DIE("unknown constant-pool tag <%d>", static_cast<int>(tag));
+	};
 	LoadedProgram prog;
 	Code* p = bytecode;
 	memcpy(&prog.n_toplevel_slots, p, sizeof(prog.n_toplevel_slots));
@@ -375,7 +370,7 @@ LoadedProgram load_program(InternedSymbols& symbols, Code* bytecode, size_t n_by
 	for (uint32_t i = 0; i < n_constants; ++i)
 	{
 		Atom a;
-		p = decode_constant(symbols, p, a, env);
+		p = decode_constant(p, a);
 		prog.constants.push_back(a);
 	}
 	link_opcode_handlers(p, bytecode + n_bytes);
@@ -388,47 +383,43 @@ constexpr size_t STACK_CAPACITY = 1 << 20;
 // the slack below the true end absorbs the overshoot.
 constexpr size_t STACK_SLACK = 4096;
 
-static Atom pack_args_to_list(Atom* first, Atom* last)
-{
-	Atom result = box(EmptyList());
-	while (first != last)
-	{
-		result = cons(*--last, result);
-	}
-	return result;
-}
-
-static size_t install_args(Lambda& la, Atom* stack_base, size_t base, Atom* args, size_t nargs)
-{
-	bool nary = is_nary(la.arity);
-	size_t n_copy = nary ? la.arity.expected : nargs;
-	Atom* dst = stack_base + base;
-	switch (n_copy)
-	{
-		case 0: break;
-		case 1: __builtin_memmove(dst, args, 1 * sizeof(Atom)); break;
-	  case 2: __builtin_memmove(dst, args, 2 * sizeof(Atom)); break;
-		case 3: __builtin_memmove(dst, args, 3 * sizeof(Atom)); break;
-		case 4: __builtin_memmove(dst, args, 4 * sizeof(Atom)); break;
-		default: std::memmove(dst, args, n_copy * sizeof(Atom)); break;
-	}
-	if (nary) [[unlikely]]
-	{
-		dst[n_copy] = pack_args_to_list(args + n_copy, args + nargs);
-		return n_copy + 1;
-	}
-	return n_copy;
-}
-
 template <bool is_tail>
 JET_NOINLINE JET_PRESERVE_NONE static void slow_call_lambda(VM_OP_PARAMS)
 {
+	auto&& pack_args_to_list = [](Atom* first, Atom* last) -> Atom {
+		Atom result = box(EmptyList());
+		while (first != last)
+		{
+			result = cons(*--last, result);
+		}
+		return result;
+	};
+	auto&& install_args = [&](Lambda& lambda, size_t base, Atom* call_args, size_t nargs) -> size_t {
+		bool nary = is_nary(lambda.arity);
+		size_t n_copy = nary ? lambda.arity.expected : nargs;
+		Atom* dst = stack_base + base;
+		switch (n_copy)
+		{
+			case 0: break;
+			case 1: __builtin_memmove(dst, call_args, sizeof(Atom)); break;
+			case 2: __builtin_memmove(dst, call_args, 2 * sizeof(Atom)); break;
+			case 3: __builtin_memmove(dst, call_args, 3 * sizeof(Atom)); break;
+			case 4: __builtin_memmove(dst, call_args, 4 * sizeof(Atom)); break;
+			default: std::memmove(dst, call_args, n_copy * sizeof(Atom)); break;
+		}
+		if (nary) [[unlikely]]
+		{
+			dst[n_copy] = pack_args_to_list(call_args + n_copy, call_args + nargs);
+			return n_copy + 1;
+		}
+		return n_copy;
+	};
 	Lambda& la = *unbox<Lambda>(callee);
 	size_t nargs = static_cast<size_t>(stack_top - args);
 	size_t base = is_tail ? frame_base : result_slot;
 	if constexpr (is_tail)
 	{
-		install_args(la, stack_base, base, args, nargs);
+		install_args(la, base, args, nargs);
 		frame->code = la.code;
 		frame->closure = &la;
 		frame->top = base + la.n_locals;
@@ -1011,11 +1002,6 @@ static uint16_t type_bits(Atom a)
 	return static_cast<uint16_t>(a.bits >> 48);
 }
 
-static bool field_ic_hit(FieldIc* ic, Atom obj)
-{
-	return ic->ic_handler != 0 && ic->ic_dispatch_key == type_bits(obj);
-}
-
 static VmOp field_install_ldf(FieldIc* ic, Atom obj)
 {
 	ObjShape* shape = shape_of(obj);
@@ -1057,6 +1043,9 @@ static VmOp field_install_stfk(FieldIc* ic, Atom obj)
 template<typename Op, auto InstallHandler>
 JET_PRESERVE_NONE static void op_field_reg(VM_OP_PARAMS)
 {
+	auto&& field_ic_hit = [](FieldIc* ic, Atom obj) {
+		return ic->ic_handler != 0 && ic->ic_dispatch_key == type_bits(obj);
+	};
 	Op* op = reinterpret_cast<Op*>(pc);
 	Atom obj = stack_base[frame_base + op->obj];
 	pc += sizeof(*op);

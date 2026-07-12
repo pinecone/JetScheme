@@ -17,22 +17,20 @@
 
 Profile g_profile{};
 
-static std::string_view profile_opcode_name(int op)
+void profile_print()
 {
-	switch (op)
-	{
+	auto&& profile_opcode_name = [](int op) -> std::string_view {
+		switch (op)
+		{
 #define X(name, disp)                                                                                        \
 	case static_cast<int>(Opcode::name):                                                                     \
 		return disp;
 		JET_OPCODES(X)
 #undef X
-		default:
-			return "unknown";
-	}
-}
-
-void profile_print()
-{
+			default:
+				return "unknown";
+		}
+	};
 	uint64_t total_ops = 0;
 	for (int i = 0; i < 256; ++i)
 	{
@@ -397,28 +395,26 @@ void decode_args(FILE* out, uint8_t op, Code* p)
 
 bool g_trace_enabled = false;
 
-static std::string brief(Atom a)
-{
-	std::string s;
-	write_to(a, s);
-	for (size_t i = 0; i < s.size(); ++i)
-	{
-		if (s[i] == '\n' || s[i] == '\r' || s[i] == '\t')
-		{
-			s[i] = ' ';
-		}
-	}
-	constexpr size_t MAX_LEN = 24;
-	if (s.size() > MAX_LEN)
-	{
-		s.resize(MAX_LEN);
-		s += "...";
-	}
-	return s;
-}
-
 void trace_step(VmState& s, Frame* /*frame*/, Code* pc, Atom* stack_top)
 {
+	auto&& brief = [](Atom a) -> std::string {
+		std::string result;
+		write_to(a, result);
+		for (size_t i = 0; i < result.size(); ++i)
+		{
+			if (result[i] == '\n' || result[i] == '\r' || result[i] == '\t')
+			{
+				result[i] = ' ';
+			}
+		}
+		constexpr size_t MAX_LEN = 24;
+		if (result.size() > MAX_LEN)
+		{
+			result.resize(MAX_LEN);
+			result += "...";
+		}
+		return result;
+	};
 	uint8_t op = pc[-1];
 	std::fprintf(stderr, "[d=%zu sp=%ld] %s", s.frames.size(), stack_top - s.stack_base, opcode_name(op));
 	decode_args(stderr, op, pc);
