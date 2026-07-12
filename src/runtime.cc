@@ -16,6 +16,7 @@
 #include <iomanip>
 #include <strings.h>
 #include <random>
+#include <unordered_set>
 
 std::string_view type_name(jet::Type type)
 {
@@ -479,48 +480,80 @@ bool is_eqv(Atom obj1, Atom obj2)
 
 static bool is_equal(Atom obj1, Atom obj2)
 {
-	if (is_eqv(obj1, obj2))
+	struct EqualPair
 	{
-		return true;
-	}
+		uint64_t first;
+		uint64_t second;
+		bool operator==(const EqualPair&) const = default;
+	};
 
-	if (obj1.type() != obj2.type())
+	struct EqualPairHash
 	{
-		return false;
-	}
-
-	switch (obj1.type())
-	{
-		case jet::Type::Pair:
-			return is_equal(car(obj1), car(obj2)) && is_equal(cdr(obj1), cdr(obj2));
-
-		case jet::Type::Vector:
+		size_t operator()(const EqualPair& pair) const
 		{
-			Vec& v1 = *unbox<Vec>(obj1);
-			Vec& v2 = *unbox<Vec>(obj2);
-			if (v1.size() != v2.size())
-			{
-				return false;
-			}
-			for (auto it1 = v1.begin(), it2 = v2.begin(); it1 != v1.end(); ++it1, ++it2)
-			{
-				if (!is_equal(*it1, *it2))
-				{
-					return false;
-				}
-			}
+			size_t first = std::hash<uint64_t>{}(pair.first);
+			size_t second = std::hash<uint64_t>{}(pair.second);
+			return first ^ (second + 0x9e3779b9 + (first << 6) + (first >> 2));
+		}
+	};
+
+	std::unordered_set<EqualPair, EqualPairHash> seen;
+	auto&& impl = [&seen](auto&& self, Atom a, Atom b) -> bool
+	{
+		if (is_eqv(a, b))
+		{
 			return true;
 		}
 
-		case jet::Type::String:
-			return *unbox<String>(obj1) == *unbox<String>(obj2);
-
-		case jet::Type::ByteVector:
-			return *unbox<ByteVector>(obj1) == *unbox<ByteVector>(obj2);
-
-		default:
+		if (a.type() != b.type())
+		{
 			return false;
-	}
+		}
+
+		switch (a.type())
+		{
+			case jet::Type::Pair:
+			{
+				if (!seen.insert({a.bits, b.bits}).second)
+				{
+					return true;
+				}
+				return self(self, car(a), car(b)) && self(self, cdr(a), cdr(b));
+			}
+
+			case jet::Type::Vector:
+			{
+				Vec& v1 = *unbox<Vec>(a);
+				Vec& v2 = *unbox<Vec>(b);
+				if (v1.size() != v2.size())
+				{
+					return false;
+				}
+				if (!seen.insert({a.bits, b.bits}).second)
+				{
+					return true;
+				}
+				for (auto it1 = v1.begin(), it2 = v2.begin(); it1 != v1.end(); ++it1, ++it2)
+				{
+					if (!self(self, *it1, *it2))
+					{
+						return false;
+					}
+				}
+				return true;
+			}
+
+			case jet::Type::String:
+				return *unbox<String>(a) == *unbox<String>(b);
+
+			case jet::Type::ByteVector:
+				return *unbox<ByteVector>(a) == *unbox<ByteVector>(b);
+
+			default:
+				return false;
+		}
+	};
+	return impl(impl, obj1, obj2);
 }
 
 static Atom eqv_prim(Atom* first, Atom*)

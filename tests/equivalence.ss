@@ -294,6 +294,63 @@
 ($check (transitive? eqv? law-values))
 ($check (transitive? equal? law-values))
 
+(define pair-cycle-1 (cons 'a '()))
+(set-cdr! pair-cycle-1 pair-cycle-1)
+($check (equal? pair-cycle-1 pair-cycle-1))
+
+(define pair-cycle-2 (cons 'a '()))
+(set-cdr! pair-cycle-2 pair-cycle-2)
+($check (not (eq? pair-cycle-1 pair-cycle-2)))
+($check (not (eqv? pair-cycle-1 pair-cycle-2)))
+($check (equal? pair-cycle-1 pair-cycle-2))
+
+(define unequal-pair-cycle (cons 'b '()))
+(set-cdr! unequal-pair-cycle unequal-pair-cycle)
+($check (not (equal? pair-cycle-1 unequal-pair-cycle)))
+
+(define two-node-cycle-1 (cons 'a '()))
+(define two-node-cycle-2 (cons 'a two-node-cycle-1))
+(set-cdr! two-node-cycle-1 two-node-cycle-2)
+($check (equal? pair-cycle-1 two-node-cycle-1))
+
+(define late-mismatch-cycle-1 (cons 'a '()))
+(define late-mismatch-cycle-2 (cons 'b late-mismatch-cycle-1))
+(set-cdr! late-mismatch-cycle-1 late-mismatch-cycle-2)
+($check (not (equal? pair-cycle-1 late-mismatch-cycle-1)))
+($check (not (equal? pair-cycle-1 '(a))))
+
+(define vector-cycle-1 (vector #f))
+(vector-set! vector-cycle-1 0 vector-cycle-1)
+($check (equal? vector-cycle-1 vector-cycle-1))
+
+(define vector-cycle-2 (vector #f))
+(vector-set! vector-cycle-2 0 vector-cycle-2)
+($check (not (eq? vector-cycle-1 vector-cycle-2)))
+($check (not (eqv? vector-cycle-1 vector-cycle-2)))
+($check (equal? vector-cycle-1 vector-cycle-2))
+
+(define unequal-vector-cycle-1 (vector 1 #f))
+(vector-set! unequal-vector-cycle-1 1 unequal-vector-cycle-1)
+(define unequal-vector-cycle-2 (vector 2 #f))
+(vector-set! unequal-vector-cycle-2 1 unequal-vector-cycle-2)
+($check (not (equal? unequal-vector-cycle-1 unequal-vector-cycle-2)))
+($check (not (equal? vector-cycle-1 unequal-vector-cycle-1)))
+
+(define mixed-cycle-pair-1 (cons 'root #f))
+(define mixed-cycle-vector-1 (vector mixed-cycle-pair-1))
+(set-cdr! mixed-cycle-pair-1 mixed-cycle-vector-1)
+(define mixed-cycle-pair-2 (cons 'root #f))
+(define mixed-cycle-vector-2 (vector mixed-cycle-pair-2))
+(set-cdr! mixed-cycle-pair-2 mixed-cycle-vector-2)
+($check (equal? mixed-cycle-pair-1 mixed-cycle-pair-2))
+($check (equal? mixed-cycle-vector-1 mixed-cycle-vector-2))
+
+(define unequal-mixed-cycle-pair (cons 'other #f))
+(define unequal-mixed-cycle-vector (vector unequal-mixed-cycle-pair))
+(set-cdr! unequal-mixed-cycle-pair unequal-mixed-cycle-vector)
+($check (not (equal? mixed-cycle-pair-1 unequal-mixed-cycle-pair)))
+($check (not (equal? pair-cycle-1 vector-cycle-1)))
+
 (close-input-port eof-port)
 (close-input-port port-value)
 (close-input-port other-port)
