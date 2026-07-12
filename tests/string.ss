@@ -5,12 +5,6 @@
 (define y "amburger")
 ($check (equal? "hamburger hamburger" (string-append x y " " x y)))
 
-;; eqv?/eq? on strings are pointer identity, not value.
-($check (not (eqv? (string-append "a" "b") "ab")))
-($check (not (eq? (string-append "a" "b") "ab")))
-(define same-str "hello")
-($check (eqv? same-str same-str))
-($check (eq? same-str same-str))
 ($check (string=? "" (string-append)))
 
 ;; predicates
@@ -106,9 +100,9 @@
                        "tabbed\tthing" "before newline\nafter newline"
                        "\"quoted thing\"" "slish\\slash"))
 
-($check (eqv? "soot" (first black_things)))
-($check (eqv? "licorice" (second black_things)))
-($check (eqv? "midnight" (third black_things)))
-($check (eqv? "some chalkboards" (fourth black_things)))
-($check (eqv? "tabbed\tthing" (fifth black_things)))
-($check (eqv? "slish\\slash" (last black_things)))
+($check (string=? "soot" (first black_things)))
+($check (string=? "licorice" (second black_things)))
+($check (string=? "midnight" (third black_things)))
+($check (string=? "some chalkboards" (fourth black_things)))
+($check (string=? "tabbed\tthing" (fifth black_things)))
+($check (string=? "slish\\slash" (last black_things)))

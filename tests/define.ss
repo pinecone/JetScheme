@@ -166,5 +166,5 @@
 (define alice "I love Bob!")
 (define carol alice)
 
-($check (eqv? "I love Bob!" carol))
-($check (eqv? "I love Bob!" alice))
+($check (string=? "I love Bob!" carol))
+($check (string=? "I love Bob!" alice))

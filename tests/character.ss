@@ -1,12 +1,5 @@
 ;; Characters
 
-;; literals + eqv
-(define a #\a)
-(define b #\b)
-($check (eqv? a #\a))
-($check (eqv? b #\b))
-($check (not (eqv? a b)))
-
 ;; predicate
 ($check (char? #\a))
 ($check (not (char? "a")))

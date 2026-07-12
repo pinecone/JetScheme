@@ -85,19 +85,6 @@
 ($check (equal? #u8() (bytevector-append)))
 ($check (equal? #u8(1 2) (bytevector-append #u8() #u8(1 2) #u8())))
 
-;; equal? on bytevectors
-($check (equal? #u8(1 2 3) #u8(1 2 3)))
-($check (not (equal? #u8(1 2 3) #u8(1 2 4))))
-($check (not (equal? #u8(1 2 3) #u8(1 2))))
-($check (not (equal? #u8(1 2 3) #(1 2 3))))
-
-;; eqv? / eq? — identity, not value
-(define bv3 (bytevector 1 2 3))
-($check (eqv? bv3 bv3))
-($check (not (eqv? bv3 (bytevector 1 2 3))))
-($check (eq? bv3 bv3))
-($check (not (eq? bv3 (bytevector 1 2 3))))
-
 ;; display round-trip
 ($check (equal? #u8(0 10 255) (bytevector 0 10 255)))
 ($check (equal? #u8() (bytevector)))

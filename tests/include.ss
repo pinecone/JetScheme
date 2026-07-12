@@ -6,4 +6,4 @@
 ($check (= 42 inc-value))
 
 ;; $file reports this file, not the included file
-($check (eqv? "include.ss" ($file)))
+($check (string=? "include.ss" ($file)))

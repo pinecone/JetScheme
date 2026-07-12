@@ -453,6 +453,11 @@ void init_bytevectors(Env& e)
 
 bool is_eqv(Atom obj1, Atom obj2)
 {
+	if (is_eq(obj1, obj2))
+	{
+		return true;
+	}
+
 	if (obj1.type() != obj2.type())
 	{
 		return false;
@@ -462,43 +467,23 @@ bool is_eqv(Atom obj1, Atom obj2)
 	{
 		case jet::Type::Number:
 			return compare_objects<Number>(obj1, obj2);
-		case jet::Type::Boolean:
-			return compare_objects<bool>(obj1, obj2);
-		case jet::Type::Procedure:
-			return compare_objects<Lambda>(obj1, obj2);
-		case jet::Type::Symbol:
-			return obj1.bits == obj2.bits;
-		case jet::Type::Pair:
-			return compare_objects<Cons>(obj1, obj2);
-		case jet::Type::Vector:
-			return obj1.as_ptr() == obj2.as_ptr();
 		case jet::Type::Primitive:
 			return compare_objects<Prim>(obj1, obj2);
-		case jet::Type::Character:
-			return compare_objects<Character>(obj1, obj2);
-		case jet::Type::EmptyList:
-		case jet::Type::Eof:
-			return true;
-		case jet::Type::String:
-			return obj1.as_ptr() == obj2.as_ptr();
-		case jet::Type::ByteVector:
-			return obj1.as_ptr() == obj2.as_ptr();
-		case jet::Type::Struct:
-			return compare_objects<Struct>(obj1, obj2);
-		case jet::Type::StructType:
-			return compare_objects<StructType>(obj1, obj2);
-		case jet::Type::Port:
-		case jet::Type::Slot:
-			return obj1.as_ptr() == obj2.as_ptr();
 		case jet::Type::Unknown:
 		case jet::Type::TypeMax:
 			JET_DIE("is_eqv: unexpected type %d", static_cast<int>(obj1.type()));
+		default:
+			return false;
 	}
-	JET_DIE("is_eqv: unhandled type %d", static_cast<int>(obj1.type()));
 }
 
-static bool equal(Atom obj1, Atom obj2)
+static bool is_equal(Atom obj1, Atom obj2)
 {
+	if (is_eqv(obj1, obj2))
+	{
+		return true;
+	}
+
 	if (obj1.type() != obj2.type())
 	{
 		return false;
@@ -507,7 +492,7 @@ static bool equal(Atom obj1, Atom obj2)
 	switch (obj1.type())
 	{
 		case jet::Type::Pair:
-			return equal(car(obj1), car(obj2)) && equal(cdr(obj1), cdr(obj2));
+			return is_equal(car(obj1), car(obj2)) && is_equal(cdr(obj1), cdr(obj2));
 
 		case jet::Type::Vector:
 		{
@@ -519,7 +504,7 @@ static bool equal(Atom obj1, Atom obj2)
 			}
 			for (auto it1 = v1.begin(), it2 = v2.begin(); it1 != v1.end(); ++it1, ++it2)
 			{
-				if (!equal(*it1, *it2))
+				if (!is_equal(*it1, *it2))
 				{
 					return false;
 				}
@@ -534,7 +519,7 @@ static bool equal(Atom obj1, Atom obj2)
 			return *unbox<ByteVector>(obj1) == *unbox<ByteVector>(obj2);
 
 		default:
-			return is_eqv(obj1, obj2);
+			return false;
 	}
 }
 
@@ -547,7 +532,7 @@ static Atom eq_prim(Atom* first, Atom*) { return box(is_eq(first[0], first[1]));
 
 static Atom equal_prim(Atom* first, Atom*)
 {
-	return box(equal(first[0], first[1]));
+	return box(is_equal(first[0], first[1]));
 }
 
 static bool boolean_eq(Atom a, Atom b)

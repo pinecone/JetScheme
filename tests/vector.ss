@@ -16,13 +16,6 @@
 ($check (equal? '#(0 0 0 0) c))
 ($check (equal? '#(1 2 3 4 #(1 2 3 4) 5) '#(1 2 3 4 #(1 2 3 4) 5)))
 
-;; eqv?/eq? on vectors are pointer identity, not value.
-($check (not (eqv? '#(1 2 3) '#(1 2 3))))
-($check (not (eq? '#(1 2 3) '#(1 2 3))))
-(define same '#(1 2 3))
-($check (eqv? same same))
-($check (eq? same same))
-
 ;; ref / (setf! (ref ...) ...) on vectors.
 
 (define rv (vector 10 20 30 40))

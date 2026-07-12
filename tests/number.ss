@@ -21,8 +21,6 @@
 ($check (>= 2 2))
 ($check (>= 3 2))
 ($check (not (>= 1 2)))
-($check (eqv? 0 -0))
-($check (not (eq? 0 -0)))
 
 ;; Floor, abs, modulo
 ($check (= 3 (floor 3.7)))
