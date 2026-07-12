@@ -4275,6 +4275,12 @@ namespace
 		// Windows allocated ahead of their call site by argument sinking, keyed by
 		// the Call expr id.
 		std::unordered_map<uint32_t, uint16_t> call_windows{};
+		struct RecurSave
+		{
+			uint16_t target;
+			uint16_t temp;
+		};
+		std::unordered_map<uint32_t, RecurSave> recur_saves{};
 
 		LirLambda& current_lambda()
 		{
@@ -4685,9 +4691,14 @@ namespace
 			return sel.op == Opcode::mov && sel.u.var.addr == r;
 		}
 
-		std::optional<uint16_t> window_slot(Expr* e, uint16_t home)
+		std::optional<uint16_t> window_slot(Expr* e, uint16_t home, bool allow_recur = false)
 		{
-			if (e->kind != ExprKind::Call || !is_call_shaped(selection(e, "Call").op))
+			if (e->kind != ExprKind::Call)
+			{
+				return std::nullopt;
+			}
+			Compiler::OpSelection sel = selection(e, "Call");
+			if (!is_call_shaped(sel.op) || (sel.op == Opcode::recur && !allow_recur))
 			{
 				return std::nullopt;
 			}
@@ -4695,6 +4706,20 @@ namespace
 			{
 				if (is_plain_reg_ref(e->call.args[i], home))
 				{
+					if (sel.op == Opcode::recur)
+					{
+						for (uint32_t j = 0; j < e->call.args.size(); ++j)
+						{
+							if (j != i && is_plain_reg_ref(e->call.args[j], static_cast<uint16_t>(i)))
+							{
+								uint16_t temp = alloc_reg();
+								emit_mov(temp, static_cast<uint16_t>(i));
+								recur_saves.emplace(e->id, RecurSave{static_cast<uint16_t>(i), temp});
+								break;
+							}
+						}
+						return static_cast<uint16_t>(i);
+					}
 					return static_cast<uint16_t>(claim_call_window(e, e->call.args.size()) + i);
 				}
 			}
@@ -4770,21 +4795,18 @@ namespace
 			}
 		}
 
-		// A single-use temp consumed as a window-call argument is computed straight
-		// into the argument register; the consumer's window is allocated early so
-		// the register is known at the temp's definition. Safe because everything
-		// emitted between the definition and the call writes only registers above
-		// its own (later-allocated, hence higher) window.
 		std::optional<uint16_t> sink_target(Expr* let_expr, uint16_t home)
 		{
 			Expr* cur = let_expr;
+			bool direct = true;
 			while (cur->let.body.size() == 1)
 			{
 				cur = cur->let.body[0];
 				if (cur->kind != ExprKind::Let)
 				{
-					return window_slot(cur, home);
+					return window_slot(cur, home, direct);
 				}
+				direct = false;
 				for (uint32_t i = 0; i < cur->let.vals.size(); ++i)
 				{
 					std::optional<uint16_t> w = window_slot(cur->let.vals[i], home);
@@ -4821,6 +4843,11 @@ namespace
 						}
 					}
 					std::unordered_map<uint16_t, uint16_t> saved;
+					std::unordered_map<uint32_t, RecurSave>::iterator early_save = recur_saves.find(expr->id);
+					if (early_save != recur_saves.end())
+					{
+						saved[early_save->second.target] = early_save->second.temp;
+					}
 					for (uint16_t k = 0; k < nargs; ++k)
 					{
 						uint16_t src = src_reg[k];

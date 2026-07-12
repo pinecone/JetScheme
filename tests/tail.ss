@@ -53,6 +53,12 @@
 ($check (eq? 'x (or3 'x)))
 ($check (not (or3 #f)))
 
+(define (shuttle a b n)
+  (if (zero? n)
+      (list a b)
+      (shuttle n a (- n 1))))
+($check (equal? '(1 2) (shuttle 10 20 3)))
+
 ;; or evaluates each subform exactly once, left to right, stopping at the
 ;; first truthy one.
 (define oe '())
