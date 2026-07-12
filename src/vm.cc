@@ -65,8 +65,7 @@ Gc::~Gc()
 {
 	for (ObjEntry& e : objects)
 	{
-		GcDestructor d = gc_destructor_table[e.tag];
-		if (d)
+		if (GcDestructor d = gc_destructor_table[e.tag]; d)
 		{
 			d(arena_base + static_cast<size_t>(e.cell_idx) * CELL_SIZE);
 		}
@@ -197,8 +196,7 @@ void Gc::sweep()
 		else
 		{
 			void* obj = arena_base + static_cast<size_t>(e.cell_idx) * CELL_SIZE;
-			GcDestructor d = gc_destructor_table[e.tag];
-			if (d)
+			if (GcDestructor d = gc_destructor_table[e.tag]; d)
 			{
 				d(obj);
 			}
@@ -646,8 +644,7 @@ JET_PRESERVE_NONE static void fast_ldf(VM_OP_PARAMS)
 
 	if (ic->ic_extra2 == key.bits) [[likely]]
 	{
-		size_t idx = ic->ic_extra1;
-		if (idx < c.size()) [[likely]]
+		if (size_t idx = ic->ic_extra1; idx < c.size()) [[likely]]
 		{
 			stack_base[frame_base + op->dst] = container_load(c, idx);
 			DISPATCH();
@@ -709,8 +706,7 @@ JET_PRESERVE_NONE static void fast_stf(VM_OP_PARAMS)
 
 	if (ic->ic_extra2 == key.bits) [[likely]]
 	{
-		size_t idx = ic->ic_extra1;
-		if (idx < c.size()) [[likely]]
+		if (size_t idx = ic->ic_extra1; idx < c.size()) [[likely]]
 		{
 			if (!write(idx)) [[unlikely]]
 			{
@@ -1393,8 +1389,7 @@ JET_NOINLINE JET_PRESERVE_NONE static void slow_recur(VM_OP_PARAMS)
 JET_PRESERVE_NONE static void op_recur(VM_OP_PARAMS)
 {
 	JET_GC_CHECK();
-	OP_recur* op = reinterpret_cast<OP_recur*>(pc);
-	if (op->w != 0)
+	if (OP_recur* op = reinterpret_cast<OP_recur*>(pc); op->w != 0)
 	{
 		JET_MUSTTAIL return slow_recur(VM_OP_ARGS);
 	}
@@ -1447,8 +1442,8 @@ JET_PRESERVE_NONE static void op_cs_impl(VM_OP_PARAMS)
 {
 	JET_GC_CHECK();
 	OP_cs* op = reinterpret_cast<OP_cs*>(pc);
-	Slot* sl = unbox<Slot>(frame->closure->captures[op->upvalue_idx]);
-	if (op->ic_slot != reinterpret_cast<uint64_t>(sl) || op->ic_version != sl->version) [[unlikely]]
+	if (Slot* sl = unbox<Slot>(frame->closure->captures[op->upvalue_idx]);
+		op->ic_slot != reinterpret_cast<uint64_t>(sl) || op->ic_version != sl->version) [[unlikely]]
 	{
 		JET_MUSTTAIL return op_cs_miss<N, is_tail>(VM_OP_ARGS);
 	}

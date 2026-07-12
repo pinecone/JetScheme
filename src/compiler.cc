@@ -1624,8 +1624,7 @@ namespace
 			if (path[0] != '/')
 			{
 				std::string& parent = file_table[loc.file_id];
-				size_t slash = parent.rfind('/');
-				if (slash != std::string::npos)
+				if (size_t slash = parent.rfind('/'); slash != std::string::npos)
 				{
 					path = parent.substr(0, slash + 1) + path;
 				}
@@ -2536,8 +2535,7 @@ void Compiler::record_ref(ResolvedBinding b)
 		{
 			return;
 		}
-		LambdaBindings& lb = lambda_bindings_[lam];
-		if (lb.upvalue_keys.insert(key).second)
+		if (LambdaBindings& lb = lambda_bindings_[lam]; lb.upvalue_keys.insert(key).second)
 		{
 			lb.upvalues.push_back({b.lambda, bw});
 		}
@@ -2565,8 +2563,7 @@ std::optional<ResolvedBinding> Compiler::lookup_name(std::string_view name)
 	for (size_t i = lambdas_.size(); i-- > 0;)
 	{
 		std::unordered_map<std::string_view, size_t>& idx = lambda_name_index_[i];
-		auto it = idx.find(name);
-		if (it != idx.end())
+		if (auto it = idx.find(name); it != idx.end())
 		{
 			return ResolvedBinding{.lambda = lambdas_[i], .breadth = it->second};
 		}
@@ -2655,8 +2652,7 @@ void Compiler::collect_binding_uses_in(Expr* expr)
 {
 	if (expr->kind == ExprKind::VarRef || expr->kind == ExprKind::SetBang)
 	{
-		ResolvedBinding b = bindings_[expr->id];
-		if (b.lambda)
+		if (ResolvedBinding b = bindings_[expr->id]; b.lambda)
 		{
 			++binding_use_counts_[binding_key(b)];
 		}
@@ -3198,8 +3194,8 @@ void Compiler::select_call_op(Expr* expr, Expr* current)
 	// binding always holds the closure we're running, so call frame->closure
 	// directly
 	{
-		LambdaBindings& lb = lambda_bindings_[proc_binding.lambda];
-		if (!get(lb.reassigned_after_init, proc_binding.breadth)
+		if (LambdaBindings& lb = lambda_bindings_[proc_binding.lambda];
+			!get(lb.reassigned_after_init, proc_binding.breadth)
 			&& get(lb.bound_init, proc_binding.breadth) == current)
 		{
 			sel.op = Opcode::cds_0;
@@ -3292,8 +3288,7 @@ void Compiler::collect_branch_fusion_facts(Program& program)
 	{
 		if (expr->kind == ExprKind::If && expr->if_.test->kind == ExprKind::VarRef)
 		{
-			Candidate* candidate = candidate_for(expr->if_.test);
-			if (candidate)
+			if (Candidate* candidate = candidate_for(expr->if_.test); candidate)
 			{
 				candidate->branch = expr;
 			}
@@ -3306,8 +3301,7 @@ void Compiler::collect_branch_fusion_facts(Program& program)
 	}
 	for (const std::pair<const uint64_t, Candidate>& entry : candidates)
 	{
-		const Candidate& candidate = entry.second;
-		if (candidate.uses == 1 && candidate.branch)
+		if (const Candidate& candidate = entry.second; candidate.uses == 1 && candidate.branch)
 		{
 			branch_fusions_[candidate.branch->id] = candidate.producer;
 		}
@@ -3684,12 +3678,11 @@ namespace
 					Expr* proc = expr->call.proc;
 					if (proc->kind == ExprKind::VarRef)
 					{
-						auto it = lambda_cands.find(binding_key(get(db.bindings_, proc->id)));
-						if (it != lambda_cands.end())
+						if (auto it = lambda_cands.find(binding_key(get(db.bindings_, proc->id)));
+							it != lambda_cands.end())
 						{
-							Expr* callee = it->second;
-							if (callee->lambda.params.size() == expr->call.args.size() &&
-								!active.count(callee))
+							if (Expr* callee = it->second;
+								callee->lambda.params.size() == expr->call.args.size() && !active.count(callee))
 							{
 								Expr* let = splice(expr, callee);
 								active.insert(callee);
@@ -3766,8 +3759,7 @@ void Compiler::run_anf_inline(Program& program)
 		LambdaBindings& lb = lambda_bindings_[L];
 		for (size_t i = 0; i < lb.bound_init.size(); ++i)
 		{
-			Expr* init = lb.bound_init[i];
-			if (init && !get(lb.reassigned_after_init, i))
+			if (Expr* init = lb.bound_init[i]; init && !get(lb.reassigned_after_init, i))
 			{
 				pass.consider(L, i, init);
 			}
@@ -3871,9 +3863,9 @@ namespace
 					return expr->var_ref.name == name;
 				case ExprKind::Call:
 				{
-					bool proc_is_name = expr->call.proc->kind == ExprKind::VarRef
-										&& expr->call.proc->var_ref.name == name;
-					if (!proc_is_name && name_used_as_value(expr->call.proc, name))
+					if (bool proc_is_name = expr->call.proc->kind == ExprKind::VarRef
+											&& expr->call.proc->var_ref.name == name;
+						!proc_is_name && name_used_as_value(expr->call.proc, name))
 					{
 						return true;
 					}
@@ -3904,9 +3896,9 @@ namespace
 			{
 				case ExprKind::Call:
 				{
-					bool is_self = expr->call.proc->kind == ExprKind::VarRef
-								   && expr->call.proc->var_ref.name == name;
-					if (is_self && !in_tail)
+					if (bool is_self = expr->call.proc->kind == ExprKind::VarRef
+								  && expr->call.proc->var_ref.name == name;
+						is_self && !in_tail)
 					{
 						return false;
 					}
@@ -3939,8 +3931,8 @@ namespace
 					}
 					for (uint32_t i = 0; i < expr->let.body.size(); ++i)
 					{
-						bool last = (i == expr->let.body.size() - 1);
-						if (!self_calls_all_tail(expr->let.body[i], name, last && in_tail))
+						if (bool last = (i == expr->let.body.size() - 1);
+							!self_calls_all_tail(expr->let.body[i], name, last && in_tail))
 						{
 							return false;
 						}
@@ -3950,8 +3942,8 @@ namespace
 				case ExprKind::Lambda:
 					for (uint32_t i = 0; i < expr->lambda.body.size(); ++i)
 					{
-						bool last = (i == expr->lambda.body.size() - 1);
-						if (!self_calls_all_tail(expr->lambda.body[i], name, last))
+						if (bool last = (i == expr->lambda.body.size() - 1);
+							!self_calls_all_tail(expr->lambda.body[i], name, last))
 						{
 							return false;
 						}
@@ -3988,8 +3980,8 @@ namespace
 					{
 						return;
 					}
-					uint64_t key = (static_cast<uint64_t>(b.lambda->id) << 32) | b.breadth;
-					if (seen.insert(key).second)
+					if (uint64_t key = (static_cast<uint64_t>(b.lambda->id) << 32) | b.breadth;
+						seen.insert(key).second)
 					{
 						out.push_back({expr->var_ref.name, b});
 					}
@@ -4076,8 +4068,7 @@ namespace
 			}
 
 			std::string_view name = let_expr->let.names[0];
-			Expr* init_val = let_expr->let.vals[0];
-			if (!is_false_lit(init_val))
+			if (Expr* init_val = let_expr->let.vals[0]; !is_false_lit(init_val))
 			{
 				return let_expr;
 			}
@@ -4086,8 +4077,7 @@ namespace
 			size_t setbang_idx = 0;
 			for (size_t i = 0; i < let_expr->let.body.size(); ++i)
 			{
-				Expr* form = let_expr->let.body[i];
-				if (form->kind == ExprKind::SetBang
+				if (Expr* form = let_expr->let.body[i]; form->kind == ExprKind::SetBang
 					&& form->set_bang.name == name
 					&& form->set_bang.is_init
 					&& form->set_bang.value->kind == ExprKind::Lambda)
@@ -4146,8 +4136,8 @@ namespace
 			// stay a capture or writes through one copy are lost to the others.
 			for (Capture& cap : captures)
 			{
-				Compiler::LambdaBindings& owner = db.lambda_bindings_[cap.binding.lambda];
-				if (get(owner.reassigned_after_init, cap.binding.breadth))
+				if (Compiler::LambdaBindings& owner = db.lambda_bindings_[cap.binding.lambda];
+					get(owner.reassigned_after_init, cap.binding.breadth))
 				{
 					return let_expr;
 				}
@@ -4377,8 +4367,7 @@ namespace
 
 		uint16_t intern_constant(std::string& serialized)
 		{
-			auto it = pool_idx.find(serialized);
-			if (it != pool_idx.end())
+			if (auto it = pool_idx.find(serialized); it != pool_idx.end())
 			{
 				return it->second;
 			}
@@ -4742,12 +4731,11 @@ namespace
 				}
 				if (val->kind == ExprKind::Call)
 				{
-					Compiler::OpSelection sel = selection(val, "Call");
-					if (is_if_cmp(sel.op))
+					if (Compiler::OpSelection sel = selection(val, "Call"); is_if_cmp(sel.op))
 					{
 						continue;
 					}
-					if (is_call_shaped(sel.op) && sel.op != Opcode::recur)
+					else if (is_call_shaped(sel.op) && sel.op != Opcode::recur)
 					{
 						current_lambda().reg_alias[home] = emit_call(val, sel);
 						continue;
@@ -4755,8 +4743,7 @@ namespace
 				}
 				if (val->kind == ExprKind::VarRef)
 				{
-					Compiler::OpSelection sel = selection(val, "var access");
-					if (sel.op == Opcode::mov)
+					if (Compiler::OpSelection sel = selection(val, "var access"); sel.op == Opcode::mov)
 					{
 						current_lambda().reg_alias[home] = sel.u.var.addr;
 						continue;
@@ -4769,8 +4756,7 @@ namespace
 						emit_ignoring_result(val);
 						continue;
 					}
-					std::optional<uint16_t> target = sink_target(expr, home);
-					if (target)
+					if (std::optional<uint16_t> target = sink_target(expr, home); target)
 					{
 						emit_to_reg(val, *target);
 						current_lambda().reg_alias[home] = *target;
@@ -4802,8 +4788,7 @@ namespace
 				direct = false;
 				for (uint32_t i = 0; i < cur->let.vals.size(); ++i)
 				{
-					std::optional<uint16_t> w = window_slot(cur->let.vals[i], home);
-					if (w)
+					if (std::optional<uint16_t> w = window_slot(cur->let.vals[i], home); w)
 					{
 						return w;
 					}
@@ -4825,26 +4810,24 @@ namespace
 					std::vector<uint16_t> src_reg(nargs, UINT16_MAX);
 					for (uint16_t k = 0; k < nargs; ++k)
 					{
-						Expr* arg = expr->call.args[k];
-						if (arg->kind == ExprKind::VarRef)
+						if (Expr* arg = expr->call.args[k]; arg->kind == ExprKind::VarRef)
 						{
-							Compiler::OpSelection arg_sel = selection(arg, "recur arg");
-							if (arg_sel.op == Opcode::mov)
+							if (Compiler::OpSelection arg_sel = selection(arg, "recur arg");
+								arg_sel.op == Opcode::mov)
 							{
 								src_reg[k] = arg_sel.u.var.addr;
 							}
 						}
 					}
 					std::unordered_map<uint16_t, uint16_t> saved;
-					std::unordered_map<uint32_t, RecurSave>::iterator early_save = recur_saves.find(expr->id);
-					if (early_save != recur_saves.end())
+					if (std::unordered_map<uint32_t, RecurSave>::iterator early_save = recur_saves.find(expr->id);
+						early_save != recur_saves.end())
 					{
 						saved[early_save->second.target] = early_save->second.temp;
 					}
 					for (uint16_t k = 0; k < nargs; ++k)
 					{
-						uint16_t src = src_reg[k];
-						if (src < nargs && src != k && src_reg[src] != src)
+						if (uint16_t src = src_reg[k]; src < nargs && src != k && src_reg[src] != src)
 						{
 							if (saved.find(src) == saved.end())
 							{
@@ -4856,13 +4839,11 @@ namespace
 					}
 					for (uint16_t k = 0; k < nargs; ++k)
 					{
-						uint16_t src = src_reg[k];
-						if (src == k)
+						if (uint16_t src = src_reg[k]; src == k)
 						{
 							continue;
 						}
-						auto it = saved.find(src);
-						if (it != saved.end())
+						else if (auto it = saved.find(src); it != saved.end())
 						{
 							emit_mov(k, it->second);
 						}
@@ -4970,8 +4951,7 @@ namespace
 			{
 				case ExprKind::VarRef:
 				{
-					Compiler::OpSelection sel = selection(expr, "var access");
-					if (sel.op == Opcode::mov)
+					if (Compiler::OpSelection sel = selection(expr, "var access"); sel.op == Opcode::mov)
 					{
 						return sel.u.var.addr;
 					}
@@ -4980,8 +4960,7 @@ namespace
 
 				case ExprKind::Call:
 				{
-					Compiler::OpSelection sel = selection(expr, "Call");
-					if (is_call_shaped(sel.op))
+					if (Compiler::OpSelection sel = selection(expr, "Call"); is_call_shaped(sel.op))
 					{
 						return emit_call(expr, sel);
 					}
@@ -5139,8 +5118,7 @@ namespace
 				{
 					uint32_t l_alt = prog.next_label++;
 					uint32_t l_end = prog.next_label++;
-					auto fused = db.branch_fusions_.find(expr->id);
-					if (fused != db.branch_fusions_.end())
+					if (auto fused = db.branch_fusions_.find(expr->id); fused != db.branch_fusions_.end())
 					{
 						Expr* cmp = fused->second;
 						Compiler::OpSelection sel = selection(cmp, "fused test");

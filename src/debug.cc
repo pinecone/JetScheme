@@ -139,8 +139,7 @@ void profile_print()
 	{
 		for (int c = 0; c < 256; ++c)
 		{
-			uint64_t n = g_profile.pair_after[p][c];
-			if (n > 0)
+			if (uint64_t n = g_profile.pair_after[p][c]; n > 0)
 			{
 				pairs.push_back({p, c, n, g_profile.pair_ticks[p][c]});
 			}

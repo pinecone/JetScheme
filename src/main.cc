@@ -19,8 +19,7 @@ using namespace std;
 
 static string find_prelude(const char* argv0)
 {
-	const char* env = getenv("JET_PRELUDE");
-	if (env && *env)
+	if (const char* env = getenv("JET_PRELUDE"); env && *env)
 	{
 		return env;
 	}
@@ -30,8 +29,7 @@ static string find_prelude(const char* argv0)
 		if (realpath(argv0, buf))
 		{
 			string p{buf};
-			size_t slash = p.find_last_of('/');
-			if (slash != string::npos)
+			if (size_t slash = p.find_last_of('/'); slash != string::npos)
 			{
 				p.resize(slash);
 			}
@@ -225,12 +223,10 @@ int main(int argc, char* argv[])
 
 	vector<uint8_t> bc;
 
-	bool input_is_bc = want_disasm && ends_with(input_path, ".bc");
-
-	if (want_compile && !input_is_bc)
+	if (bool input_is_bc = want_disasm && ends_with(input_path, ".bc"); want_compile && !input_is_bc)
 	{
-		string prelude = no_prelude ? string{} : find_prelude(argv[0]);
-		if (compile_to_bytecode(input_path, prelude, flags, bc) != 0)
+		if (string prelude = no_prelude ? string{} : find_prelude(argv[0]);
+			compile_to_bytecode(input_path, prelude, flags, bc) != 0)
 		{
 			return 1;
 		}

@@ -729,8 +729,7 @@ Atom write_to(Atom a, std::string& out)
 		emap[static_cast<int>('\\')] = "\\";
 		emap[static_cast<int>('\n')] = "\\n";
 		emap[static_cast<int>('\t')] = "\\t";
-		std::string_view esc = emap[static_cast<int>(c)];
-		if (!esc.empty())
+		if (std::string_view esc = emap[static_cast<int>(c)]; !esc.empty())
 		{
 			output += esc;
 		}
@@ -933,8 +932,10 @@ static Atom string_folding_pred(Atom* first, Atom* last)
 
 static int ci_cmp(String& a, String& b)
 {
-	int r = strncasecmp(a.data(), b.data(), std::min(a.size(), b.size()));
-	if (r != 0) { return r; }
+	if (int r = strncasecmp(a.data(), b.data(), std::min(a.size(), b.size())); r != 0)
+	{
+		return r;
+	}
 	return a.size() < b.size() ? -1 : a.size() > b.size() ? 1 : 0;
 }
 
@@ -1407,8 +1408,7 @@ static bool is_procedure(Atom a)
 static Atom prim_check(Atom* first, Atom*)
 {
 	// (%check test-result file line col)
-	bool test = is_true(first[0]);
-	if (!test)
+	if (bool test = is_true(first[0]); !test)
 	{
 		String& file = *unbox<String>(first[1]);
 		Number line = unbox<Number>(first[2]);
