@@ -97,6 +97,7 @@ static int compile_to_bytecode(const string& source_path, const string& prelude_
 
 static int execute_bytecode(vector<uint8_t>& bytecode, int script_argc, char* script_argv[])
 {
+	VmState vm{};
 	Gc gc;
 	g_gc = &gc;
 
@@ -104,10 +105,10 @@ static int execute_bytecode(vector<uint8_t>& bytecode, int script_argc, char* sc
 	init_primitives(primitives_env);
 	init_cmdline(primitives_env, script_argc, script_argv);
 
-	LoadedProgram prog = load_program(bytecode.data(), bytecode.size(), primitives_env);
+	LoadedProgram prog = load_program(vm.symbols, bytecode.data(), bytecode.size(), primitives_env);
 
 	Frame frame = {prog.code, nullptr, 0, prog.n_toplevel_slots};
-	eval(frame, prog.constants.data(), prog.constants.size(), prog.n_toplevel_slots);
+	eval(vm, frame, prog.constants.data(), prog.constants.size(), prog.n_toplevel_slots);
 
 	g_gc = nullptr;
 	return 0;

@@ -21,13 +21,13 @@
 #define JET_IMM_TYPES(X)                  \
 	X(Boolean,   boolean,    bool)        \
 	X(Character, character,  Character)   \
-	X(EmptyList, empty_list, EmptyList)
+	X(EmptyList, empty_list, EmptyList)   \
+	X(Symbol,     symbol,      Symbol)
 
 #define JET_HEAP_TYPES(X)                  \
 	X(Pair,       pair,        Cons)       \
 	X(Procedure,  procedure,   Lambda)     \
 	X(Primitive,  primitive,   Prim)       \
-	X(Symbol,     symbol,      Symbol)     \
 	X(String,     string,      String)     \
 	X(Vector,     vector,      Vec)        \
 	X(ByteVector, bytevector, ByteVector)  \
@@ -72,6 +72,7 @@ namespace jet
 using Character = uint8_t;
 using Number = double;
 using String = std::string;
+using Symbol = const std::string*;
 using ByteVector = std::vector<uint8_t>;
 
 // NaN boxing layout:
@@ -142,7 +143,7 @@ class Atom
 
 	uint64_t as_payload() { return bits & PAYLOAD_MASK; }
 
-	static Atom make_tagged(int tag, void* ptr)
+	static Atom make_tagged(int tag, const void* ptr)
 	{
 		uint64_t p = reinterpret_cast<uint64_t>(ptr) & PAYLOAD_MASK;
 		return from_bits(QNAN_TAG | (static_cast<uint64_t>(tag & 0x7) << 48) |
@@ -204,7 +205,6 @@ struct EmptyList
 struct Cons;
 struct Lambda;
 struct Prim;
-class Symbol;
 class IPort;
 class OPort;
 class Port;
@@ -298,6 +298,11 @@ inline void type_check(Atom a, jet::Type t)
 		JET_DIE("expected <%.*s>, got <%.*s>", static_cast<int>(want.size()), want.data(),
 				 static_cast<int>(got.size()), got.data());
 	}
+}
+
+inline Atom box(Atom value)
+{
+	return value;
 }
 
 template <typename T>

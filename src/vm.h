@@ -14,6 +14,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #if __has_cpp_attribute(clang::preserve_none)
@@ -164,6 +165,39 @@ struct box_unbox_t
 	static T* unbox(Atom x) { return static_cast<T*>(x.as_ptr()); }
 };
 
+template <>
+struct box_unbox_t<Symbol>
+{
+	static Atom box(Symbol symbol)
+	{
+		return Atom::make_tagged(jet_tag::symbol, symbol);
+	}
+
+	static Symbol unbox(Atom x) { return static_cast<Symbol>(x.as_ptr()); }
+};
+
+class InternedSymbols
+{
+  public:
+	Symbol intern(std::string_view value)
+	{
+		if (auto found = values_.find(value); found != values_.end())
+		{
+			return &*found;
+		}
+		auto entry = values_.emplace(value).first;
+		return &*entry;
+	}
+
+  private:
+	struct StringHash : std::hash<std::string_view>
+	{
+		using is_transparent = void;
+	};
+
+	std::unordered_set<std::string, StringHash, std::equal_to<>> values_;
+};
+
 inline uint64_t g_slot_version_counter = 0;
 inline uint64_t next_slot_version()
 {
@@ -295,6 +329,7 @@ struct box_unbox_t<Lambda>
 
 struct VmState
 {
+	InternedSymbols symbols;
 	std::vector<Frame> frames;
 	Atom* stack_base;
 	Atom* stack_end;
@@ -354,7 +389,7 @@ inline ObjShape* shape_of(Atom a)
 		}                                                                                                    \
 	} while (0)
 
-void eval(Frame& init_frame, Atom* constants, size_t n_constants, size_t initial_stack_size);
+void eval(VmState& vm, Frame& init_frame, Atom* constants, size_t n_constants, size_t initial_stack_size);
 
 struct LoadedProgram
 {
@@ -364,6 +399,6 @@ struct LoadedProgram
 };
 
 // Bytecode layout: [u32 n_toplevel_slots][u32 n_constants][pool entries][toplevel code...].
-LoadedProgram load_program(Code* bytecode, size_t bytecode_size, Env& primitives_env);
+LoadedProgram load_program(InternedSymbols& symbols, Code* bytecode, size_t n_bytes, Env& env);
 
 #endif

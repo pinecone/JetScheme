@@ -253,31 +253,19 @@ void init_number(Env& e)
 	e.bind("random-seed", make_prim<random_seed>());
 }
 
-Symbol::Symbol(std::string s) : s_(std::move(s)) {}
-
-std::string& Symbol::str()
+static Atom symbol_to_string_prim(Atom a)
 {
-	return s_;
+	return box(String(symbol_to_string(unbox<Symbol>(a))));
 }
 
-Atom symbol_to_string(Atom a)
+Atom string_to_symbol(VmState& vm, Atom a)
 {
-	return box(String(unbox<Symbol>(a)->str()));
-}
-
-Atom string_to_symbol(Atom a)
-{
-	return box(Symbol(*unbox<String>(a)));
-}
-
-bool operator==(Symbol& a, Symbol& b)
-{
-	return a.str() == b.str();
+	return box(vm.symbols.intern(*unbox<String>(a)));
 }
 
 void init_symbols(Env& e)
 {
-	e.bind("symbol->string", make_prim<symbol_to_string>());
+	e.bind("symbol->string", make_prim<symbol_to_string_prim>());
 	e.bind("string->symbol", make_prim<string_to_symbol>());
 	e.bind("symbol?", make_prim<is_type<jet::Type::Symbol>>());
 }
@@ -479,7 +467,7 @@ bool is_eqv(Atom obj1, Atom obj2)
 		case jet::Type::Procedure:
 			return compare_objects<Lambda>(obj1, obj2);
 		case jet::Type::Symbol:
-			return compare_objects<Symbol>(obj1, obj2);
+			return obj1.bits == obj2.bits;
 		case jet::Type::Pair:
 			return compare_objects<Cons>(obj1, obj2);
 		case jet::Type::Vector:
@@ -573,7 +561,7 @@ static bool symbol_eq(Atom a, Atom b)
 {
 	JET_DIE_UNLESS(is_type<jet::Type::Symbol>(a) && is_type<jet::Type::Symbol>(b),
 					"symbol=? expects symbols");
-	return *unbox<Symbol>(a) == *unbox<Symbol>(b);
+	return unbox<Symbol>(a) == unbox<Symbol>(b);
 }
 
 void init_equivalence(Env& e)
@@ -678,7 +666,7 @@ static Atom display_to(Atom a, std::string& out)
 			break;
 
 		case jet::Type::Symbol:
-			out += unbox<Symbol>(a)->str();
+			out += symbol_to_string(unbox<Symbol>(a));
 			break;
 
 		case jet::Type::Pair:
@@ -701,7 +689,7 @@ static Atom display_to(Atom a, std::string& out)
 		{
 			StructType* t = unbox<StructType>(a);
 			out += "#<struct-type ";
-			out += t->name();
+			out += symbol_to_string(unbox<Symbol>(t->name()));
 			char buf[24];
 			std::snprintf(buf, sizeof(buf), " @%p", static_cast<void*>(t));
 			out += buf;
@@ -713,7 +701,7 @@ static Atom display_to(Atom a, std::string& out)
 		{
 			Struct* s = unbox<Struct>(a);
 			out += "#s(";
-			out += s->type->name();
+			out += symbol_to_string(unbox<Symbol>(s->type->name()));
 			for (uint32_t i = 0; i < s->n_fields; ++i)
 			{
 				out += ' ';
@@ -788,7 +776,7 @@ Atom write_to(Atom a, std::string& out)
 		{
 			Struct* s = unbox<Struct>(a);
 			out += "#s(";
-			out += s->type->name();
+			out += symbol_to_string(unbox<Symbol>(s->type->name()));
 			for (uint32_t i = 0; i < s->n_fields; ++i)
 			{
 				out += ' ';
@@ -1395,13 +1383,15 @@ static Atom slow_ref_field(Atom obj, Atom key)
 
 static Atom struct_ctor(Atom name, Atom names_list)
 {
-	std::string type_name = slow_unbox<Symbol>(name)->str();
-	std::vector<std::string> field_names;
+	type_check(name, jet::Type::Symbol);
+	std::vector<Atom> field_names;
 	for (Atom x = names_list; !is_type<jet::Type::EmptyList>(x); x = cdr(x))
 	{
-		field_names.push_back(slow_unbox<Symbol>(car(x))->str());
+		Atom field = car(x);
+		type_check(field, jet::Type::Symbol);
+		field_names.push_back(field);
 	}
-	return box<StructType>(std::move(type_name), std::move(field_names));
+	return box<StructType>(name, std::move(field_names));
 }
 
 static Atom isa(Atom value, Atom type)

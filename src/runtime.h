@@ -42,20 +42,8 @@ Out list_to_args(Atom list, Out out)
 	return out;
 }
 
-class Symbol
-{
-  public:
-	explicit Symbol(std::string s);
-	std::string& str();
-
-  private:
-	std::string s_;
-};
-
-bool operator==(Symbol& a, Symbol& b);
-
-Atom symbol_to_string(Atom a);
-Atom string_to_symbol(Atom a);
+inline const std::string& symbol_to_string(Symbol symbol) { return *symbol; }
+Atom string_to_symbol(VmState& vm, Atom a);
 
 void init_symbols(Env& e);
 
@@ -76,20 +64,19 @@ void init_bytevectors(Env& e);
 class StructType
 {
   public:
-	StructType(std::string name, std::vector<std::string> field_names)
-	  : name_{std::move(name)}, field_names_{std::move(field_names)}
+	StructType(Atom name, std::vector<Atom> field_names)
+	  : name_{name}, field_names_{std::move(field_names)}
 	{
 	}
 
-	const std::string& name() const { return name_; }
+	Atom name() const { return name_; }
 	size_t size() const { return field_names_.size(); }
-	const std::vector<std::string>& field_names() const { return field_names_; }
 
-	int find(std::string_view name) const
+	int find(Atom key) const
 	{
 		for (size_t i = 0; i < field_names_.size(); ++i)
 		{
-			if (field_names_[i] == name)
+			if (field_names_[i].bits == key.bits)
 			{
 				return static_cast<int>(i);
 			}
@@ -98,8 +85,8 @@ class StructType
 	}
 
   private:
-	std::string name_;
-	std::vector<std::string> field_names_;
+	Atom name_;
+	std::vector<Atom> field_names_;
 };
 
 inline bool operator==(StructType& a, StructType& b)
@@ -180,8 +167,15 @@ struct PrimTraits;
 template <typename R, typename... A>
 struct PrimTraits<R (*)(A...)>
 {
-	using Ret = R;
 	static constexpr size_t arity = sizeof...(A);
+	static constexpr bool uses_vm = false;
+};
+
+template <typename R, typename... A>
+struct PrimTraits<R (*)(VmState&, A...)>
+{
+	static constexpr size_t arity = sizeof...(A);
+	static constexpr bool uses_vm = true;
 };
 
 template <auto fn>
@@ -201,9 +195,9 @@ JET_PRESERVE_NONE inline void prim_stub_typed(VM_OP_PARAMS)
 	using T = PrimTraits<decltype(fn)>;
 	Atom result = [&]<size_t... Is>(std::index_sequence<Is...>)
 	{
-		if constexpr (std::is_same_v<typename T::Ret, Atom>)
+		if constexpr (T::uses_vm)
 		{
-			return fn(args[Is]...);
+			return box(fn(s, args[Is]...));
 		}
 		else
 		{
@@ -351,15 +345,7 @@ bool is_eqv(Atom a, Atom b);
 
 inline bool is_eq(Atom a, Atom b)
 {
-	if (a.bits == b.bits)
-	{
-		return true;
-	}
-	if (a.is_tagged() && b.is_tagged() && a.tag() == jet_tag::symbol && b.tag() == jet_tag::symbol)
-	{
-		return *unbox<Symbol>(a) == *unbox<Symbol>(b);
-	}
-	return false;
+	return a.bits == b.bits;
 }
 
 void init_equivalence(Env& e);

@@ -278,7 +278,7 @@ static void link_opcode_handlers(Code* begin, Code* end)
 	}
 }
 
-static Code* decode_constant(Code* p, Atom& out, Env& env)
+static Code* decode_constant(InternedSymbols& symbols, Code* p, Atom& out, Env& env)
 {
 	ConstTag tag = static_cast<ConstTag>(*p++);
 	switch (tag)
@@ -312,9 +312,9 @@ static Code* decode_constant(Code* p, Atom& out, Env& env)
 		}
 		case ConstTag::Symbol:
 		{
-			char* s = reinterpret_cast<char*>(p);
-			out = box(Symbol(String(s)));
-			return p + strlen(s) + 1;
+			char* value = reinterpret_cast<char*>(p);
+			out = box(symbols.intern(value));
+			return p + strlen(value) + 1;
 		}
 		case ConstTag::EmptyList:
 			out = box(EmptyList{});
@@ -361,7 +361,7 @@ static Code* decode_constant(Code* p, Atom& out, Env& env)
 	JET_DIE("unknown constant-pool tag <%d>", static_cast<int>(tag));
 }
 
-LoadedProgram load_program(Code* bytecode, size_t bytecode_size, Env& primitives_env)
+LoadedProgram load_program(InternedSymbols& symbols, Code* bytecode, size_t n_bytes, Env& env)
 {
 	LoadedProgram prog;
 	Code* p = bytecode;
@@ -375,10 +375,10 @@ LoadedProgram load_program(Code* bytecode, size_t bytecode_size, Env& primitives
 	for (uint32_t i = 0; i < n_constants; ++i)
 	{
 		Atom a;
-		p = decode_constant(p, a, primitives_env);
+		p = decode_constant(symbols, p, a, env);
 		prog.constants.push_back(a);
 	}
-	link_opcode_handlers(p, bytecode + bytecode_size);
+	link_opcode_handlers(p, bytecode + n_bytes);
 	prog.code = p;
 	return prog;
 }
@@ -623,20 +623,21 @@ JET_NOINLINE JET_PRESERVE_NONE static void die_struct_int_key(VM_OP_PARAMS)
 	JET_DIE("struct field access requires a symbol key");
 }
 
-[[noreturn]] static void die_struct_no_field(StructType* t, std::string_view name)
+[[noreturn]] static void die_struct_no_field(StructType* type, Symbol field)
 {
-	JET_DIE("struct '%s': no field named '%.*s'", t->name().c_str(),
-			 static_cast<int>(name.size()), name.data());
+	const std::string& type_name = symbol_to_string(unbox<Symbol>(type->name()));
+	const std::string& field_name = symbol_to_string(field);
+	JET_DIE("struct '%s': no field named '%s'", type_name.c_str(), field_name.c_str());
 }
 
 static Atom slow_ref_struct(Atom obj, Atom key)
 {
 	Struct* inst = unbox<Struct>(obj);
-	Symbol* sym = slow_unbox<Symbol>(key);
-	int idx = inst->type->find(sym->str());
+	Symbol symbol = slow_unbox<Symbol>(key);
+	int idx = inst->type->find(key);
 	if (idx < 0)
 	{
-		die_struct_no_field(inst->type, sym->str());
+		die_struct_no_field(inst->type, symbol);
 	}
 	return inst->values[idx];
 }
@@ -770,11 +771,11 @@ JET_PRESERVE_NONE static void fast_ldf_struct(VM_OP_PARAMS)
 	{
 		JET_MUSTTAIL return die_struct_int_key(VM_OP_ARGS);
 	}
-	Symbol* sym = unbox<Symbol>(key);
-	int idx = inst->type->find(sym->str());
+	Symbol symbol = unbox<Symbol>(key);
+	int idx = inst->type->find(key);
 	if (idx < 0) [[unlikely]]
 	{
-		die_struct_no_field(inst->type, sym->str());
+		die_struct_no_field(inst->type, symbol);
 	}
 	ic->ic_extra1 = (type_packed << 16) | static_cast<uint16_t>(idx);
 	ic->ic_extra2 = key.bits;
@@ -802,11 +803,11 @@ JET_PRESERVE_NONE static void fast_stf_struct(VM_OP_PARAMS)
 	{
 		JET_MUSTTAIL return die_struct_int_key(VM_OP_ARGS);
 	}
-	Symbol* sym = unbox<Symbol>(key);
-	int idx = inst->type->find(sym->str());
+	Symbol symbol = unbox<Symbol>(key);
+	int idx = inst->type->find(key);
 	if (idx < 0) [[unlikely]]
 	{
-		die_struct_no_field(inst->type, sym->str());
+		die_struct_no_field(inst->type, symbol);
 	}
 	ic->ic_extra1 = (type_packed << 16) | static_cast<uint16_t>(idx);
 	ic->ic_extra2 = key.bits;
@@ -931,11 +932,11 @@ JET_PRESERVE_NONE static void fast_ldfk_struct(VM_OP_PARAMS)
 	{
 		JET_MUSTTAIL return die_struct_int_key(VM_OP_ARGS);
 	}
-	Symbol* sym = unbox<Symbol>(key);
-	int idx = inst->type->find(sym->str());
+	Symbol symbol = unbox<Symbol>(key);
+	int idx = inst->type->find(key);
 	if (idx < 0) [[unlikely]]
 	{
-		die_struct_no_field(inst->type, sym->str());
+		die_struct_no_field(inst->type, symbol);
 	}
 	ic->ic_extra1 = (type_packed << 16) | static_cast<uint16_t>(idx);
 	stack_base[frame_base + op->dst] = inst->values[idx];
@@ -962,11 +963,11 @@ JET_PRESERVE_NONE static void fast_stfk_struct(VM_OP_PARAMS)
 	{
 		JET_MUSTTAIL return die_struct_int_key(VM_OP_ARGS);
 	}
-	Symbol* sym = unbox<Symbol>(key);
-	int idx = inst->type->find(sym->str());
+	Symbol symbol = unbox<Symbol>(key);
+	int idx = inst->type->find(key);
 	if (idx < 0) [[unlikely]]
 	{
-		die_struct_no_field(inst->type, sym->str());
+		die_struct_no_field(inst->type, symbol);
 	}
 	ic->ic_extra1 = (type_packed << 16) | static_cast<uint16_t>(idx);
 	inst->values[idx] = value;
@@ -1615,35 +1616,34 @@ static constexpr auto& op_cds_5 = op_cd_impl<5, false, CdKind::Self>;
 static constexpr auto& op_cds_6 = op_cd_impl<6, false, CdKind::Self>;
 static constexpr auto& op_cds_7 = op_cd_impl<7, false, CdKind::Self>;
 
-void eval(Frame& init_frame, Atom* constants, size_t n_constants, size_t initial_stack_size)
+void eval(VmState& vm, Frame& init_frame, Atom* constants, size_t n_constants, size_t initial_stack_size)
 {
 	std::unique_ptr<Atom[]> stack_buffer{new Atom[STACK_CAPACITY]};
 	JET_DIE_WHEN(initial_stack_size > STACK_CAPACITY - STACK_SLACK,
 				  "stack overflow: %zu toplevel slots", initial_stack_size);
 
-	VmState s{};
-	s.stack_base = stack_buffer.get();
-	s.stack_end = stack_buffer.get() + STACK_CAPACITY;
-	s.stack_top = stack_buffer.get() + initial_stack_size;
-	s.stack_watermark = s.stack_top;
-	s.constants = constants;
-	s.n_constants = n_constants;
+	vm.stack_base = stack_buffer.get();
+	vm.stack_end = stack_buffer.get() + STACK_CAPACITY;
+	vm.stack_top = stack_buffer.get() + initial_stack_size;
+	vm.stack_watermark = vm.stack_top;
+	vm.constants = constants;
+	vm.n_constants = n_constants;
 
 	Code halt_buf[OPCODE_SIZE];
 	VmOp halt_handler = dispatch_table[static_cast<int>(Opcode::halt)];
 	std::memcpy(halt_buf, &halt_handler, sizeof(halt_handler));
 	halt_buf[VM_OP_SLOT_SIZE] = static_cast<uint8_t>(Opcode::halt);
-	s.frames.push_back({halt_buf, nullptr, 0, initial_stack_size});
-	s.frames.push_back(init_frame);
+	vm.frames.push_back({halt_buf, nullptr, 0, initial_stack_size});
+	vm.frames.push_back(init_frame);
 
-	Frame* frame = &s.frames.back();
+	Frame* frame = &vm.frames.back();
 	Code* pc = frame->code;
-	Atom* stack_top = s.stack_top;
+	Atom* stack_top = vm.stack_top;
 	VmOp h = *reinterpret_cast<VmOp*>(pc);
 	pc += OPCODE_SIZE;
 	JET_PROFILE_OP(pc[-1]);
-	JET_TRACE_STEP(s, frame, pc, stack_top);
-	h(s, frame, pc, stack_top, Atom{}, nullptr, 0, s.stack_base, frame->base);
+	JET_TRACE_STEP(vm, frame, pc, stack_top);
+	h(vm, frame, pc, stack_top, Atom{}, nullptr, 0, vm.stack_base, frame->base);
 
 	profile_print();
 }

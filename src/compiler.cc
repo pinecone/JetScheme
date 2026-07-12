@@ -5614,7 +5614,7 @@ Bytecode compile(std::string source, std::string filename, CompileFlags flags)
 namespace
 {
 
-	Atom datum_to_atom(Expr* e)
+	Atom datum_to_atom(InternedSymbols& symbols, Expr* e)
 	{
 		switch (e->kind)
 		{
@@ -5630,7 +5630,7 @@ namespace
 			case ExprKind::CharacterLit:
 				return box(static_cast<Character>(e->character_lit.value));
 			case ExprKind::SymbolLit:
-				return box(Symbol{std::string{e->symbol_lit.name}});
+				return box(symbols.intern(e->symbol_lit.name));
 			case ExprKind::Call:
 			{
 				Expr* proc = e->call.proc;
@@ -5641,21 +5641,21 @@ namespace
 					Atom result = box(EmptyList{});
 					for (size_t i = e->call.args.size(); i-- > 0;)
 					{
-						result = cons(datum_to_atom(e->call.args[i]), result);
+						result = cons(datum_to_atom(symbols, e->call.args[i]), result);
 					}
 					return result;
 				}
 				if (name == "cons")
 				{
 					JET_DIE_UNLESS(e->call.args.size() == 2, "datum_to_atom: cons arity");
-					return cons(datum_to_atom(e->call.args[0]), datum_to_atom(e->call.args[1]));
+					return cons(datum_to_atom(symbols, e->call.args[0]), datum_to_atom(symbols, e->call.args[1]));
 				}
 				if (name == "vector")
 				{
 					Vec v;
 					for (uint32_t i = 0; i < e->call.args.size(); ++i)
 					{
-						v.push_back(datum_to_atom(e->call.args[i]));
+						v.push_back(datum_to_atom(symbols, e->call.args[i]));
 					}
 					return box(std::move(v));
 				}
@@ -5665,7 +5665,7 @@ namespace
 					bv.reserve(e->call.args.size());
 					for (uint32_t i = 0; i < e->call.args.size(); ++i)
 					{
-						Atom byte_val = datum_to_atom(e->call.args[i]);
+						Atom byte_val = datum_to_atom(symbols, e->call.args[i]);
 						bv.push_back(static_cast<uint8_t>(unbox<Number>(byte_val)));
 					}
 					return box(std::move(bv));
@@ -5677,7 +5677,7 @@ namespace
 		}
 	}
 
-	Atom read_port(Atom p)
+	Atom read_port(VmState& vm, Atom p)
 	{
 		Port* base = slow_unbox<Port>(p);
 		JET_DIE_UNLESS(base->is_input(), "read: not an input port");
@@ -5697,7 +5697,7 @@ namespace
 			return make_eof();
 		}
 		Expr* datum = parser.parse_datum();
-		return datum_to_atom(datum);
+		return datum_to_atom(vm.symbols, datum);
 	}
 
 } // namespace
