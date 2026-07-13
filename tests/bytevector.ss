@@ -40,7 +40,7 @@
 (define bv2 (bytevector 10 20 30 40))
 ($check (= 10 (ref bv2 0)))
 ($check (= 40 (ref bv2 3)))
-(setf! (ref bv2 1) 99)
+(setf! bv2 1 99)
 ($check (= 99 (ref bv2 1)))
 ($check (= 99 (bytevector-u8-ref bv2 1)))
 ;; ref returns a number, not a character
@@ -52,7 +52,7 @@
 (define i 0)
 (let loop ()
   (when (< i 100)
-    (setf! (ref hot i) (modulo i 256))
+    (setf! hot i (modulo i 256))
     (set! i (+ i 1))
     (loop)))
 (define sum 0)

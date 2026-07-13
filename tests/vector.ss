@@ -16,7 +16,7 @@
 ($check (equal? '#(0 0 0 0) c))
 ($check (equal? '#(1 2 3 4 #(1 2 3 4) 5) '#(1 2 3 4 #(1 2 3 4) 5)))
 
-;; ref / (setf! (ref ...) ...) on vectors.
+;; ref / setf! on vectors.
 
 (define rv (vector 10 20 30 40))
 ($check (= 10 (ref rv 0)))
@@ -24,16 +24,16 @@
 ($check (= 40 (ref rv 3)))
 ($check (= 40 (ref rv (- 4 1))))
 
-(setf! (ref rv 1) 999)
+(setf! rv 1 999)
 ($check (= 999 (ref rv 1)))
 ;; vector-ref agrees.
 ($check (= 999 (vector-ref rv 1)))
 
-(setf! (ref rv 0) 'sym)
+(setf! rv 0 'sym)
 ($check (eq? 'sym (ref rv 0)))
 
-;; the set! form returns the assigned value.
-($check (= 7 (setf! (ref rv 2) 7)))
+;; The setf! form returns the assigned value.
+($check (= 7 (setf! rv 2 7)))
 ($check (= 7 (ref rv 2)))
 
 ;; hot loop.
@@ -41,7 +41,7 @@
 (define i 0)
 (let loop ()
   (when (< i 100)
-    (setf! (ref hot i) (* i i))
+    (setf! hot i (* i i))
     (set! i (+ i 1))
     (loop)))
 (define sum 0)

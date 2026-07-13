@@ -72,13 +72,13 @@
 (<span class="k">define</span> p (<span class="b">point</span> <span class="n">3</span> <span class="n">4</span>))                           <span class="c">; call the type to construct</span>
 (<span class="b">isa?</span> p <span class="b">point</span>)                                   <span class="c">; =&gt; #t</span>
 (<span class="b">ref</span> p '<span class="n">x</span>)                                       <span class="c">; =&gt; 3</span>
-(<span class="k">setf!</span> (<span class="b">ref</span> p '<span class="n">x</span>) <span class="n">10</span>)                            <span class="c">; mutate field</span></code></pre>
-  <h3>Places</h3>
-  <p><strong><code>ref</code>.</strong> <code>(ref v i)</code> is a polymorphic accessor. It works on vectors and strings (integer index) and structs (symbol field name).</p>
-  <p><strong><code>setf!</code>.</strong> Mutates the place denoted by its first argument:</p>
-<pre><code>(<span class="k">setf!</span> (<span class="b">ref</span> v <span class="n">3</span>) '<span class="n">x</span>)                             <span class="c">; vector-set!</span>
-(<span class="k">setf!</span> (<span class="b">ref</span> s <span class="n">0</span>) <span class="ch">#\H</span>)                            <span class="c">; string-set!</span>
-(<span class="k">setf!</span> (<span class="b">ref</span> pt '<span class="n">x</span>) <span class="n">99</span>)                           <span class="c">; struct field mutation</span></code></pre>
+(<span class="k">setf!</span> p '<span class="n">x</span> <span class="n">10</span>)                                  <span class="c">; mutate field</span></code></pre>
+  <h3>Generic ops</h3>
+  <p><code>(ref v i)</code> is a polymorphic accessor. It works on vectors and strings (integer index) and structs (symbol field name).</p>
+  <p><code>(setf! v i x)</code> stores <code>x</code> at key <code>i</code> in <code>v</code>:</p>
+<pre><code>(<span class="k">setf!</span> v <span class="n">3</span> '<span class="n">x</span>)                                   <span class="c">; vector-set!</span>
+(<span class="k">setf!</span> s <span class="n">0</span> <span class="ch">#\H</span>)                                  <span class="c">; string-set!</span>
+(<span class="k">setf!</span> pt '<span class="n">x</span> <span class="n">99</span>)                                 <span class="c">; struct field mutation</span></code></pre>
   <h3>OS env</h3>
   <p><strong><code>argv</code>.</strong> Vector of strings holding the script's command-line arguments (excluding the binary and script path).</p>
   <p><code>$JET_PRELUDE/lib/prelude.ss</code> is the bundled prelude, auto-loaded unless <code>--no-prelude</code> is given.</p>

@@ -14,9 +14,9 @@
   (if (> v 1.0) 1.0 (if (< v 0.0) 0.0 v)))
 
 (define (color-limit! c)
-  (setf! (ref c 'red) (color-limit-value (ref c 'red)))
-  (setf! (ref c 'green) (color-limit-value (ref c 'green)))
-  (setf! (ref c 'blue) (color-limit-value (ref c 'blue))))
+  (setf! c 'red (color-limit-value (ref c 'red)))
+  (setf! c 'green (color-limit-value (ref c 'green)))
+  (setf! c 'blue (color-limit-value (ref c 'blue))))
 
 (define (color-add c1 c2)
   (color-t (+ (ref c1 'red) (ref c2 'red))
@@ -156,18 +156,18 @@
          (B (vector-dot dst (ref ray 'direction)))
          (C (- (vector-dot dst dst) (* (ref self 'radius) (ref self 'radius))))
          (D (- (* B B) C)))
-    (setf! (ref info 'shape) self)
+    (setf! info 'shape self)
     (if (> D 0)
         (begin
-          (setf! (ref info 'is-hit) #t)
-          (setf! (ref info 'distance) (- (- B) (sqrt D)))
-          (setf! (ref info 'position)
+          (setf! info 'is-hit #t)
+          (setf! info 'distance (- (- B) (sqrt D)))
+          (setf! info 'position
                  (vector-add (ref ray 'position)
                              (vector-multiply-scalar (ref ray 'direction) (ref info 'distance))))
-          (setf! (ref info 'normal)
+          (setf! info 'normal
                  (vector-normalize (vector-subtract (ref info 'position) (ref self 'position))))
-          (setf! (ref info 'color) (material-get-color (ref self 'material) 0.0 0.0)))
-        (setf! (ref info 'is-hit) #f))
+          (setf! info 'color (material-get-color (ref self 'material) 0.0 0.0)))
+        (setf! info 'is-hit #f))
     info))
 
 (define (plane-intersect self ray)
@@ -179,14 +179,14 @@
           (if (<= t 0)
               info
               (begin
-                (setf! (ref info 'shape) self)
-                (setf! (ref info 'is-hit) #t)
-                (setf! (ref info 'position)
+                (setf! info 'shape self)
+                (setf! info 'is-hit #t)
+                (setf! info 'position
                        (vector-add (ref ray 'position)
                                    (vector-multiply-scalar (ref ray 'direction) t)))
-                (setf! (ref info 'normal) (ref self 'position))
-                (setf! (ref info 'distance) t)
-                (setf! (ref info 'color) (material-get-color (ref self 'material) 0.0 0.0))
+                (setf! info 'normal (ref self 'position))
+                (setf! info 'distance t)
+                (setf! info 'color (material-get-color (ref self 'material) 0.0 0.0))
                 (if (ref (ref self 'material) 'has-texture)
                     (let* ((vU (make-vector (ref (ref self 'position) 'y)
                                             (ref (ref self 'position) 'z)
@@ -194,7 +194,7 @@
                            (vV (vector-cross vU (ref self 'position)))
                            (u (vector-dot (ref info 'position) vU))
                            (v (vector-dot (ref info 'position) vV)))
-                      (setf! (ref info 'color)
+                      (setf! info 'color
                              (material-get-color (ref self 'material) u v))))
                 info))))))
 
@@ -216,7 +216,7 @@
                 (vector-subtract
                   (vector-multiply-scalar (ref self 'equator) vx)
                   (vector-multiply-scalar (ref self 'up) vy)))))
-    (setf! (ref pos 'y) (* -1 (ref pos 'y)))
+    (setf! pos 'y (* -1 (ref pos 'y)))
     (let ((dir (vector-subtract pos (ref self 'position))))
       (make-ray pos (vector-normalize dir)))))
 
@@ -249,15 +249,15 @@
   (if (ref self 'canvas)
       #f
       (if (= x y)
-          (setf! (ref self 'check-number) (+ (ref self 'check-number) (color-brightness col)))
+          (setf! self 'check-number (+ (ref self 'check-number) (color-brightness col)))
           #f)))
 
 (define (engine-test-intersection self ray scene exclude)
   (let loop ((i 0) (hits 0) (best #f) (best-distance 2000.0))
     (if (>= i (vector-length (ref scene 'shapes)))
         (let ((best (if best best (make-intersection-info))))
-          (setf! (ref best 'distance) best-distance)
-          (setf! (ref best 'hit-count) hits)
+          (setf! best 'distance best-distance)
+          (setf! best 'hit-count hits)
           best)
         (let* ((shape (vector-ref (ref scene 'shapes) i)))
           (if (eq? shape exclude)
@@ -296,9 +296,9 @@
                 (let* ((reflection-ray (engine-get-reflection-ray self (ref info 'position) (ref info 'normal) (ref ray 'direction)))
                        (refl (engine-test-intersection self reflection-ray scene (ref info 'shape))))
                   (if (and (ref refl 'is-hit) (> (ref refl 'distance) 0))
-                      (setf! (ref refl 'color)
+                      (setf! refl 'color
                              (engine-ray-trace self refl reflection-ray scene (+ depth 1)))
-                      (setf! (ref refl 'color) (ref (ref scene 'background) 'color)))
+                      (setf! refl 'color (ref (ref scene 'background) 'color)))
                   (set! col (color-blend col (ref refl 'color) (ref (ref (ref info 'shape) 'material) 'reflection))))
                 #f)
             (let ((shadow-info (make-intersection-info)))
@@ -331,8 +331,8 @@
         (ref (ref scene 'background) 'color))))
 
 (define (engine-render-scene self scene)
-  (setf! (ref self 'check-number) 0)
-  (setf! (ref self 'canvas) #f)
+  (setf! self 'check-number 0)
+  (setf! self 'canvas #f)
   (let ((canvas-height (ref self 'canvas-height))
         (canvas-width (ref self 'canvas-width)))
     (let y-loop ((y 0))
@@ -353,13 +353,13 @@
 ;; --- Scene setup -----------------------------------------------------
 (define (build-scene)
   (let ((scene (make-scene)))
-    (setf! (ref scene 'camera)
+    (setf! scene 'camera
            (make-camera (make-vector 0.0 0.0 -15.0)
                         (make-vector -0.2 0.0 5.0)
                         (make-vector 0.0 1.0 0.0)))
-    (setf! (ref scene 'background)
+    (setf! scene 'background
            (make-background (make-color 0.5 0.5 0.5) 0.4))
-    (setf! (ref scene 'shapes)
+    (setf! scene 'shapes
            (vector (make-plane (vector-normalize (make-vector 0.1 0.9 -0.5)) 1.2
                                (make-chessboard-material (make-color 1.0 1.0 1.0)
                                                          (make-color 0.0 0.0 0.0)
@@ -370,7 +370,7 @@
                    (make-sphere (make-vector 1.0 0.25 1.0) 0.5
                                 (make-solid-material (make-color 0.9 0.9 0.9)
                                                      0.1 0.0 0.0 1.5))))
-    (setf! (ref scene 'lights)
+    (setf! scene 'lights
            (vector (make-light (make-vector 5.0 10.0 -1.0)
                                (make-color 0.8 0.8 0.8)
                                #f)

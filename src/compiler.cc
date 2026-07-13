@@ -1337,16 +1337,8 @@ namespace
 		{
 			advance();
 
-			SourceLoc place_loc = peek().loc;
-			expect(TokenKind::LParen);
-			if (peek().kind != TokenKind::Variable || peek().text != "ref")
-			{
-				JET_DIE("%d:%d: setf! place form must be (ref obj key)", place_loc.line, place_loc.col);
-			}
-			advance();
 			Expr* obj = parse_expr();
 			Expr* key = parse_expr();
-			expect(TokenKind::RParen);
 			Expr* value = parse_expr();
 			expect(TokenKind::RParen);
 

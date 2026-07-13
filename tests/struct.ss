@@ -40,17 +40,17 @@
 (define x-key (string->symbol "x"))
 ($check (= 7 (ref pp x-key)))
 
-;; Mutation via set! place form.
-(setf! (ref pp 'x) 100)
-(setf! (ref pp 'y) 200)
+;; Mutation via setf!.
+(setf! pp 'x 100)
+(setf! pp 'y 200)
 ($check (= 100 (ref pp 'x)))
 ($check (= 200 (ref pp 'y)))
-(setf! (ref pp x-key) 101)
+(setf! pp x-key 101)
 ($check (= 101 (ref pp 'x)))
 
 ;; Mutation on one instance doesn't affect another.
 (define pp2 (point 7 8))
-(setf! (ref pp2 'x) 9999)
+(setf! pp2 'x 9999)
 ($check (= 101 (ref pp 'x)))
 ($check (= 9999 (ref pp2 'x)))
 
