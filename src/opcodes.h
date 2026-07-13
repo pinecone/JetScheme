@@ -78,11 +78,9 @@ enum class Opcode : uint8_t
 #undef X
 };
 
-constexpr int OPCODE_COUNT = 0
 #define X(name, disp) +1
-	JET_OPCODES(X)
+constexpr int OPCODE_COUNT = 0 JET_OPCODES(X);
 #undef X
-	;
 
 #pragma pack(push, 1)
 

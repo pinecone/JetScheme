@@ -19,7 +19,8 @@ Profile g_profile{};
 
 void profile_print()
 {
-	auto&& profile_opcode_name = [](int op) -> std::string_view {
+	auto&& profile_opcode_name = [](int op) -> std::string_view
+	{
 		switch (op)
 		{
 #define X(name, disp)                                                                                        \
@@ -42,7 +43,7 @@ void profile_print()
 	std::fprintf(stderr, " lambda calls: %llu\n", static_cast<unsigned long long>(g_profile.lambda_calls));
 	std::fprintf(stderr, " primitive calls: %llu\n", static_cast<unsigned long long>(g_profile.prim_calls));
 	std::fprintf(stderr, " gc collections: %llu\n",
-				 static_cast<unsigned long long>(g_profile.gc_collections));
+	             static_cast<unsigned long long>(g_profile.gc_collections));
 	std::fprintf(stderr, "\nopcode histogram (sorted by count):\n");
 
 	int idx[256];
@@ -61,7 +62,7 @@ void profile_print()
 		}
 		double pct = total_ops ? 100.0 * static_cast<double>(n) / static_cast<double>(total_ops) : 0.0;
 		std::fprintf(stderr, " %-14s %12llu %5.1f%%\n", profile_opcode_name(idx[i]).data(),
-					 static_cast<unsigned long long>(n), pct);
+		             static_cast<unsigned long long>(n), pct);
 	}
 
 	uint64_t total_ticks = g_profile.gc_ticks;
@@ -72,7 +73,7 @@ void profile_print()
 	if (total_ticks > 0)
 	{
 		std::sort(idx, idx + 256,
-				  [](int a, int b) { return g_profile.op_ticks[a] > g_profile.op_ticks[b]; });
+		          [](int a, int b) { return g_profile.op_ticks[a] > g_profile.op_ticks[b]; });
 		std::fprintf(stderr, "\nopcode time histogram (sorted by ticks; gc excluded from op rows):\n");
 		std::fprintf(stderr, " %-14s %14s %6s %10s\n", "opcode", "ticks", "time%", "ticks/op");
 		for (int i = 0; i < 256; ++i)
@@ -86,11 +87,11 @@ void profile_print()
 			double pct = 100.0 * static_cast<double>(t) / static_cast<double>(total_ticks);
 			double per = n ? static_cast<double>(t) / static_cast<double>(n) : 0.0;
 			std::fprintf(stderr, " %-14s %14llu %5.1f%% %10.2f\n", profile_opcode_name(idx[i]).data(),
-						 static_cast<unsigned long long>(t), pct, per);
+			             static_cast<unsigned long long>(t), pct, per);
 		}
 		double gc_pct = 100.0 * static_cast<double>(g_profile.gc_ticks) / static_cast<double>(total_ticks);
 		std::fprintf(stderr, " %-14s %14llu %5.1f%%\n", "(gc)",
-					 static_cast<unsigned long long>(g_profile.gc_ticks), gc_pct);
+		             static_cast<unsigned long long>(g_profile.gc_ticks), gc_pct);
 	}
 
 	uint64_t total_ic_misses = 0;
@@ -106,7 +107,7 @@ void profile_print()
 			ic_idx[i] = i;
 		}
 		std::sort(ic_idx, ic_idx + 256,
-				  [](int a, int b) { return g_profile.ic_misses[a] > g_profile.ic_misses[b]; });
+		          [](int a, int b) { return g_profile.ic_misses[a] > g_profile.ic_misses[b]; });
 
 		std::fprintf(stderr, "\nIC misses (sorted by miss count):\n");
 		std::fprintf(stderr, " %-14s %12s %12s %7s\n", "opcode", "total", "misses", "miss%");
@@ -121,8 +122,8 @@ void profile_print()
 			uint64_t total = g_profile.op_counts[op];
 			double miss_pct = total ? 100.0 * static_cast<double>(misses) / static_cast<double>(total) : 0.0;
 			std::fprintf(stderr, " %-14s %12llu %12llu %6.2f%%\n", profile_opcode_name(op).data(),
-						 static_cast<unsigned long long>(total), static_cast<unsigned long long>(misses),
-						 miss_pct);
+			             static_cast<unsigned long long>(total), static_cast<unsigned long long>(misses),
+			             miss_pct);
 		}
 	}
 
@@ -149,16 +150,17 @@ void profile_print()
 	std::sort(pairs.begin(), pairs.end(), [](const Pair& a, const Pair& b) { return a.ticks > b.ticks; });
 	std::fprintf(stderr, "\ntop transitions by previous-op ticks (prev -> curr):\n");
 	std::fprintf(stderr, " %-14s    %-14s %12s %6s %10s %12s\n",
-				 "previous", "current", "ticks", "time%", "ticks/pair", "count");
+	             "previous", "current", "ticks", "time%", "ticks/pair", "count");
 	for (size_t i = 0; i < shown && pairs[i].ticks > 0; ++i)
 	{
 		double pct = total_ticks
-					 ? 100.0 * static_cast<double>(pairs[i].ticks) / static_cast<double>(total_ticks) : 0.0;
+		             ? 100.0 * static_cast<double>(pairs[i].ticks) / static_cast<double>(total_ticks)
+		             : 0.0;
 		double per = static_cast<double>(pairs[i].ticks) / static_cast<double>(pairs[i].n);
 		std::fprintf(stderr, " %-14s -> %-14s %12llu %5.1f%% %10.2f %12llu\n",
-					 profile_opcode_name(pairs[i].prev).data(), profile_opcode_name(pairs[i].curr).data(),
-					 static_cast<unsigned long long>(pairs[i].ticks), pct, per,
-					 static_cast<unsigned long long>(pairs[i].n));
+		             profile_opcode_name(pairs[i].prev).data(), profile_opcode_name(pairs[i].curr).data(),
+		             static_cast<unsigned long long>(pairs[i].ticks), pct, per,
+		             static_cast<unsigned long long>(pairs[i].n));
 	}
 
 	std::sort(pairs.begin(), pairs.end(), [](const Pair& a, const Pair& b) { return a.n > b.n; });
@@ -168,8 +170,8 @@ void profile_print()
 		double pct =
 			total_ops ? 100.0 * static_cast<double>(pairs[i].n) / static_cast<double>(total_ops) : 0.0;
 		std::fprintf(stderr, " %-14s -> %-14s %12llu %5.1f%%\n",
-					 profile_opcode_name(pairs[i].prev).data(), profile_opcode_name(pairs[i].curr).data(),
-					 static_cast<unsigned long long>(pairs[i].n), pct);
+		             profile_opcode_name(pairs[i].prev).data(), profile_opcode_name(pairs[i].curr).data(),
+		             static_cast<unsigned long long>(pairs[i].n), pct);
 	}
 }
 
@@ -182,7 +184,7 @@ const char* opcode_name(uint8_t op)
 #define X(name, disp)                                                                                        \
 	case static_cast<uint8_t>(Opcode::name):                                                                 \
 		return disp;
-		JET_OPCODES(X)
+	JET_OPCODES(X)
 #undef X
 		default:
 			return "?unknown";
@@ -396,7 +398,8 @@ bool g_trace_enabled = false;
 
 void trace_step(VmState& s, Frame* /*frame*/, Code* pc, Atom* stack_top)
 {
-	auto&& brief = [](Atom a) -> std::string {
+	auto&& brief = [](Atom a) -> std::string
+	{
 		std::string result;
 		write_to(a, result);
 		for (size_t i = 0; i < result.size(); ++i)
@@ -437,121 +440,121 @@ void trace_step(VmState& s, Frame* /*frame*/, Code* pc, Atom* stack_top)
 namespace
 {
 
-struct LambdaBlock
-{
-	uint32_t pool_idx;
-	Code* code;
-	size_t size;
-	size_t arity;
-	bool is_n_ary;
-	uint16_t n_locals;
-	const char* name;
-};
-
-void disasm_code_block(FILE* out, Code* start, size_t size)
-{
-	Code* p = start;
-	Code* end = start + size;
-	while (p < end)
+	struct LambdaBlock
 	{
-		size_t off = static_cast<size_t>(p - start);
-		uint8_t tag = p[VM_OP_SLOT_SIZE];
-		Code* operand = p + OPCODE_SIZE;
-		std::fprintf(out, "  %04zu  %s", off, opcode_name(tag));
-		decode_args(out, tag, operand);
-		std::fputc('\n', out);
-		p += opcode_step(tag, operand);
-	}
-}
+		uint32_t pool_idx;
+		Code* code;
+		size_t size;
+		size_t arity;
+		bool is_n_ary;
+		uint16_t n_locals;
+		const char* name;
+	};
 
-const char* const_tag_name(ConstTag t)
-{
-	switch (t)
+	void disasm_code_block(FILE* out, Code* start, size_t size)
 	{
-		case ConstTag::Number:     return "Number";
-		case ConstTag::Boolean:    return "Boolean";
-		case ConstTag::Character:  return "Character";
-		case ConstTag::String:     return "String";
-		case ConstTag::Symbol:     return "Symbol";
-		case ConstTag::EmptyList:  return "EmptyList";
-		case ConstTag::Unknown:    return "Unknown";
-		case ConstTag::GlobalName: return "GlobalName";
-		case ConstTag::Lambda:     return "Lambda";
-	}
-	return "?";
-}
-
-Code* disasm_pool_entry(FILE* out, Code* p, uint32_t idx, std::vector<LambdaBlock>& lambdas)
-{
-	ConstTag tag = static_cast<ConstTag>(*p++);
-	std::fprintf(out, "  [%4u] %-10s ", idx, const_tag_name(tag));
-	switch (tag)
-	{
-		case ConstTag::Number:
+		Code* p = start;
+		Code* end = start + size;
+		while (p < end)
 		{
-			double n;
-			std::memcpy(&n, p, sizeof(n));
-			std::fprintf(out, "%g\n", n);
-			return p + sizeof(n);
-		}
-		case ConstTag::Boolean:
-		{
-			bool b;
-			std::memcpy(&b, p, sizeof(b));
-			std::fprintf(out, "%s\n", b ? "#t" : "#f");
-			return p + sizeof(b);
-		}
-		case ConstTag::Character:
-		{
-			Character c;
-			std::memcpy(&c, p, sizeof(c));
-			std::fprintf(out, "U+%04x\n", c);
-			return p + sizeof(c);
-		}
-		case ConstTag::String:
-		case ConstTag::Symbol:
-		case ConstTag::GlobalName:
-		{
-			const char* s = reinterpret_cast<const char*>(p);
-			std::fprintf(out, "\"%s\"\n", s);
-			return p + std::strlen(s) + 1;
-		}
-		case ConstTag::EmptyList:
-		case ConstTag::Unknown:
+			size_t off = static_cast<size_t>(p - start);
+			uint8_t tag = p[VM_OP_SLOT_SIZE];
+			Code* operand = p + OPCODE_SIZE;
+			std::fprintf(out, "  %04zu  %s", off, opcode_name(tag));
+			decode_args(out, tag, operand);
 			std::fputc('\n', out);
-			return p;
-		case ConstTag::Lambda:
-		{
-			bool is_n_ary;
-			std::memcpy(&is_n_ary, p, sizeof(is_n_ary));
-			p += sizeof(is_n_ary);
-			size_t arity = 0;
-			if (!is_n_ary)
-			{
-				std::memcpy(&arity, p, sizeof(arity));
-				p += sizeof(arity);
-			}
-			uint16_t n_locals;
-			std::memcpy(&n_locals, p, sizeof(n_locals));
-			p += sizeof(n_locals);
-			size_t code_size;
-			std::memcpy(&code_size, p, sizeof(code_size));
-			p += sizeof(code_size);
-			Code* code = p;
-			const char* name = reinterpret_cast<const char*>(code + code_size);
-			std::fprintf(out, "arity=%s%zu n_locals=%u code_size=%zu", is_n_ary ? "n-ary≥" : "", arity,
-						 n_locals, code_size);
-			if (*name)
-			{
-				std::fprintf(out, " name=\"%s\"", name);
-			}
-			std::fputc('\n', out);
-			lambdas.push_back({idx, code, code_size, arity, is_n_ary, n_locals, name});
-			return code + code_size + std::strlen(name) + 1;
+			p += opcode_step(tag, operand);
 		}
 	}
-	return p;
-}
+
+	const char* const_tag_name(ConstTag t)
+	{
+		switch (t)
+		{
+			case ConstTag::Number:     return "Number";
+			case ConstTag::Boolean:    return "Boolean";
+			case ConstTag::Character:  return "Character";
+			case ConstTag::String:     return "String";
+			case ConstTag::Symbol:     return "Symbol";
+			case ConstTag::EmptyList:  return "EmptyList";
+			case ConstTag::Unknown:    return "Unknown";
+			case ConstTag::GlobalName: return "GlobalName";
+			case ConstTag::Lambda:     return "Lambda";
+		}
+		return "?";
+	}
+
+	Code* disasm_pool_entry(FILE* out, Code* p, uint32_t idx, std::vector<LambdaBlock>& lambdas)
+	{
+		ConstTag tag = static_cast<ConstTag>(*p++);
+		std::fprintf(out, "  [%4u] %-10s ", idx, const_tag_name(tag));
+		switch (tag)
+		{
+			case ConstTag::Number:
+			{
+				double n;
+				std::memcpy(&n, p, sizeof(n));
+				std::fprintf(out, "%g\n", n);
+				return p + sizeof(n);
+			}
+			case ConstTag::Boolean:
+			{
+				bool b;
+				std::memcpy(&b, p, sizeof(b));
+				std::fprintf(out, "%s\n", b ? "#t" : "#f");
+				return p + sizeof(b);
+			}
+			case ConstTag::Character:
+			{
+				Character c;
+				std::memcpy(&c, p, sizeof(c));
+				std::fprintf(out, "U+%04x\n", c);
+				return p + sizeof(c);
+			}
+			case ConstTag::String:
+			case ConstTag::Symbol:
+			case ConstTag::GlobalName:
+			{
+				const char* s = reinterpret_cast<const char*>(p);
+				std::fprintf(out, "\"%s\"\n", s);
+				return p + std::strlen(s) + 1;
+			}
+			case ConstTag::EmptyList:
+			case ConstTag::Unknown:
+				std::fputc('\n', out);
+				return p;
+			case ConstTag::Lambda:
+			{
+				bool is_n_ary;
+				std::memcpy(&is_n_ary, p, sizeof(is_n_ary));
+				p += sizeof(is_n_ary);
+				size_t arity = 0;
+				if (!is_n_ary)
+				{
+					std::memcpy(&arity, p, sizeof(arity));
+					p += sizeof(arity);
+				}
+				uint16_t n_locals;
+				std::memcpy(&n_locals, p, sizeof(n_locals));
+				p += sizeof(n_locals);
+				size_t code_size;
+				std::memcpy(&code_size, p, sizeof(code_size));
+				p += sizeof(code_size);
+				Code* code = p;
+				const char* name = reinterpret_cast<const char*>(code + code_size);
+				std::fprintf(out, "arity=%s%zu n_locals=%u code_size=%zu", is_n_ary ? "n-ary≥" : "", arity,
+				             n_locals, code_size);
+				if (*name)
+				{
+					std::fprintf(out, " name=\"%s\"", name);
+				}
+				std::fputc('\n', out);
+				lambdas.push_back({idx, code, code_size, arity, is_n_ary, n_locals, name});
+				return code + code_size + std::strlen(name) + 1;
+			}
+		}
+		return p;
+	}
 
 } // anon
 
@@ -590,7 +593,7 @@ void disassemble(FILE* out, Code* bc, size_t bc_size)
 			std::fprintf(out, " %s", lb.name);
 		}
 		std::fprintf(out, " (%zu bytes, arity=%s%zu, n_locals=%u) ===\n", lb.size,
-					 lb.is_n_ary ? "n-ary≥" : "", lb.arity, lb.n_locals);
+		             lb.is_n_ary ? "n-ary≥" : "", lb.arity, lb.n_locals);
 		disasm_code_block(out, lb.code, lb.size);
 	}
 }

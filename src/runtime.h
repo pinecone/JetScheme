@@ -63,9 +63,9 @@ void init_bytevectors(Env& e);
 
 class StructType
 {
-  public:
+public:
 	StructType(Atom name, std::vector<Atom> field_names)
-	  : name_{name}, field_names_{std::move(field_names)}
+		: name_{name}, field_names_{std::move(field_names)}
 	{
 	}
 
@@ -84,7 +84,7 @@ class StructType
 		return -1;
 	}
 
-  private:
+private:
 	Atom name_;
 	std::vector<Atom> field_names_;
 };
@@ -107,13 +107,12 @@ struct Struct
 		size_t total = sizeof(Struct) + static_cast<size_t>(n_fields) * sizeof(Atom);
 		void* mem = g_gc->alloc(total, jet_tag::struct_);
 		Struct* obj = static_cast<Struct*>(mem);
-		new (obj) Struct(type, n_fields);
+		new (obj) Struct{type, n_fields};
 		return obj;
 	}
 
-  private:
-	Struct(Struct&);
-	Struct& operator=(Struct&);
+	Struct(const Struct&) = delete;
+	Struct& operator=(const Struct&) = delete;
 };
 
 inline bool operator==(Struct& a, Struct& b)
@@ -152,12 +151,12 @@ inline void check_arity(Arity a, size_t actual)
 	if (Arity::Exactly == a.how)
 	{
 		JET_DIE_UNLESS(actual == a.expected, "procedure expects exactly %zu argument(s), given %zu",
-						a.expected, actual);
+		               a.expected, actual);
 	}
 	else if (Arity::AtLeast == a.how)
 	{
 		JET_DIE_UNLESS(actual >= a.expected, "procedure expects at least %zu argument(s), given %zu",
-						a.expected, actual);
+		               a.expected, actual);
 	}
 }
 
@@ -197,11 +196,11 @@ JET_PRESERVE_NONE inline void prim_stub_typed(VM_OP_PARAMS)
 	{
 		if constexpr (T::uses_vm)
 		{
-			return box(fn(s, args[Is]...));
+			return box(fn(s, args[Is] ...));
 		}
 		else
 		{
-			return box(fn(args[Is]...));
+			return box(fn(args[Is] ...));
 		}
 	}(std::make_index_sequence<T::arity>{});
 	stack_base[result_slot] = result;
@@ -366,7 +365,7 @@ inline bool is_true(Atom a)
 
 class Port
 {
-  public:
+public:
 	enum class Mode : uint8_t { Input, Output };
 
 	Port(Mode m) : mode_{m} {}
@@ -376,13 +375,13 @@ class Port
 	bool is_input() const { return mode_ == Mode::Input; }
 	bool is_output() const { return mode_ == Mode::Output; }
 
-  private:
+private:
 	Mode mode_;
 };
 
 class IPort : public Port
 {
-  public:
+public:
 	IPort() : Port{Mode::Input} {}
 	virtual char read_byte() = 0;
 	virtual char peek_byte() = 0;
@@ -392,7 +391,7 @@ class IPort : public Port
 
 class OPort : public Port
 {
-  public:
+public:
 	OPort() : Port{Mode::Output} {}
 	virtual void write_byte(char c) = 0;
 };
@@ -403,7 +402,7 @@ Atom make_eof();
 
 class IPortFile : public IPort
 {
-  public:
+public:
 	explicit IPortFile(std::string_view name);
 	~IPortFile() override;
 
@@ -414,13 +413,13 @@ class IPortFile : public IPort
 	void close() override;
 	bool eof() override;
 
-  private:
+private:
 	FILE* f_;
 };
 
 class IPortMem : public IPort
 {
-  public:
+public:
 	explicit IPortMem(std::string_view src) : src_{src} {}
 
 	char read_byte() override;
@@ -430,21 +429,21 @@ class IPortMem : public IPort
 	void close() override {}
 	bool eof() override { return pos_ >= src_.size(); }
 
-  private:
+private:
 	std::string_view src_;
 	size_t pos_ = 0;
 };
 
 class OPortFile : public OPort
 {
-  public:
+public:
 	explicit OPortFile(std::string_view name);
 	~OPortFile() override;
 
 	void write_byte(char c) override;
 	void close() override;
 
-  private:
+private:
 	FILE* f_;
 };
 

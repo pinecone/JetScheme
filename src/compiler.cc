@@ -352,7 +352,7 @@ struct Program
 inline bool is_delimiter(char c)
 {
 	return c == '\0' || c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '(' || c == ')' || c == '"' ||
-		   c == ';';
+	       c == ';';
 }
 
 inline char decode_char_literal(std::string_view body, SourceLoc loc)
@@ -367,8 +367,15 @@ inline char decode_char_literal(std::string_view body, SourceLoc loc)
 		char value;
 	};
 	static constexpr Named names[] = {
-		{"alarm", 0x07},     {"backspace", 0x08}, {"delete", 0x7F}, {"escape", 0x1B}, {"newline", 0x0A},
-		{"null", 0x00},      {"return", 0x0D},    {"space", 0x20},  {"tab", 0x09},
+		{"alarm",     0x07},
+		{"backspace", 0x08},
+		{"delete",    0x7F},
+		{"escape",    0x1B},
+		{"newline",   0x0A},
+		{"null",      0x00},
+		{"return",    0x0D},
+		{"space",     0x20},
+		{"tab",       0x09},
 	};
 	for (Named n : names)
 	{
@@ -378,14 +385,14 @@ inline char decode_char_literal(std::string_view body, SourceLoc loc)
 		}
 	}
 	JET_DIE("%d:%d: unknown character name '#\\%.*s'", loc.line, loc.col,
-			 static_cast<int>(body.size()), body.data());
+	        static_cast<int>(body.size()), body.data());
 }
 
 inline bool is_ident_start(char c)
 {
 	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '!' || c == '$' || c == '%' || c == '&' ||
-		   c == '*' || c == '/' || c == ':' || c == '<' || c == '=' || c == '>' || c == '?' || c == '^' ||
-		   c == '_' || c == '~' || c == '-' || c == '.';
+	       c == '*' || c == '/' || c == ':' || c == '<' || c == '=' || c == '>' || c == '?' || c == '^' ||
+	       c == '_' || c == '~' || c == '-' || c == '.';
 }
 
 inline bool is_ident_cont(char c)
@@ -742,8 +749,8 @@ namespace
 			{
 				buf += advance();
 				while (!at_end() && ((peek() >= '0' && peek() <= '9') ||
-									 (peek() >= 'a' && peek() <= 'f') ||
-									 (peek() >= 'A' && peek() <= 'F')))
+				                     (peek() >= 'a' && peek() <= 'f') ||
+				                     (peek() >= 'A' && peek() <= 'F')))
 				{
 					buf += advance();
 				}
@@ -825,12 +832,24 @@ namespace
 				TokenKind kind;
 			};
 			static constexpr Keyword keywords[] = {
-				{"lambda", TokenKind::Lambda},  {"define", TokenKind::Define}, {"if", TokenKind::If},
-				{"set!", TokenKind::Set},       {"setf!", TokenKind::Setf},    {"quote", TokenKind::QuoteWord},
-				{"apply", TokenKind::Apply},    {"let", TokenKind::Let},       {"let*", TokenKind::LetStar},
-				{"letrec", TokenKind::Letrec},  {"letrec*", TokenKind::Letrec}, {"begin", TokenKind::Begin},
-				{"when", TokenKind::When},      {"unless", TokenKind::Unless}, {"cond", TokenKind::Cond},
-				{"and", TokenKind::And},        {"or", TokenKind::Or},         {"include", TokenKind::Include},
+				{"lambda",  TokenKind::Lambda},
+				{"define",  TokenKind::Define},
+				{"if",      TokenKind::If},
+				{"set!",    TokenKind::Set},
+				{"setf!",   TokenKind::Setf},
+				{"quote",   TokenKind::QuoteWord},
+				{"apply",   TokenKind::Apply},
+				{"let",     TokenKind::Let},
+				{"let*",    TokenKind::LetStar},
+				{"letrec",  TokenKind::Letrec},
+				{"letrec*", TokenKind::Letrec},
+				{"begin",   TokenKind::Begin},
+				{"when",    TokenKind::When},
+				{"unless",  TokenKind::Unless},
+				{"cond",    TokenKind::Cond},
+				{"and",     TokenKind::And},
+				{"or",      TokenKind::Or},
+				{"include", TokenKind::Include},
 			};
 			for (Keyword k : keywords)
 			{
@@ -972,7 +991,7 @@ namespace
 			if (peek().kind != kind)
 			{
 				JET_DIE("%d:%d: expected token %d, got %d", peek().loc.line, peek().loc.col,
-						 static_cast<int>(kind), static_cast<int>(peek().kind));
+				        static_cast<int>(kind), static_cast<int>(peek().kind));
 			}
 			advance();
 		}
@@ -980,7 +999,7 @@ namespace
 		std::string_view expect_identifier(const char* what)
 		{
 			JET_DIE_UNLESS(peek().kind == TokenKind::Variable,
-							"%d:%d: expected identifier for %s", peek().loc.line, peek().loc.col, what);
+			               "%d:%d: expected identifier for %s", peek().loc.line, peek().loc.col, what);
 			return advance().text;
 		}
 
@@ -1634,7 +1653,7 @@ namespace
 			if (!f)
 			{
 				JET_DIE("%d:%d: cannot open '%.*s'", loc.line, loc.col,
-						 static_cast<int>(path.size()), path.data());
+				        static_cast<int>(path.size()), path.data());
 			}
 			std::string source;
 			char read_buf[4096];
@@ -1656,7 +1675,11 @@ namespace
 			std::vector<Token> inc_tokens = lex(&inc_port, arena, file_id);
 
 			ParseState inc_state{
-				.tokens = inc_tokens, .arena = arena, .file_table = file_table, .next_id = next_id};
+				.tokens = inc_tokens,
+				.arena = arena,
+				.file_table = file_table,
+				.next_id = next_id,
+			};
 			std::vector<Expr*> forms;
 			while (!inc_state.at_end())
 			{
@@ -1707,8 +1730,12 @@ namespace
 			Expr* file_lit = make_expr(ExprKind::StringLit, loc);
 			file_lit->string_lit.value = arena.copy_string(file_table[loc.file_id]);
 
-			std::vector<Expr*> args{test, file_lit, make_number_lit(loc.line, loc),
-									make_number_lit(loc.col, loc)};
+			std::vector<Expr*> args{
+				test,
+				file_lit,
+				make_number_lit(loc.line, loc),
+				make_number_lit(loc.col, loc),
+			};
 
 			Expr* e = make_expr(ExprKind::Call, loc);
 			e->call.proc = check_ref;
@@ -1783,11 +1810,11 @@ namespace
 				{
 					advance();
 					JET_DIE_UNLESS(!elems.empty(), "%d:%d: dotted pair needs a head", peek().loc.line,
-								peek().loc.col);
+					               peek().loc.col);
 					tail = parse_datum();
 					JET_DIE_UNLESS(peek().kind == TokenKind::RParen,
-									"%d:%d: extra tokens after dot in dotted pair", peek().loc.line,
-								peek().loc.col);
+					               "%d:%d: extra tokens after dot in dotted pair", peek().loc.line,
+					               peek().loc.col);
 					break;
 				}
 				elems.push_back(parse_datum());
@@ -1894,8 +1921,14 @@ Program& Compiler::ast()
 			file_table.push_back(filename);
 		}
 		std::vector<Token>& toks = tokens();
-		auto&& parse = [&]() -> Program {
-			ParseState state{.tokens = toks, .arena = arena, .file_table = file_table, .next_id = next_expr_id_};
+		auto&& parse = [&]() -> Program
+		{
+			ParseState state{
+				.tokens = toks,
+				.arena = arena,
+				.file_table = file_table,
+				.next_id = next_expr_id_,
+			};
 			std::vector<Expr*> forms;
 			while (!state.at_end())
 			{
@@ -2035,7 +2068,7 @@ static void walk_children(Expr* expr, F&& f)
 
 		default:
 			JET_DIE("%d:%d: walk_children: unhandled ExprKind %d (not ANF?)",
-					 expr->loc.line, expr->loc.col, static_cast<int>(expr->kind));
+			        expr->loc.line, expr->loc.col, static_cast<int>(expr->kind));
 	}
 }
 
@@ -2397,8 +2430,8 @@ Expr* Compiler::compute_anf(Expr* expr)
 		{
 			Expr* proc = expr->call.proc;
 			if (proc->kind == ExprKind::Lambda
-				&& !proc->lambda.is_variadic
-				&& proc->lambda.params.size() == expr->call.args.size())
+			    && !proc->lambda.is_variadic
+			    && proc->lambda.params.size() == expr->call.args.size())
 			{
 				// ((lambda (x ...) body ...) e ...) -> (let ((x e) ...) body ...)
 				Expr* let_e = make_expr(ExprKind::Let, expr->loc);
@@ -2442,13 +2475,14 @@ Expr* Compiler::compute_anf(Expr* expr)
 
 		default:
 			JET_DIE("%d:%d: anf: unhandled ExprKind %d (surface form not expanded?)",
-					 expr->loc.line, expr->loc.col, static_cast<int>(expr->kind));
+			        expr->loc.line, expr->loc.col, static_cast<int>(expr->kind));
 	}
 }
 
 void Compiler::verify_anf(Expr* expr)
 {
-	auto&& is_anf_atom = [](Expr* e) -> bool {
+	auto&& is_anf_atom = [](Expr* e) -> bool
+	{
 		switch (e->kind)
 		{
 			case ExprKind::NumberLit:
@@ -2465,9 +2499,10 @@ void Compiler::verify_anf(Expr* expr)
 				return false;
 		}
 	};
-	auto check_atom = [&](Expr* e) {
+	auto check_atom = [&](Expr* e)
+	{
 		JET_DIE_UNLESS(is_anf_atom(e), "%d:%d: anf: non-atomic operand (kind %d)", e->loc.line,
-						e->loc.col, static_cast<int>(e->kind));
+		               e->loc.col, static_cast<int>(e->kind));
 		verify_anf(e);
 	};
 
@@ -2711,7 +2746,7 @@ void Compiler::compute_binding_addresses_in(Expr* expr)
 			if (!found)
 			{
 				JET_DIE("%d:%d: unresolved variable '%.*s'", expr->loc.line, expr->loc.col,
-						 static_cast<int>(expr->var_ref.name.size()), expr->var_ref.name.data());
+				        static_cast<int>(expr->var_ref.name.size()), expr->var_ref.name.data());
 			}
 			bindings_[expr->id] = *found;
 			break;
@@ -2754,8 +2789,9 @@ void Compiler::compute_binding_addresses_in(Expr* expr)
 					size_t breadth = frame.size();
 					frame.push_back(name);
 					auto it = idx.find(name);
-					shadowed.push_back({name, it == idx.end() ? std::nullopt
-															  : std::optional<size_t>(it->second)});
+					shadowed.push_back({name, it == idx.end()
+					                    ? std::nullopt
+					                    : std::optional<size_t>(it->second)});
 					idx[name] = breadth;
 				}
 			}
@@ -2789,7 +2825,7 @@ void Compiler::compute_binding_addresses_in(Expr* expr)
 			if (!found)
 			{
 				JET_DIE("%d:%d: unresolved variable '%.*s' in set!", expr->loc.line, expr->loc.col,
-						 static_cast<int>(expr->set_bang.name.size()), expr->set_bang.name.data());
+				        static_cast<int>(expr->set_bang.name.size()), expr->set_bang.name.data());
 			}
 			bindings_[expr->id] = *found;
 			break;
@@ -2896,8 +2932,8 @@ namespace
 	bool needs_slot(Expr* owner, uint32_t breadth)
 	{
 		return owner->lambda.captured_locals[breadth]
-			&& (owner->lambda.reassigned_after_init_locals[breadth]
-				|| owner->lambda.captured_before_init_locals[breadth]);
+		       && (owner->lambda.reassigned_after_init_locals[breadth]
+		           || owner->lambda.captured_before_init_locals[breadth]);
 	}
 
 	std::optional<uint16_t> find_upvalue(Expr* current, Expr* owner, uint32_t breadth)
@@ -3077,7 +3113,7 @@ bool Compiler::is_self_tail_call(Expr* expr, Expr* current)
 	ResolvedBinding proc_binding = binding(proc);
 	LambdaBindings& lb = lambda_bindings_[proc_binding.lambda];
 	return !get(lb.reassigned_after_init, proc_binding.breadth)
-		   && get(lb.bound_init, proc_binding.breadth) == current;
+	       && get(lb.bound_init, proc_binding.breadth) == current;
 }
 
 Compiler::PrimLowering Compiler::prim_call_lowering(Expr* call)
@@ -3166,7 +3202,7 @@ void Compiler::select_call_op(Expr* expr, Expr* current)
 	{
 		Opcode op = pl.op;
 		if (expr->call.args[1]->kind == ExprKind::NumberLit
-			|| (op == Opcode::eq && is_literal_key(expr->call.args[1])))
+		    || (op == Opcode::eq && is_literal_key(expr->call.args[1])))
 		{
 			switch (op)
 			{
@@ -3195,8 +3231,8 @@ void Compiler::select_call_op(Expr* expr, Expr* current)
 	// directly
 	{
 		if (LambdaBindings& lb = lambda_bindings_[proc_binding.lambda];
-			!get(lb.reassigned_after_init, proc_binding.breadth)
-			&& get(lb.bound_init, proc_binding.breadth) == current)
+		    !get(lb.reassigned_after_init, proc_binding.breadth)
+		    && get(lb.bound_init, proc_binding.breadth) == current)
 		{
 			sel.op = Opcode::cds_0;
 			return;
@@ -3209,7 +3245,7 @@ void Compiler::select_call_op(Expr* expr, Expr* current)
 	if (proc_binding.lambda != current && slot)
 	{
 		std::optional<uint16_t> found = find_upvalue(current, proc_binding.lambda,
-													 static_cast<uint32_t>(proc_binding.breadth));
+		                                             static_cast<uint32_t>(proc_binding.breadth));
 		JET_DIE_UNLESS(found, "codegen: cacheable call missing upvalue entry");
 		sel.op = Opcode::cs_0;
 		sel.u.call_ic_slot.upvalue_idx = *found;
@@ -3227,7 +3263,7 @@ void Compiler::select_call_op(Expr* expr, Expr* current)
 		else
 		{
 			std::optional<uint16_t> found = find_upvalue(current, proc_binding.lambda,
-														 static_cast<uint32_t>(proc_binding.breadth));
+			                                             static_cast<uint32_t>(proc_binding.breadth));
 			JET_DIE_UNLESS(found, "codegen: cacheable call missing upvalue entry");
 			sel.op = Opcode::cdu_0;
 			sel.u.call_ic_direct.idx = *found;
@@ -3364,7 +3400,7 @@ void Compiler::select_var_op(Expr* expr, Expr* current, bool is_set)
 	std::optional<uint16_t> found = find_upvalue(current, b.lambda, static_cast<uint32_t>(b.breadth));
 	std::string_view name = expr->kind == ExprKind::SetBang ? expr->set_bang.name : expr->var_ref.name;
 	JET_DIE_UNLESS(found, "select-pass: ref to non-local without upvalue entry: '%.*s'",
-			   static_cast<int>(name.size()), name.data());
+	               static_cast<int>(name.size()), name.data());
 	sel.op = is_set ? Opcode::stu : (slot ? Opcode::ldus : Opcode::ldu);
 	sel.u.var.addr = *found;
 }
@@ -3461,7 +3497,7 @@ namespace
 				candidate_lambdas.insert(init);
 			}
 			else if (init->kind == ExprKind::NumberLit || init->kind == ExprKind::BooleanLit ||
-					 init->kind == ExprKind::CharacterLit)
+			         init->kind == ExprKind::CharacterLit)
 			{
 				const_cands[binding_key({owner, breadth})] = init;
 			}
@@ -3600,7 +3636,7 @@ namespace
 				}
 				default:
 					JET_DIE("%d:%d: anf-inline: unhandled ExprKind %d in clone", orig->loc.line,
-							 orig->loc.col, static_cast<int>(orig->kind));
+					        orig->loc.col, static_cast<int>(orig->kind));
 			}
 			return e;
 		}
@@ -3679,10 +3715,11 @@ namespace
 					if (proc->kind == ExprKind::VarRef)
 					{
 						if (auto it = lambda_cands.find(binding_key(get(db.bindings_, proc->id)));
-							it != lambda_cands.end())
+						    it != lambda_cands.end())
 						{
 							if (Expr* callee = it->second;
-								callee->lambda.params.size() == expr->call.args.size() && !active.count(callee))
+							    callee->lambda.params.size() == expr->call.args.size() && !active.count(
+									callee))
 							{
 								Expr* let = splice(expr, callee);
 								active.insert(callee);
@@ -3728,7 +3765,7 @@ namespace
 							// is_init set!s over #f sentinels) is covered by
 							// bound_init candidacy instead.
 							if (!get(ob.is_initialized, expr->let.slot_base + i)
-								&& !get(ob.reassigned_after_init, expr->let.slot_base + i))
+							    && !get(ob.reassigned_after_init, expr->let.slot_base + i))
 							{
 								consider(expr->let.owner, expr->let.slot_base + i, expr->let.vals[i]);
 							}
@@ -3740,7 +3777,7 @@ namespace
 
 				default:
 					JET_DIE("%d:%d: anf-inline: unhandled ExprKind %d", expr->loc.line,
-							 expr->loc.col, static_cast<int>(expr->kind));
+					        expr->loc.col, static_cast<int>(expr->kind));
 			}
 		}
 	};
@@ -3864,8 +3901,8 @@ namespace
 				case ExprKind::Call:
 				{
 					if (bool proc_is_name = expr->call.proc->kind == ExprKind::VarRef
-											&& expr->call.proc->var_ref.name == name;
-						!proc_is_name && name_used_as_value(expr->call.proc, name))
+					                        && expr->call.proc->var_ref.name == name;
+					    !proc_is_name && name_used_as_value(expr->call.proc, name))
 					{
 						return true;
 					}
@@ -3880,7 +3917,7 @@ namespace
 				}
 				case ExprKind::SetBang:
 					return expr->set_bang.name == name
-						   || name_used_as_value(expr->set_bang.value, name);
+					       || name_used_as_value(expr->set_bang.value, name);
 				default:
 				{
 					bool found = false;
@@ -3897,8 +3934,8 @@ namespace
 				case ExprKind::Call:
 				{
 					if (bool is_self = expr->call.proc->kind == ExprKind::VarRef
-								  && expr->call.proc->var_ref.name == name;
-						is_self && !in_tail)
+					                   && expr->call.proc->var_ref.name == name;
+					    is_self && !in_tail)
 					{
 						return false;
 					}
@@ -3917,9 +3954,9 @@ namespace
 				}
 				case ExprKind::If:
 					return self_calls_all_tail(expr->if_.test, name, false)
-						   && self_calls_all_tail(expr->if_.consequent, name, in_tail)
-						   && (!expr->if_.alternate
-							   || self_calls_all_tail(expr->if_.alternate, name, in_tail));
+					       && self_calls_all_tail(expr->if_.consequent, name, in_tail)
+					       && (!expr->if_.alternate
+					           || self_calls_all_tail(expr->if_.alternate, name, in_tail));
 				case ExprKind::Let:
 				{
 					for (Expr* val : expr->let.vals)
@@ -3932,7 +3969,7 @@ namespace
 					for (uint32_t i = 0; i < expr->let.body.size(); ++i)
 					{
 						if (bool last = (i == expr->let.body.size() - 1);
-							!self_calls_all_tail(expr->let.body[i], name, last && in_tail))
+						    !self_calls_all_tail(expr->let.body[i], name, last && in_tail))
 						{
 							return false;
 						}
@@ -3943,7 +3980,7 @@ namespace
 					for (uint32_t i = 0; i < expr->lambda.body.size(); ++i)
 					{
 						if (bool last = (i == expr->lambda.body.size() - 1);
-							!self_calls_all_tail(expr->lambda.body[i], name, last))
+						    !self_calls_all_tail(expr->lambda.body[i], name, last))
 						{
 							return false;
 						}
@@ -3965,7 +4002,7 @@ namespace
 		};
 
 		void collect_captures_in(Expr* expr, Expr* lambda, std::string_view self_name,
-			std::vector<Capture>& out, std::unordered_set<uint64_t>& seen)
+		                         std::vector<Capture>& out, std::unordered_set<uint64_t>& seen)
 		{
 			switch (expr->kind)
 			{
@@ -3981,7 +4018,7 @@ namespace
 						return;
 					}
 					if (uint64_t key = (static_cast<uint64_t>(b.lambda->id) << 32) | b.breadth;
-						seen.insert(key).second)
+					    seen.insert(key).second)
 					{
 						out.push_back({expr->var_ref.name, b});
 					}
@@ -4006,10 +4043,14 @@ namespace
 					// binding through the closure chain and stay captures.
 					return;
 				default:
-					walk_children(expr, [&](Expr* c) {
+				{
+					auto&& collect_child = [&](Expr* c)
+					{
 						collect_captures_in(c, lambda, self_name, out, seen);
-					});
+					};
+					walk_children(expr, collect_child);
 					return;
+				}
 			}
 		}
 
@@ -4037,8 +4078,8 @@ namespace
 		void prepend_capture_args(Expr* expr, std::string_view name, const std::vector<Capture>& captures)
 		{
 			if (expr->kind == ExprKind::Call
-				&& expr->call.proc->kind == ExprKind::VarRef
-				&& expr->call.proc->var_ref.name == name)
+			    && expr->call.proc->kind == ExprKind::VarRef
+			    && expr->call.proc->var_ref.name == name)
 			{
 				uint32_t n = static_cast<uint32_t>(expr->call.args.size());
 				Expr** new_args = db.arena.alloc_array<Expr*>(n + captures.size());
@@ -4078,9 +4119,9 @@ namespace
 			for (size_t i = 0; i < let_expr->let.body.size(); ++i)
 			{
 				if (Expr* form = let_expr->let.body[i]; form->kind == ExprKind::SetBang
-					&& form->set_bang.name == name
-					&& form->set_bang.is_init
-					&& form->set_bang.value->kind == ExprKind::Lambda)
+				    && form->set_bang.name == name
+				    && form->set_bang.is_init
+				    && form->set_bang.value->kind == ExprKind::Lambda)
 				{
 					if (lambda)
 					{
@@ -4098,8 +4139,8 @@ namespace
 			for (Expr* form : let_expr->let.body)
 			{
 				if (form->kind == ExprKind::SetBang
-					&& form->set_bang.name == name
-					&& !form->set_bang.is_init)
+				    && form->set_bang.name == name
+				    && !form->set_bang.is_init)
 				{
 					return let_expr;
 				}
@@ -4137,7 +4178,7 @@ namespace
 			for (Capture& cap : captures)
 			{
 				if (Compiler::LambdaBindings& owner = db.lambda_bindings_[cap.binding.lambda];
-					get(owner.reassigned_after_init, cap.binding.breadth))
+				    get(owner.reassigned_after_init, cap.binding.breadth))
 				{
 					return let_expr;
 				}
@@ -4565,7 +4606,8 @@ namespace
 				}
 				else
 				{
-					std::optional<uint16_t> found = find_upvalue(current, rb.lambda, static_cast<uint32_t>(rb.breadth));
+					std::optional<uint16_t> found =
+						find_upvalue(current, rb.lambda, static_cast<uint32_t>(rb.breadth));
 					JET_DIE_UNLESS(found, "codegen: upvalue not in parent's upvalue list");
 					cap.src = static_cast<uint8_t>(CaptureSource::Upvalue);
 					cap.idx = *found;
@@ -4594,7 +4636,7 @@ namespace
 		Compiler::OpSelection selection(Expr* expr, const char* what)
 		{
 			JET_DIE_WHEN(!db.selected_ops_[expr->id], "%d:%d: codegen: %s without selection",
-						  expr->loc.line, expr->loc.col, what);
+			             expr->loc.line, expr->loc.col, what);
 			Compiler::OpSelection sel = *db.selected_ops_[expr->id];
 			// Coalesced homes resolve here, the single read point for selections;
 			// only these two payloads name an unboxed local register (for ldu/stu/
@@ -4629,7 +4671,7 @@ namespace
 				}
 				default:
 					JET_DIE("%d:%d: codegen: unexpected set! selection %d",
-							 expr->loc.line, expr->loc.col, static_cast<int>(sel.op));
+					        expr->loc.line, expr->loc.col, static_cast<int>(sel.op));
 			}
 		}
 
@@ -4638,8 +4680,9 @@ namespace
 			Compiler::OpSelection sel = selection(expr, "SetRef");
 			LirInst i = inst(sel.op);
 			i.u.field.obj = emit_to_any_reg(expr->set_ref.obj);
-			i.u.field.key = sel.op == Opcode::stfk ? intern_literal_key(expr->set_ref.key)
-												   : emit_to_any_reg(expr->set_ref.key);
+			i.u.field.key = sel.op == Opcode::stfk
+			                ? intern_literal_key(expr->set_ref.key)
+			                : emit_to_any_reg(expr->set_ref.key);
 			uint16_t v = emit_to_any_reg(expr->set_ref.value);
 			i.u.field.val = v;
 			emit(i);
@@ -4813,15 +4856,15 @@ namespace
 						if (Expr* arg = expr->call.args[k]; arg->kind == ExprKind::VarRef)
 						{
 							if (Compiler::OpSelection arg_sel = selection(arg, "recur arg");
-								arg_sel.op == Opcode::mov)
+							    arg_sel.op == Opcode::mov)
 							{
 								src_reg[k] = arg_sel.u.var.addr;
 							}
 						}
 					}
 					std::unordered_map<uint16_t, uint16_t> saved;
-					if (std::unordered_map<uint32_t, RecurSave>::iterator early_save = recur_saves.find(expr->id);
-						early_save != recur_saves.end())
+					if (auto early_save = recur_saves.find(expr->id);
+					    early_save != recur_saves.end())
 					{
 						saved[early_save->second.target] = early_save->second.temp;
 					}
@@ -4871,7 +4914,7 @@ namespace
 					break;
 				case Opcode::cds_0:
 					JET_DIE_WHEN(tail, "%d:%d: codegen: self direct call in tail position escaped recur",
-								  expr->loc.line, expr->loc.col);
+					             expr->loc.line, expr->loc.col);
 					break;
 				case Opcode::call:
 					i.op = tail ? Opcode::tcall : Opcode::call;
@@ -4879,7 +4922,7 @@ namespace
 					break;
 				default:
 					JET_DIE("%d:%d: codegen: unexpected Call selection %d",
-							 expr->loc.line, expr->loc.col, static_cast<int>(sel.op));
+					        expr->loc.line, expr->loc.col, static_cast<int>(sel.op));
 			}
 
 			uint16_t w = claim_call_window(expr, nargs);
@@ -5041,7 +5084,7 @@ namespace
 							break;
 						default:
 							JET_DIE("%d:%d: codegen: unexpected var selection %d",
-									 expr->loc.line, expr->loc.col, static_cast<int>(sel.op));
+							        expr->loc.line, expr->loc.col, static_cast<int>(sel.op));
 					}
 					break;
 				}
@@ -5070,13 +5113,15 @@ namespace
 						case Opcode::ltk:
 						{
 							bool k = sel.op == Opcode::addk || sel.op == Opcode::subk
-									 || sel.op == Opcode::mulk || sel.op == Opcode::divk
-								 || sel.op == Opcode::numeqk || sel.op == Opcode::eqk || sel.op == Opcode::ltk;
+							         || sel.op == Opcode::mulk || sel.op == Opcode::divk
+							         || sel.op == Opcode::numeqk || sel.op == Opcode::eqk ||
+							         sel.op == Opcode::ltk;
 							LirInst i = inst(sel.op);
 							i.u.arith.dst = dst;
 							i.u.arith.a = emit_to_any_reg(expr->call.args[0]);
-							i.u.arith.b = k ? intern_literal_key(expr->call.args[1])
-											: emit_to_any_reg(expr->call.args[1]);
+							i.u.arith.b = k
+							              ? intern_literal_key(expr->call.args[1])
+							              : emit_to_any_reg(expr->call.args[1]);
 							emit(i);
 							break;
 						}
@@ -5126,9 +5171,9 @@ namespace
 						i.u.if_cmp.id = l_alt;
 						i.u.if_cmp.a = emit_to_any_reg(cmp->call.args[0]);
 						i.u.if_cmp.b = sel.op == Opcode::if_numeqk || sel.op == Opcode::if_eqk
-									   || sel.op == Opcode::if_ltk
-										   ? intern_literal_key(cmp->call.args[1])
-										   : emit_to_any_reg(cmp->call.args[1]);
+						               || sel.op == Opcode::if_ltk
+						               ? intern_literal_key(cmp->call.args[1])
+						               : emit_to_any_reg(cmp->call.args[1]);
 						emit(i);
 					}
 					else
@@ -5153,7 +5198,7 @@ namespace
 
 				default:
 					JET_DIE("%d:%d: codegen: unhandled ExprKind %d (not ANF?)",
-							 expr->loc.line, expr->loc.col, static_cast<int>(expr->kind));
+					        expr->loc.line, expr->loc.col, static_cast<int>(expr->kind));
 			}
 		}
 	};
@@ -5181,7 +5226,7 @@ namespace
 			if (i.op == Opcode::clos)
 			{
 				return OPCODE_SIZE + sizeof(OP_clos) +
-					   i.u.closure.n_captures * sizeof(OP_make_closure_capture);
+				       i.u.closure.n_captures * sizeof(OP_make_closure_capture);
 			}
 			return opcode_step(static_cast<uint8_t>(i.op), nullptr);
 		}
@@ -5271,7 +5316,7 @@ namespace
 		}
 
 		void emit_inst(Bytecode& bc, LirLambda& L, LirInst& i,
-					   std::unordered_map<uint32_t, size_t>& label_pos)
+		               std::unordered_map<uint32_t, size_t>& label_pos)
 		{
 			switch (i.op)
 			{
@@ -5460,10 +5505,13 @@ namespace
 				case Opcode::cdu_0:
 				case Opcode::cdut_0:
 				{
-					size_t& counter = i.op == Opcode::cdl_0 ? v_cdl
-						: i.op == Opcode::cdlt_0 ? v_cdlt
-						: i.op == Opcode::cdu_0 ? v_cdu
-						: v_cdut;
+					size_t& counter = i.op == Opcode::cdl_0
+					                  ? v_cdl
+					                  : i.op == Opcode::cdlt_0
+					                  ? v_cdlt
+					                  : i.op == Opcode::cdu_0
+					                  ? v_cdu
+					                  : v_cdut;
 					emit_replicated(bc, i.op, counter);
 					OP_cd op{};
 					op.w = i.u.call.w;
@@ -5619,7 +5667,8 @@ namespace
 				if (name == "cons")
 				{
 					JET_DIE_UNLESS(e->call.args.size() == 2, "datum_to_atom: cons arity");
-					return cons(datum_to_atom(symbols, e->call.args[0]), datum_to_atom(symbols, e->call.args[1]));
+					return cons(datum_to_atom(symbols, e->call.args[0]),
+					            datum_to_atom(symbols, e->call.args[1]));
 				}
 				if (name == "vector")
 				{
@@ -5658,11 +5707,13 @@ namespace
 		lex.read_mode = true;
 		std::vector<std::string> file_table;
 		uint32_t next_id = 0;
-		ParseState parser{.tokens = {},
-						  .stream_lex = &lex,
-						  .arena = arena,
-						  .file_table = file_table,
-						  .next_id = next_id};
+		ParseState parser{
+			.tokens = {},
+			.stream_lex = &lex,
+			.arena = arena,
+			.file_table = file_table,
+			.next_id = next_id,
+		};
 		if (parser.at_end())
 		{
 			return make_eof();

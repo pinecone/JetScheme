@@ -80,7 +80,7 @@ static bool slurp_bytes(const string& path, vector<uint8_t>& out)
 }
 
 static int compile_to_bytecode(const string& source_path, const string& prelude_path, CompileFlags flags,
-							   Bytecode& out)
+                               Bytecode& out)
 {
 	string source;
 	JET_DIE_UNLESS(slurp_text(source_path, source), "error: cannot read '%s'", source_path.c_str());
@@ -114,7 +114,8 @@ static int execute_bytecode(vector<uint8_t>& bytecode, int script_argc, char* sc
 
 static void usage(FILE* o)
 {
-	fprintf(o, "%s", R"(usage: jet <command> [args]
+	static constexpr char text[] =
+		R"(usage: jet <command> [args]
   jet <file.ss> [script-args]          shorthand for 'jet run <file.ss>'
   jet run <file.ss> [script-args]      compile and execute in one step
   jet compile [file.ss|-]              compile source to bytecode on stdout
@@ -133,7 +134,8 @@ options for run/exec (debug build only):
 
 env:
   JET_PRELUDE=<path>                   override the prelude path
-)");
+)";
+	fputs(text, o);
 }
 
 static bool ends_with(const string& s, const char* suffix)
@@ -226,7 +228,7 @@ int main(int argc, char* argv[])
 	if (bool input_is_bc = want_disasm && ends_with(input_path, ".bc"); want_compile && !input_is_bc)
 	{
 		if (string prelude = no_prelude ? string{} : find_prelude(argv[0]);
-			compile_to_bytecode(input_path, prelude, flags, bc) != 0)
+		    compile_to_bytecode(input_path, prelude, flags, bc) != 0)
 		{
 			return 1;
 		}

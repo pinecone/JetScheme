@@ -18,6 +18,7 @@
 # Object files live under build/<variant>/ so all three variants coexist.
 
 CXX				 := clang++
+UNCRUSTIFY := uncrustify
 ASAN_RTDIR := $(shell $(CXX) -print-runtime-dir 2>/dev/null)
 
 VARIANT ?= release
@@ -59,6 +60,7 @@ LDFLAGS	 := $(LDOPT)
 # --- Sources -------------------------------------------------------------
 
 ALL_CC	:= $(wildcard $(SRC)/*.cc)
+ALL_CPP := $(ALL_CC) $(wildcard $(SRC)/*.h)
 ALL_OBJ := $(patsubst $(SRC)/%.cc,$(OBJDIR)/%.o,$(ALL_CC))
 
 DEPS := $(ALL_OBJ:.o=.d)
@@ -68,7 +70,7 @@ DEPS := $(ALL_OBJ:.o=.d)
 .PHONY: all release debug profile all-variants \
 				test test-debug test-profile \
 				bench bench-debug bench-profile \
-				ab-cross-bench clean
+				ab-cross-bench format format-check clean
 .DEFAULT_GOAL := all
 
 all: $(JET_BIN)
@@ -110,6 +112,12 @@ bench-profile: profile
 # Builds its own worktree of REF (default HEAD), so no build dependency.
 ab-cross-bench:
 	cd bench && ./ab-cross $(REF)
+
+format:
+	$(UNCRUSTIFY) -q -c uncrustify.cfg --replace --no-backup $(ALL_CPP)
+
+format-check:
+	$(UNCRUSTIFY) -q -c uncrustify.cfg --check $(ALL_CPP)
 
 clean:
 	rm -rf $(BUILD)

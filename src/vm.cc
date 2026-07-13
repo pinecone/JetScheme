@@ -13,7 +13,7 @@
 #include <sys/mman.h>
 #include <type_traits>
 
-using GcDestructor = void(*)(void*);
+using GcDestructor = void (*)(void*);
 static GcDestructor gc_destructor_table[jet_tag::TAG_MAX] = {};
 static VmOp dispatch_table[256];
 
@@ -263,7 +263,8 @@ void collect(VmState& s)
 
 LoadedProgram load_program(InternedSymbols& symbols, Code* bytecode, size_t n_bytes, Env& env)
 {
-	auto&& link_opcode_handlers = [](Code* begin, Code* end) {
+	auto&& link_opcode_handlers = [](Code* begin, Code* end)
+	{
 		// The opcode tag stays in place so trace and profile can recover it.
 		Code* code = begin;
 		while (code < end)
@@ -275,7 +276,8 @@ LoadedProgram load_program(InternedSymbols& symbols, Code* bytecode, size_t n_by
 			code += step;
 		}
 	};
-	auto&& decode_constant = [&](Code* code, Atom& out) -> Code* {
+	auto&& decode_constant = [&](Code* code, Atom& out) -> Code*
+	{
 		ConstTag tag = static_cast<ConstTag>(*code++);
 		switch (tag)
 		{
@@ -303,7 +305,7 @@ LoadedProgram load_program(InternedSymbols& symbols, Code* bytecode, size_t n_by
 			case ConstTag::String:
 			{
 				char* string = reinterpret_cast<char*>(code);
-				out = box(String(string));
+				out = box(String{string});
 				return code + strlen(string) + 1;
 			}
 			case ConstTag::Symbol:
@@ -316,7 +318,7 @@ LoadedProgram load_program(InternedSymbols& symbols, Code* bytecode, size_t n_by
 				out = box(EmptyList{});
 				return code;
 			case ConstTag::Unknown:
-				out = Atom();
+				out = Atom{};
 				return code;
 			case ConstTag::GlobalName:
 			{
@@ -384,15 +386,17 @@ constexpr size_t STACK_SLACK = 4096;
 template <bool is_tail>
 JET_NOINLINE JET_PRESERVE_NONE static void slow_call_lambda(VM_OP_PARAMS)
 {
-	auto&& pack_args_to_list = [](Atom* first, Atom* last) -> Atom {
-		Atom result = box(EmptyList());
+	auto&& pack_args_to_list = [](Atom* first, Atom* last) -> Atom
+	{
+		Atom result = box(EmptyList{});
 		while (first != last)
 		{
 			result = cons(*--last, result);
 		}
 		return result;
 	};
-	auto&& install_args = [&](Lambda& lambda, size_t base, Atom* call_args, size_t nargs) -> size_t {
+	auto&& install_args = [&](Lambda& lambda, size_t base, Atom* call_args, size_t nargs) -> size_t
+	{
 		bool nary = is_nary(lambda.arity);
 		size_t n_copy = nary ? lambda.arity.expected : nargs;
 		Atom* dst = stack_base + base;
@@ -680,7 +684,8 @@ JET_PRESERVE_NONE static void fast_stf(VM_OP_PARAMS)
 	Atom value = stack_base[frame_base + op->val];
 	T& c = *unbox<T>(callee);
 
-	auto&& write = [&](size_t idx) -> bool {
+	auto&& write = [&](size_t idx) -> bool
+	{
 		if constexpr (std::is_same_v<T, String>)
 		{
 			if (!is_type<jet::Type::Character>(value)) [[unlikely]]
@@ -844,7 +849,8 @@ JET_PRESERVE_NONE static void fast_stfk(VM_OP_PARAMS)
 	T& c = *unbox<T>(callee);
 	size_t idx = ic->ic_extra1;
 
-	auto&& write = [&](size_t i) -> bool {
+	auto&& write = [&](size_t i) -> bool
+	{
 		if constexpr (std::is_same_v<T, String>)
 		{
 			if (!is_type<jet::Type::Character>(value)) [[unlikely]]
@@ -969,26 +975,34 @@ namespace
 	{
 		shape_table_init_t()
 		{
-			g_shape_by_tag[jet_tag::vector] = {fast_ldf<Vec>,
-												fast_stf<Vec>,
-												fast_ldfk<Vec>,
-												fast_stfk<Vec>,
-												vector_ref};
-			g_shape_by_tag[jet_tag::string] = {fast_ldf<String>,
-												fast_stf<String>,
-												fast_ldfk<String>,
-												fast_stfk<String>,
-												string_ref};
-			g_shape_by_tag[jet_tag::bytevector] = {fast_ldf<ByteVector>,
-												   fast_stf<ByteVector>,
-												   fast_ldfk<ByteVector>,
-												   fast_stfk<ByteVector>,
-												   bytevector_u8_ref};
-			g_shape_by_tag[jet_tag::struct_] = {fast_ldf_struct,
-												 fast_stf_struct,
-												 fast_ldfk_struct,
-												 fast_stfk_struct,
-												 slow_ref_struct};
+			g_shape_by_tag[jet_tag::vector] = {
+				fast_ldf<Vec>,
+				fast_stf<Vec>,
+				fast_ldfk<Vec>,
+				fast_stfk<Vec>,
+				vector_ref,
+			};
+			g_shape_by_tag[jet_tag::string] = {
+				fast_ldf<String>,
+				fast_stf<String>,
+				fast_ldfk<String>,
+				fast_stfk<String>,
+				string_ref,
+			};
+			g_shape_by_tag[jet_tag::bytevector] = {
+				fast_ldf<ByteVector>,
+				fast_stf<ByteVector>,
+				fast_ldfk<ByteVector>,
+				fast_stfk<ByteVector>,
+				bytevector_u8_ref,
+			};
+			g_shape_by_tag[jet_tag::struct_] = {
+				fast_ldf_struct,
+				fast_stf_struct,
+				fast_ldfk_struct,
+				fast_stfk_struct,
+				slow_ref_struct,
+			};
 		}
 	} shape_table_init;
 } // namespace
@@ -1039,7 +1053,8 @@ static VmOp field_install_stfk(FieldIc* ic, Atom obj)
 template<typename Op, auto InstallHandler>
 JET_PRESERVE_NONE static void op_field_reg(VM_OP_PARAMS)
 {
-	auto&& field_ic_hit = [](FieldIc* ic, Atom obj) {
+	auto&& field_ic_hit = [](FieldIc* ic, Atom obj)
+	{
 		return ic->ic_handler != 0 && ic->ic_dispatch_key == type_bits(obj);
 	};
 	Op* op = reinterpret_cast<Op*>(pc);
@@ -1048,8 +1063,8 @@ JET_PRESERVE_NONE static void op_field_reg(VM_OP_PARAMS)
 	callee = obj;
 
 	VmOp h = field_ic_hit(&op->ic, obj)
-								 ? reinterpret_cast<VmOp>(op->ic.ic_handler)
-								 : InstallHandler(&op->ic, obj);
+	         ? reinterpret_cast<VmOp>(op->ic.ic_handler)
+	         : InstallHandler(&op->ic, obj);
 	JET_MUSTTAIL return h(VM_OP_ARGS);
 }
 
@@ -1211,8 +1226,9 @@ JET_PRESERVE_NONE static void op_clos(VM_OP_PARAMS)
 		OP_make_closure_capture* cap = reinterpret_cast<OP_make_closure_capture*>(pc);
 		pc += sizeof(*cap);
 		CaptureSource src = static_cast<CaptureSource>(cap->src);
-		la->captures[i] = (src == CaptureSource::Local) ? stack_base[frame_base + cap->idx]
-														: frame->closure->captures[cap->idx];
+		la->captures[i] = src == CaptureSource::Local
+		                  ? stack_base[frame_base + cap->idx]
+		                  : frame->closure->captures[cap->idx];
 	}
 	stack_base[frame_base + op->dst] = la_atom;
 	DISPATCH();
@@ -1443,7 +1459,7 @@ JET_PRESERVE_NONE static void op_cs_impl(VM_OP_PARAMS)
 	JET_GC_CHECK();
 	OP_cs* op = reinterpret_cast<OP_cs*>(pc);
 	if (Slot* sl = unbox<Slot>(frame->closure->captures[op->upvalue_idx]);
-		op->ic_slot != reinterpret_cast<uint64_t>(sl) || op->ic_version != sl->version) [[unlikely]]
+	    op->ic_slot != reinterpret_cast<uint64_t>(sl) || op->ic_version != sl->version) [[unlikely]]
 	{
 		JET_MUSTTAIL return op_cs_miss<N, is_tail>(VM_OP_ARGS);
 	}
@@ -1604,7 +1620,7 @@ void eval(VmState& vm, Frame& init_frame, Atom* constants, size_t n_constants, s
 {
 	std::unique_ptr<Atom[]> stack_buffer{new Atom[STACK_CAPACITY]};
 	JET_DIE_WHEN(initial_stack_size > STACK_CAPACITY - STACK_SLACK,
-				  "stack overflow: %zu toplevel slots", initial_stack_size);
+	             "stack overflow: %zu toplevel slots", initial_stack_size);
 
 	vm.stack_base = stack_buffer.get();
 	vm.stack_end = stack_buffer.get() + STACK_CAPACITY;

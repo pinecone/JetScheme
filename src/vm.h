@@ -130,12 +130,10 @@ constexpr int type_to_tag(jet::Type t)
 {
 	switch (t)
 	{
-		// clang-format off
 #define X(name, tag, _cpp) case jet::Type::name: return jet_tag::tag;
-		JET_IMM_TYPES(X)
-		JET_HEAP_TYPES(X)
+	JET_IMM_TYPES(X)
+	JET_HEAP_TYPES(X)
 #undef X
-		// clang-format on
 		case jet::Type::Eof:
 			return jet_tag::eof_tag;
 		default:
@@ -178,7 +176,7 @@ struct box_unbox_t<Symbol>
 
 class InternedSymbols
 {
-  public:
+public:
 	Symbol intern(std::string_view value)
 	{
 		if (auto found = values_.find(value); found != values_.end())
@@ -189,7 +187,7 @@ class InternedSymbols
 		return &*entry;
 	}
 
-  private:
+private:
 	struct StringHash : std::hash<std::string_view>
 	{
 		using is_transparent = void;
@@ -264,12 +262,12 @@ struct Frame
 
 class Env
 {
-  public:
-	void bind(std::string_view name, Atom atom) { items_[std::string(name)] = atom; }
+public:
+	void bind(std::string_view name, Atom atom) { items_[std::string{name}] = atom; }
 
 	Atom* lookup(std::string_view name)
 	{
-		auto x = items_.find(std::string(name));
+		auto x = items_.find(std::string{name});
 		return x == items_.end() ? nullptr : &x->second;
 	}
 
@@ -282,7 +280,7 @@ class Env
 		}
 	}
 
-  private:
+private:
 	using items_t = std::unordered_map<std::string, Atom>;
 	items_t items_;
 };
@@ -302,13 +300,12 @@ struct Lambda
 		size_t total = sizeof(Lambda) + static_cast<size_t>(n_captures) * sizeof(Atom);
 		void* mem = g_gc->alloc(total, jet_tag::procedure);
 		Lambda* obj = static_cast<Lambda*>(mem);
-		new (obj) Lambda(code, arity, n_locals, n_captures);
+		new (obj) Lambda{code, arity, n_locals, n_captures};
 		return obj;
 	}
 
-  private:
-	Lambda(Lambda&);
-	Lambda& operator=(Lambda&);
+	Lambda(const Lambda&) = delete;
+	Lambda& operator=(const Lambda&) = delete;
 };
 
 inline bool operator==(Lambda& l1, Lambda& l2)
@@ -344,8 +341,8 @@ struct VmState
 };
 
 #define VM_OP_PARAMS                                                                                         \
-	VmState &s, Frame *frame, Code *pc, Atom *stack_top, Atom callee, Atom *args, size_t result_slot,        \
-		Atom *stack_base, size_t frame_base
+	VmState& s, Frame* frame, Code* pc, Atom* stack_top, Atom callee, Atom* args, size_t result_slot,        \
+	Atom* stack_base, size_t frame_base
 using VmOp = void (*)(VM_OP_PARAMS) JET_PRESERVE_NONE;
 static_assert(sizeof(VmOp) == VM_OP_SLOT_SIZE);
 

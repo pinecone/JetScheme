@@ -17,7 +17,6 @@
 #include <type_traits>
 #include <vector>
 
-// clang-format off
 #define JET_IMM_TYPES(X)                  \
 	X(Boolean,   boolean,    bool)        \
 	X(Character, character,  Character)   \
@@ -54,11 +53,9 @@
 	X(StructType,"struct type")           \
 	X(Struct,    "struct")                \
 	X(Unknown,   "unknown")
-// clang-format on
 
 namespace jet
 {
-	// clang-format off
 	enum class Type : uint8_t
 	{
 #define X(name, _str) name,
@@ -66,7 +63,6 @@ namespace jet
 #undef X
 		TypeMax,
 	};
-	// clang-format on
 } // namespace jet
 
 using Character = uint8_t;
@@ -89,7 +85,6 @@ constexpr uint64_t PAYLOAD_MASK = 0x0000'FFFF'FFFF'FFFFULL;
 
 namespace jet_tag
 {
-	// clang-format off
 	enum : int
 	{
 		none = 0,
@@ -103,12 +98,11 @@ namespace jet_tag
 		HEAP_END,
 		TAG_MAX = HEAP_END,
 	};
-	// clang-format on
 } // namespace jet_tag
 
 class Atom
 {
-  public:
+public:
 	uint64_t bits;
 
 	Atom() : bits{QNAN_TAG} {}
@@ -147,13 +141,13 @@ class Atom
 	{
 		uint64_t p = reinterpret_cast<uint64_t>(ptr) & PAYLOAD_MASK;
 		return from_bits(QNAN_TAG | (static_cast<uint64_t>(tag & 0x7) << 48) |
-						 (static_cast<uint64_t>((tag >> 3) & 0x1) << 63) | p);
+		                 (static_cast<uint64_t>((tag >> 3) & 0x1) << 63) | p);
 	}
 
 	static Atom make_immediate(int tag, uint64_t payload = 0)
 	{
 		return from_bits(QNAN_TAG | (static_cast<uint64_t>(tag & 0x7) << 48) |
-						 (static_cast<uint64_t>((tag >> 3) & 0x1) << 63) | (payload & PAYLOAD_MASK));
+		                 (static_cast<uint64_t>((tag >> 3) & 0x1) << 63) | (payload & PAYLOAD_MASK));
 	}
 
 	jet::Type type();
@@ -177,12 +171,10 @@ inline jet::Type Atom::type()
 	}
 	switch (tag())
 	{
-		// clang-format off
 #define X(name, tag, _cpp) case jet_tag::tag: return jet::Type::name;
-		JET_IMM_TYPES(X)
-		JET_HEAP_TYPES(X)
+	JET_IMM_TYPES(X)
+	JET_HEAP_TYPES(X)
 #undef X
-		// clang-format on
 		case jet_tag::eof_tag:
 			return jet::Type::Eof;
 		default:
@@ -223,13 +215,11 @@ struct dynamic_type<Number>
 	static constexpr jet::Type id = jet::Type::Number;
 };
 
-// clang-format off
 #define X(name, _tag, cpp) \
 	template <> struct dynamic_type<cpp> { static constexpr jet::Type id = jet::Type::name; };
 JET_IMM_TYPES(X)
 JET_HEAP_TYPES(X)
 #undef X
-// clang-format on
 
 template <>
 struct dynamic_type<IPort>
@@ -296,7 +286,7 @@ inline void type_check(Atom a, jet::Type t)
 		std::string_view want = type_name(t);
 		std::string_view got = type_name(a.type());
 		JET_DIE("expected <%.*s>, got <%.*s>", static_cast<int>(want.size()), want.data(),
-				 static_cast<int>(got.size()), got.data());
+		        static_cast<int>(got.size()), got.data());
 	}
 }
 

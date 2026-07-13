@@ -7,7 +7,6 @@
 #include <cstddef>
 #include <cstdint>
 
-// clang-format off
 #ifdef JET_DEBUG
 #  include <cstdio>
 #  define JET_LOG(fmt, ...) \
@@ -21,7 +20,6 @@
 #else
 #  define JET_LOG(fmt, ...) do { (void)sizeof(fmt); } while (0)
 #endif
-// clang-format on
 
 struct VmState;
 struct Frame;
@@ -75,9 +73,7 @@ extern Profile g_profile;
 inline uint64_t profile_ticks()
 {
 #if defined(__aarch64__)
-	uint64_t t;
-	__asm__ __volatile__("mrs %0, cntvct_el0" : "=r"(t));
-	return t;
+	return __builtin_readcyclecounter();
 #elif defined(__x86_64__)
 	return __builtin_ia32_rdtsc();
 #else

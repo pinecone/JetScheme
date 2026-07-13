@@ -22,17 +22,15 @@ std::string_view type_name(jet::Type type)
 {
 	switch (type)
 	{
-		// clang-format off
 #define X(name, str) case jet::Type::name: return str;
-		JET_ALL_TYPES(X)
+	JET_ALL_TYPES(X)
 #undef X
-		// clang-format on
 		default:
 			return "unknown";
 	}
 }
 
-Cons::Cons(Atom car_, Atom cdr_) : car(car_), cdr(cdr_) {}
+Cons::Cons(Atom car_, Atom cdr_) : car{car_}, cdr{cdr_} {}
 
 bool operator==(Cons& p1, Cons& p2)
 {
@@ -41,7 +39,7 @@ bool operator==(Cons& p1, Cons& p2)
 
 Atom cons(Atom obj1, Atom obj2)
 {
-	return box(Cons(obj1, obj2));
+	return box(Cons{obj1, obj2});
 }
 
 Atom car(Atom a)
@@ -62,13 +60,13 @@ Atom is_list(Atom a)
 static Atom set_car(Atom pair, Atom x)
 {
 	slow_unbox<Cons>(pair)->car = x;
-	return Atom();
+	return Atom{};
 }
 
 static Atom set_cdr(Atom pair, Atom x)
 {
 	slow_unbox<Cons>(pair)->cdr = x;
-	return Atom();
+	return Atom{};
 }
 
 void init_lists(Env& e)
@@ -190,7 +188,7 @@ static Number jet_square(Number x)
 static Atom random_seed()
 {
 	srandom(std::random_device{}());
-	return Atom();
+	return Atom{};
 }
 
 void init_number(Env& e)
@@ -256,7 +254,7 @@ void init_number(Env& e)
 
 static Atom symbol_to_string_prim(Atom a)
 {
-	return box(String(symbol_to_string(unbox<Symbol>(a))));
+	return box(String{symbol_to_string(unbox<Symbol>(a))});
 }
 
 Atom string_to_symbol(VmState& vm, Atom a)
@@ -284,14 +282,14 @@ Atom vector_ctor(Atom* first, Atom* last)
 Atom make_vector(Atom s, Atom f)
 {
 	JET_DIE_UNLESS(is_positive_integer(s), "make-vector expects positive integer, given %g",
-					unbox<Number>(s));
+	               unbox<Number>(s));
 	return box(Vec(unbox<Number>(s), f));
 }
 
 Atom vector_ref(Atom v, Atom idx)
 {
 	JET_DIE_UNLESS(is_positive_integer(idx), "vector-ref expects positive integer, given %g",
-					unbox<Number>(idx));
+	               unbox<Number>(idx));
 
 	size_t index = unbox<Number>(idx);
 	Vec& mv = *slow_unbox<Vec>(v);
@@ -307,7 +305,7 @@ Atom vector_length(Atom v)
 static Atom vector_set(Atom v, Atom idx, Atom val)
 {
 	JET_DIE_UNLESS(is_positive_integer(idx), "vector-set! expects positive integer, given %g",
-					unbox<Number>(idx));
+	               unbox<Number>(idx));
 	size_t index = unbox<Number>(idx);
 	Vec& mv = *slow_unbox<Vec>(v);
 	JET_DIE_UNLESS(index < mv.size(), "vector-set! index %zu out of bounds", index);
@@ -327,13 +325,14 @@ void init_vecs(Env& e)
 
 static void die_unless_byte(Atom b)
 {
-	JET_DIE_UNLESS(is_byte(b), "bytevector: byte must be exact integer in [0,255], given %g", unbox<Number>(b));
+	JET_DIE_UNLESS(is_byte(b), "bytevector: byte must be exact integer in [0,255], given %g",
+	               unbox<Number>(b));
 }
 
 Atom bytevector_u8_ref(Atom bv, Atom k)
 {
 	JET_DIE_UNLESS(is_positive_integer(k), "bytevector-u8-ref expects positive integer, given %g",
-					unbox<Number>(k));
+	               unbox<Number>(k));
 	size_t index = unbox<Number>(k);
 	ByteVector& mbv = *slow_unbox<ByteVector>(bv);
 	JET_DIE_UNLESS(index < mbv.size(), "bytevector-u8-ref index %zu out of bounds", index);
@@ -343,7 +342,7 @@ Atom bytevector_u8_ref(Atom bv, Atom k)
 static Atom bytevector_u8_set(Atom bv, Atom k, Atom b)
 {
 	JET_DIE_UNLESS(is_positive_integer(k), "bytevector-u8-set! expects positive integer, given %g",
-					unbox<Number>(k));
+	               unbox<Number>(k));
 	size_t index = unbox<Number>(k);
 	ByteVector& mbv = *slow_unbox<ByteVector>(bv);
 	JET_DIE_UNLESS(index < mbv.size(), "bytevector-u8-set! index %zu out of bounds", index);
@@ -360,7 +359,7 @@ static Atom bytevector_length(Atom bv)
 static Atom make_bytevector(Atom k, Atom fill)
 {
 	JET_DIE_UNLESS(is_positive_integer(k), "make-bytevector expects positive integer, given %g",
-					unbox<Number>(k));
+	               unbox<Number>(k));
 	die_unless_byte(fill);
 	return box(ByteVector(unbox<Number>(k), static_cast<uint8_t>(unbox<Number>(fill))));
 }
@@ -380,9 +379,9 @@ static Atom bytevector_ctor(Atom* first, Atom* last)
 static Atom bytevector_copy(Atom bv, Atom start, Atom end)
 {
 	JET_DIE_UNLESS(is_positive_integer(start), "bytevector-copy expects positive integer start, given %g",
-					unbox<Number>(start));
+	               unbox<Number>(start));
 	JET_DIE_UNLESS(is_positive_integer(end), "bytevector-copy expects positive integer end, given %g",
-					unbox<Number>(end));
+	               unbox<Number>(end));
 	ByteVector& src = *slow_unbox<ByteVector>(bv);
 	size_t s = unbox<Number>(start);
 	size_t e = unbox<Number>(end);
@@ -393,11 +392,11 @@ static Atom bytevector_copy(Atom bv, Atom start, Atom end)
 static Atom bytevector_copy_bang(Atom to, Atom at, Atom from, Atom start, Atom end)
 {
 	JET_DIE_UNLESS(is_positive_integer(at), "bytevector-copy! expects positive integer at, given %g",
-					unbox<Number>(at));
+	               unbox<Number>(at));
 	JET_DIE_UNLESS(is_positive_integer(start), "bytevector-copy! expects positive integer start, given %g",
-					unbox<Number>(start));
+	               unbox<Number>(start));
 	JET_DIE_UNLESS(is_positive_integer(end), "bytevector-copy! expects positive integer end, given %g",
-					unbox<Number>(end));
+	               unbox<Number>(end));
 	ByteVector& dst = *slow_unbox<ByteVector>(to);
 	ByteVector& src = *slow_unbox<ByteVector>(from);
 	size_t a = unbox<Number>(at);
@@ -505,7 +504,8 @@ static Atom equal_prim(Atom* first, Atom*)
 	};
 
 	std::unordered_set<EqualPair, EqualPairHash> seen;
-	auto&& is_equal = [&seen](auto&& self, Atom a, Atom b) -> bool {
+	auto&& is_equal = [&seen](auto&& self, Atom a, Atom b) -> bool
+	{
 		if (is_eqv(a, b))
 		{
 			return true;
@@ -557,14 +557,14 @@ static Atom equal_prim(Atom* first, Atom*)
 static bool boolean_eq(Atom a, Atom b)
 {
 	JET_DIE_UNLESS(is_type<jet::Type::Boolean>(a) && is_type<jet::Type::Boolean>(b),
-					"boolean=? expects booleans");
+	               "boolean=? expects booleans");
 	return unbox<bool>(a) == unbox<bool>(b);
 }
 
 static bool symbol_eq(Atom a, Atom b)
 {
 	JET_DIE_UNLESS(is_type<jet::Type::Symbol>(a) && is_type<jet::Type::Symbol>(b),
-					"symbol=? expects symbols");
+	               "symbol=? expects symbols");
 	return unbox<Symbol>(a) == unbox<Symbol>(b);
 }
 
@@ -608,7 +608,8 @@ static void print_list(Cons& v, std::string& out)
 template <printer_t print>
 static void print_vector(Vec& v, std::string& out)
 {
-	auto&& print_vector_element = [](Atom x, std::string& output) {
+	auto&& print_vector_element = [](Atom x, std::string& output)
+	{
 		print(x, output);
 		output += ' ';
 	};
@@ -724,7 +725,8 @@ static Atom display_to(Atom a, std::string& out)
 
 Atom write_to(Atom a, std::string& out)
 {
-	auto&& write_escaped_char = [](char c, std::string& output) {
+	auto&& write_escaped_char = [](char c, std::string& output)
+	{
 		static std::string_view emap[256];
 		emap[static_cast<int>('\\')] = "\\";
 		emap[static_cast<int>('\n')] = "\\n";
@@ -828,7 +830,7 @@ static Atom string_append(Atom* first, Atom* last)
 static size_t string_index(Atom s, Atom k, const char* op)
 {
 	JET_DIE_UNLESS(is_positive_integer(k), "%s expects positive integer index, given %g", op,
-					unbox<Number>(k));
+	               unbox<Number>(k));
 	size_t i = unbox<Number>(k);
 	String& str = *slow_unbox<String>(s);
 	JET_DIE_UNLESS(i < str.size(), "%s index %zu out of bounds", op, i);
@@ -860,13 +862,15 @@ static Number string_length(Atom s)
 
 Atom string_ref(Atom s, Atom k)
 {
-	return box(static_cast<Character>(static_cast<uint8_t>((*slow_unbox<String>(s))[string_index(s, k, "string-ref")])));
+	String& string = *slow_unbox<String>(s);
+	size_t index = string_index(s, k, "string-ref");
+	return box(static_cast<Character>(static_cast<uint8_t>(string[index])));
 }
 
 static Atom string_set(Atom s, Atom k, Atom c)
 {
 	(*slow_unbox<String>(s))[string_index(s, k, "string-set!")] = static_cast<char>(slow_unbox<Character>(c));
-	return Atom();
+	return Atom{};
 }
 
 static Atom substring(Atom* first, Atom* last)
@@ -885,7 +889,8 @@ static Atom string_copy(Atom* first, Atom* last)
 	size_t n = s.size();
 	size_t start = last - first >= 2 ? static_cast<size_t>(slow_unbox<Number>(first[1])) : 0;
 	size_t end = last - first >= 3 ? static_cast<size_t>(slow_unbox<Number>(first[2])) : n;
-	JET_DIE_UNLESS(start <= end && end <= n, "string-copy: bad range [%zu, %zu) for length %zu", start, end, n);
+	JET_DIE_UNLESS(start <= end && end <= n, "string-copy: bad range [%zu, %zu) for length %zu", start, end,
+	               n);
 	return box(s.substr(start, end - start));
 }
 
@@ -901,7 +906,7 @@ static Atom string_copy_bang(Atom* first, Atom* last)
 	JET_DIE_UNLESS(s_start <= s_end && s_end <= n, "string-copy!: bad source range");
 	JET_DIE_UNLESS(at + (s_end - s_start) <= dst.size(), "string-copy!: destination too small");
 	dst.replace(at, s_end - s_start, src, s_start, s_end - s_start);
-	return Atom();
+	return Atom{};
 }
 
 static Atom string_fill_bang(Atom* first, Atom* last)
@@ -912,7 +917,7 @@ static Atom string_fill_bang(Atom* first, Atom* last)
 	size_t end = last - first >= 4 ? static_cast<size_t>(slow_unbox<Number>(first[3])) : s.size();
 	JET_DIE_UNLESS(start <= end && end <= s.size(), "string-fill!: bad range");
 	std::fill(s.begin() + start, s.begin() + end, c);
-	return Atom();
+	return Atom{};
 }
 
 template <typename Op>
@@ -1035,7 +1040,7 @@ static Atom string_to_number(Atom* first, Atom* last)
 		return box<Number>(v);
 	}
 	JET_DIE_UNLESS(radix == 2 || radix == 8 || radix == 16,
-					"string->number: radix must be 2, 8, 10, or 16, got %d", radix);
+	               "string->number: radix must be 2, 8, 10, or 16, got %d", radix);
 	const char* p = s.c_str();
 	char* end = nullptr;
 	long long v = std::strtoll(p, &end, radix);
@@ -1057,7 +1062,7 @@ static Atom number_to_string(Atom* first, Atom* last)
 		return box(std::move(os));
 	}
 	JET_DIE_UNLESS(radix == 2 || radix == 8 || radix == 16,
-					"number->string: radix must be 2, 8, 10, or 16, got %d", radix);
+	               "number->string: radix must be 2, 8, 10, or 16, got %d", radix);
 	JET_DIE_UNLESS(is_integer(n), "number->string: non-decimal radix needs integer, got %g", n);
 	char buf[72];
 	std::to_chars_result r = std::to_chars(buf, buf + sizeof(buf), static_cast<long long>(n), radix);
@@ -1191,7 +1196,7 @@ static Atom close_input_port(Atom p)
 	Port* port = slow_unbox<Port>(p);
 	JET_DIE_UNLESS(port->is_input(), "close-input-port: not an input port");
 	port->close();
-	return Atom();
+	return Atom{};
 }
 
 static Atom close_output_port(Atom p)
@@ -1199,7 +1204,7 @@ static Atom close_output_port(Atom p)
 	Port* port = slow_unbox<Port>(p);
 	JET_DIE_UNLESS(port->is_output(), "close-output-port: not an output port");
 	port->close();
-	return Atom();
+	return Atom{};
 }
 
 Atom read_char(Atom p)
@@ -1215,7 +1220,7 @@ static Atom write_char(Atom c, Atom p)
 	OPort* op = static_cast<OPort*>(slow_unbox<Port>(p));
 	JET_DIE_UNLESS(op->is_output(), "write-char: not an output port");
 	op->write_byte(slow_unbox<Character>(c));
-	return Atom();
+	return Atom{};
 }
 
 static Atom is_input_port(Atom p)
@@ -1256,8 +1261,10 @@ Atom make_eof()
 	return Atom::make_immediate(jet_tag::eof_tag);
 }
 
-IPortFile::IPortFile(std::string_view name) : f_(fopen(std::string(name).c_str(), "rb"))
+IPortFile::IPortFile(std::string_view name) : f_{nullptr}
 {
+	std::string path{name};
+	f_ = fopen(path.c_str(), "rb");
 	JET_DIE_UNLESS(f_, "cannot open file `%.*s' for reading", static_cast<int>(name.size()), name.data());
 }
 
@@ -1322,8 +1329,10 @@ size_t IPortMem::read_bytes(char* p, size_t n)
 	return take;
 }
 
-OPortFile::OPortFile(std::string_view name) : f_(fopen(std::string(name).c_str(), "wb"))
+OPortFile::OPortFile(std::string_view name) : f_{nullptr}
 {
+	std::string path{name};
+	f_ = fopen(path.c_str(), "wb");
 	JET_DIE_UNLESS(f_, "cannot open file `%.*s' for writing", static_cast<int>(name.size()), name.data());
 }
 
@@ -1448,7 +1457,7 @@ void init_cmdline(Env& e, int argc, char* argv[])
 	args.reserve(argc);
 	for (char** x = &argv[1]; x != &argv[argc]; ++x)
 	{
-		args.push_back(box(String(*x)));
+		args.push_back(box(String{*x}));
 	}
 	e.bind("argv", box(args));
 }
