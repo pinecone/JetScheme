@@ -127,6 +127,54 @@ void profile_print()
 		}
 	}
 
+	constexpr Opcode field_ops[] = {Opcode::ldf, Opcode::stf, Opcode::ldfk, Opcode::stfk};
+	constexpr const char* field_receivers[] = {"container", "struct"};
+	std::fprintf(stderr, "\nfield IC outcomes:\n");
+	std::fprintf(stderr, " %-8s %-9s %12s %12s %12s %12s %12s\n", "opcode", "receiver", "total",
+	             "hit/hit", "hit/key-miss", "recv-miss/hit", "both-miss");
+	for (Opcode field_op : field_ops)
+	{
+		int op = static_cast<int>(field_op);
+		for (size_t receiver = 0; receiver < static_cast<size_t>(FieldReceiver::Count); ++receiver)
+		{
+			const FieldProfile& field = g_profile.fields[op][receiver];
+			std::fprintf(stderr, " %-8s %-9s %12llu", profile_opcode_name(op).data(),
+			             field_receivers[receiver], static_cast<unsigned long long>(field.count));
+			for (uint64_t count : field.outcome_counts)
+			{
+				std::fprintf(stderr, " %12llu", static_cast<unsigned long long>(count));
+			}
+			std::fputc('\n', stderr);
+		}
+	}
+
+	std::fprintf(stderr, "\nfield IC time:\n");
+	std::fprintf(stderr, " %-8s %-9s %12s %7s %12s %12s %12s %12s\n", "opcode", "receiver", "ticks",
+	             "time%", "hit/hit", "hit/key-miss", "recv-miss/hit", "both-miss");
+	for (Opcode field_op : field_ops)
+	{
+		int op = static_cast<int>(field_op);
+		for (size_t receiver = 0; receiver < static_cast<size_t>(FieldReceiver::Count); ++receiver)
+		{
+			const FieldProfile& field = g_profile.fields[op][receiver];
+			uint64_t ticks = 0;
+			for (uint64_t outcome_ticks : field.outcome_ticks)
+			{
+				ticks += outcome_ticks;
+			}
+			double time_pct = total_ticks
+			                  ? 100.0 * static_cast<double>(ticks) / static_cast<double>(total_ticks)
+			                  : 0.0;
+			std::fprintf(stderr, " %-8s %-9s %12llu %6.2f%%", profile_opcode_name(op).data(),
+			             field_receivers[receiver], static_cast<unsigned long long>(ticks), time_pct);
+			for (uint64_t outcome_ticks : field.outcome_ticks)
+			{
+				std::fprintf(stderr, " %12llu", static_cast<unsigned long long>(outcome_ticks));
+			}
+			std::fputc('\n', stderr);
+		}
+	}
+
 	struct Pair
 	{
 		int prev;

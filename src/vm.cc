@@ -5,6 +5,7 @@
 
 #include "error.h"
 #include "runtime.h"
+#include <array>
 #include <cstdio>
 #include <cstring>
 #include <memory>
@@ -14,21 +15,51 @@
 #include <type_traits>
 
 using GcDestructor = void (*)(void*);
-static GcDestructor gc_destructor_table[jet_tag::TAG_MAX] = {};
+static constexpr std::array<GcDestructor, jet_tag::TAG_MAX> gc_destructor_table = []
+{
+	std::array<GcDestructor, jet_tag::TAG_MAX> table{};
+#define X(_name, tag, cpp) table[jet_tag::tag] = gc_destroy<cpp>;
+	JET_HEAP_TYPES(X)
+#undef X
+	table[jet_tag::struct_] = nullptr;
+	return table;
+}();
 static VmOp dispatch_table[256];
 
-namespace
+uint16_t Gc::register_struct_destructor(StructDestructor destructor)
 {
-	struct gc_init_t
+	if (!destructor)
 	{
-		gc_init_t()
+		return 0;
+	}
+	for (size_t i = 1; i < struct_destructors.size(); ++i)
+	{
+		if (struct_destructors[i] == destructor)
 		{
-#define X(_name, tag, cpp) gc_destructor_table[jet_tag::tag] = gc_destroy<cpp>;
-			JET_HEAP_TYPES(X)
-#undef X
+			return static_cast<uint16_t>(i);
 		}
-	} gc_init;
-} // namespace
+	}
+	JET_DIE_WHEN(struct_destructors.size() > UINT16_MAX, "too many native struct destructors");
+	struct_destructors.push_back(destructor);
+	return static_cast<uint16_t>(struct_destructors.size() - 1);
+}
+
+JET_ALWAYS_INLINE static void destroy_object(
+	const Gc::ObjEntry& entry, void* object, const StructDestructor* struct_destructor_table)
+{
+	if (entry.tag == jet_tag::struct_)
+	{
+		if (StructDestructor destructor = struct_destructor_table[entry.destructor_id]; destructor)
+		{
+			destructor(static_cast<Struct*>(object));
+		}
+		return;
+	}
+	if (GcDestructor destructor = gc_destructor_table[entry.tag]; destructor)
+	{
+		destructor(object);
+	}
+}
 
 static inline void set_bit(uint64_t* bits, size_t i)
 {
@@ -63,19 +94,18 @@ Gc::Gc()
 
 Gc::~Gc()
 {
+	const StructDestructor* struct_destructor_table = struct_destructors.data();
 	for (ObjEntry& e : objects)
 	{
-		if (GcDestructor d = gc_destructor_table[e.tag]; d)
-		{
-			d(arena_base + static_cast<size_t>(e.cell_idx) * CELL_SIZE);
-		}
+		void* object = arena_base + static_cast<size_t>(e.cell_idx) * CELL_SIZE;
+		destroy_object(e, object, struct_destructor_table);
 	}
 	::munmap(arena_base, ARENA_SIZE);
 	::munmap(live_bits, BITMAP_WORDS * sizeof(uint64_t));
 	::munmap(mark_bits, BITMAP_WORDS * sizeof(uint64_t));
 }
 
-void* Gc::alloc(size_t total_size, int tag)
+void* Gc::alloc(size_t total_size, int tag, uint16_t destructor_id)
 {
 	size_t n = (total_size + CELL_SIZE - 1) / CELL_SIZE;
 	void* mem;
@@ -100,7 +130,7 @@ void* Gc::alloc(size_t total_size, int tag)
 		set_bit(live_bits, start + i);
 	}
 
-	objects.push_back({start, static_cast<uint32_t>(n), static_cast<uint8_t>(tag)});
+	objects.push_back({start, static_cast<uint32_t>(n), destructor_id, static_cast<uint8_t>(tag)});
 	++alloc_since_gc;
 	return mem;
 }
@@ -170,9 +200,14 @@ void Gc::mark_object(void* ptr, int tag)
 		{
 			Struct* s = static_cast<Struct*>(ptr);
 			mark_atom(Atom::make_tagged(jet_tag::struct_type, s->type).bits);
-			for (uint32_t i = 0; i < s->n_fields; ++i)
+			switch (s->type->kind())
 			{
-				mark_atom(s->values[i].bits);
+				case StructKind::Scheme:
+					static_cast<SchemeStruct*>(s)->trace(*this);
+					break;
+				case StructKind::Tuple:
+					static_cast<Tuple*>(s)->trace(*this);
+					break;
 			}
 			break;
 		}
@@ -185,6 +220,7 @@ void Gc::mark_object(void* ptr, int tag)
 
 void Gc::sweep()
 {
+	const StructDestructor* struct_destructor_table = struct_destructors.data();
 	size_t out = 0;
 	for (size_t i = 0; i < objects.size(); ++i)
 	{
@@ -196,10 +232,7 @@ void Gc::sweep()
 		else
 		{
 			void* obj = arena_base + static_cast<size_t>(e.cell_idx) * CELL_SIZE;
-			if (GcDestructor d = gc_destructor_table[e.tag]; d)
-			{
-				d(obj);
-			}
+			destroy_object(e, obj, struct_destructor_table);
 			for (uint32_t k = 0; k < e.n_cells; ++k)
 			{
 				clear_bit(live_bits, e.cell_idx + k);
@@ -435,7 +468,7 @@ JET_NOINLINE JET_PRESERVE_NONE static void slow_call_lambda(VM_OP_PARAMS)
 			size_t n_copy = la.arity.expected;
 			stack_base[base + n_copy] = pack_args_to_list(args + n_copy, args + nargs);
 		}
-		frame = &s.frames.emplace_back();
+		frame = &s.frames.push();
 		frame->code = la.code;
 		frame->closure = &la;
 		frame->base = base;
@@ -466,6 +499,10 @@ JET_PRESERVE_NONE static void fast_call_lambda(VM_OP_PARAMS)
 		JET_MUSTTAIL return slow_call_lambda<is_tail>(VM_OP_ARGS);
 	}
 	size_t base = is_tail ? frame_base : result_slot;
+	if (stack_base + base + la.n_locals > s.stack_watermark) [[unlikely]]
+	{
+		JET_MUSTTAIL return slow_call_lambda<is_tail>(VM_OP_ARGS);
+	}
 	Atom* dst = stack_base + base;
 
 	if constexpr (is_tail)
@@ -484,7 +521,11 @@ JET_PRESERVE_NONE static void fast_call_lambda(VM_OP_PARAMS)
 	}
 	else
 	{
-		frame = &s.frames.emplace_back();
+		if (!s.frames.can_push()) [[unlikely]]
+		{
+			JET_MUSTTAIL return slow_call_lambda<false>(VM_OP_ARGS);
+		}
+		frame = &s.frames.push_unchecked();
 		frame->code = la.code;
 		frame->closure = &la;
 		frame->base = base;
@@ -493,14 +534,6 @@ JET_PRESERVE_NONE static void fast_call_lambda(VM_OP_PARAMS)
 	frame_base = base;
 
 	stack_top = stack_base + base + la.n_locals;
-	if (stack_top > s.stack_watermark) [[unlikely]]
-	{
-		if (stack_top > s.stack_end - STACK_SLACK) [[unlikely]]
-		{
-			JET_DIE("stack overflow (too much recursion?)");
-		}
-		s.stack_watermark = stack_top;
-	}
 	pc = la.code;
 	DISPATCH();
 }
@@ -508,27 +541,13 @@ JET_PRESERVE_NONE static void fast_call_lambda(VM_OP_PARAMS)
 static constexpr auto& fast_call_lambda_tail = fast_call_lambda<true>;
 static constexpr auto& fast_call_lambda_notail = fast_call_lambda<false>;
 
-JET_PRESERVE_NONE static void fast_call_struct(VM_OP_PARAMS)
-{
-	StructType* t = unbox<StructType>(callee);
-	uint32_t nargs = static_cast<uint32_t>(stack_top - args);
-	Struct* inst = Struct::alloc(t, nargs);
-	for (uint32_t i = 0; i < nargs; ++i)
-	{
-		inst->values[i] = args[i];
-	}
-	stack_base[result_slot] = Atom::make_tagged(jet_tag::struct_, inst);
-	stack_top = stack_base + frame->top;
-	DISPATCH();
-}
-
 inline Arity struct_arity(StructType* t)
 {
-	return exactly(t->size());
+	return t->arity();
 }
 
 template <bool is_tail>
-JET_PRESERVE_NONE static void slow_call(VM_OP_PARAMS)
+JET_NOINLINE JET_PRESERVE_NONE static void slow_call(VM_OP_PARAMS)
 {
 	if (is_type<jet::Type::Procedure>(callee))
 	{
@@ -548,7 +567,7 @@ JET_PRESERVE_NONE static void slow_call(VM_OP_PARAMS)
 		StructType* t = unbox<StructType>(callee);
 		Arity a = struct_arity(t);
 		check_arity(a, static_cast<size_t>(stack_top - args));
-		JET_MUSTTAIL return fast_call_struct(VM_OP_ARGS);
+		JET_MUSTTAIL return t->ops().constructor(VM_OP_ARGS);
 	}
 	else
 	{
@@ -611,28 +630,35 @@ static Atom container_load(T& c, size_t i)
 	}
 }
 
-JET_NOINLINE JET_PRESERVE_NONE static void die_struct_int_key(VM_OP_PARAMS)
+template <typename T>
+JET_ALWAYS_INLINE static bool container_store(T& c, size_t i, Atom value)
 {
-	JET_DIE("struct field access requires a symbol key");
-}
-
-[[noreturn]] static void die_struct_no_field(StructType* type, Symbol field)
-{
-	const std::string& type_name = symbol_to_string(unbox<Symbol>(type->name()));
-	const std::string& field_name = symbol_to_string(field);
-	JET_DIE("struct '%s': no field named '%s'", type_name.c_str(), field_name.c_str());
-}
-
-static Atom slow_ref_struct(Atom obj, Atom key)
-{
-	Struct* inst = unbox<Struct>(obj);
-	Symbol symbol = slow_unbox<Symbol>(key);
-	int idx = inst->type->find(key);
-	if (idx < 0)
+	if constexpr (std::is_same_v<T, String>)
 	{
-		die_struct_no_field(inst->type, symbol);
+		if (!is_type<jet::Type::Character>(value)) [[unlikely]]
+		{
+			return false;
+		}
+		c[i] = static_cast<char>(unbox<Character>(value));
 	}
-	return inst->values[idx];
+	else if constexpr (std::is_same_v<T, ByteVector>)
+	{
+		if (!is_type<jet::Type::Number>(value)) [[unlikely]]
+		{
+			return false;
+		}
+		Number n = unbox<Number>(value);
+		if (!is_integer(n) || n < 0 || n > 255) [[unlikely]]
+		{
+			return false;
+		}
+		c[i] = static_cast<uint8_t>(n);
+	}
+	else
+	{
+		c[i] = value;
+	}
+	return true;
 }
 
 // Register-ISA shape handlers recover their full operand struct via
@@ -654,6 +680,7 @@ JET_PRESERVE_NONE static void fast_ldf(VM_OP_PARAMS)
 			DISPATCH();
 		}
 	}
+	JET_PROFILE_FIELD_KEY_MISS();
 
 	if (!is_type<jet::Type::Number>(key)) [[unlikely]]
 	{
@@ -683,127 +710,32 @@ JET_PRESERVE_NONE static void fast_stf(VM_OP_PARAMS)
 	Atom key = stack_base[frame_base + op->key];
 	Atom value = stack_base[frame_base + op->val];
 	T& c = *unbox<T>(callee);
+	size_t idx = ic->ic_extra1;
 
-	auto&& write = [&](size_t idx) -> bool
+	if (ic->ic_extra2 != key.bits || idx >= c.size()) [[unlikely]]
 	{
-		if constexpr (std::is_same_v<T, String>)
+		JET_PROFILE_FIELD_KEY_MISS();
+		if (!is_type<jet::Type::Number>(key)) [[unlikely]]
 		{
-			if (!is_type<jet::Type::Character>(value)) [[unlikely]]
-			{
-				return false;
-			}
-			c[idx] = static_cast<char>(unbox<Character>(value));
+			JET_MUSTTAIL return die_set_bad_key(VM_OP_ARGS);
 		}
-		else if constexpr (std::is_same_v<T, ByteVector>)
+		Number n = unbox<Number>(key);
+		if (!is_integer(n) || n < 0) [[unlikely]]
 		{
-			if (!is_byte(value)) [[unlikely]]
-			{
-				return false;
-			}
-			c[idx] = static_cast<uint8_t>(unbox<Number>(value));
+			JET_MUSTTAIL return die_set_bad_key(VM_OP_ARGS);
 		}
-		else
+		idx = static_cast<size_t>(n);
+		if (idx >= c.size()) [[unlikely]]
 		{
-			c[idx] = value;
+			JET_MUSTTAIL return die_set_oob(VM_OP_ARGS);
 		}
-		return true;
-	};
-
-	if (ic->ic_extra2 == key.bits) [[likely]]
-	{
-		if (size_t idx = ic->ic_extra1; idx < c.size()) [[likely]]
-		{
-			if (!write(idx)) [[unlikely]]
-			{
-				JET_MUSTTAIL return die_set_bad_value(VM_OP_ARGS);
-			}
-			DISPATCH();
-		}
+		ic->ic_extra1 = idx;
+		ic->ic_extra2 = key.bits;
 	}
-
-	if (!is_type<jet::Type::Number>(key)) [[unlikely]]
-	{
-		JET_MUSTTAIL return die_set_bad_key(VM_OP_ARGS);
-	}
-	Number n = unbox<Number>(key);
-	if (!is_integer(n) || n < 0) [[unlikely]]
-	{
-		JET_MUSTTAIL return die_set_bad_key(VM_OP_ARGS);
-	}
-	size_t idx = static_cast<size_t>(n);
-	if (idx >= c.size()) [[unlikely]]
-	{
-		JET_MUSTTAIL return die_set_oob(VM_OP_ARGS);
-	}
-	if (!write(idx)) [[unlikely]]
+	if (!container_store(c, idx, value)) [[unlikely]]
 	{
 		JET_MUSTTAIL return die_set_bad_value(VM_OP_ARGS);
 	}
-	ic->ic_extra1 = idx;
-	ic->ic_extra2 = key.bits;
-	DISPATCH();
-}
-
-JET_PRESERVE_NONE static void fast_ldf_struct(VM_OP_PARAMS)
-{
-	OP_ldf* op = reinterpret_cast<OP_ldf*>(pc - sizeof(OP_ldf));
-	FieldIc* ic = &op->ic;
-	Atom key = stack_base[frame_base + op->key];
-	Struct* inst = unbox<Struct>(callee);
-
-	uintptr_t type_packed = reinterpret_cast<uintptr_t>(inst->type);
-	if ((ic->ic_extra1 >> 16) == type_packed && ic->ic_extra2 == key.bits) [[likely]]
-	{
-		uint16_t idx = static_cast<uint16_t>(ic->ic_extra1 & 0xFFFF);
-		stack_base[frame_base + op->dst] = inst->values[idx];
-		DISPATCH();
-	}
-
-	if (!is_type<jet::Type::Symbol>(key)) [[unlikely]]
-	{
-		JET_MUSTTAIL return die_struct_int_key(VM_OP_ARGS);
-	}
-	Symbol symbol = unbox<Symbol>(key);
-	int idx = inst->type->find(key);
-	if (idx < 0) [[unlikely]]
-	{
-		die_struct_no_field(inst->type, symbol);
-	}
-	ic->ic_extra1 = (type_packed << 16) | static_cast<uint16_t>(idx);
-	ic->ic_extra2 = key.bits;
-	stack_base[frame_base + op->dst] = inst->values[idx];
-	DISPATCH();
-}
-
-JET_PRESERVE_NONE static void fast_stf_struct(VM_OP_PARAMS)
-{
-	OP_stf* op = reinterpret_cast<OP_stf*>(pc - sizeof(OP_stf));
-	FieldIc* ic = &op->ic;
-	Atom key = stack_base[frame_base + op->key];
-	Atom value = stack_base[frame_base + op->val];
-	Struct* inst = unbox<Struct>(callee);
-
-	uintptr_t type_packed = reinterpret_cast<uintptr_t>(inst->type);
-	if ((ic->ic_extra1 >> 16) == type_packed && ic->ic_extra2 == key.bits) [[likely]]
-	{
-		uint16_t idx = static_cast<uint16_t>(ic->ic_extra1 & 0xFFFF);
-		inst->values[idx] = value;
-		DISPATCH();
-	}
-
-	if (!is_type<jet::Type::Symbol>(key)) [[unlikely]]
-	{
-		JET_MUSTTAIL return die_struct_int_key(VM_OP_ARGS);
-	}
-	Symbol symbol = unbox<Symbol>(key);
-	int idx = inst->type->find(key);
-	if (idx < 0) [[unlikely]]
-	{
-		die_struct_no_field(inst->type, symbol);
-	}
-	ic->ic_extra1 = (type_packed << 16) | static_cast<uint16_t>(idx);
-	ic->ic_extra2 = key.bits;
-	inst->values[idx] = value;
 	DISPATCH();
 }
 
@@ -819,6 +751,7 @@ JET_PRESERVE_NONE static void fast_ldfk(VM_OP_PARAMS)
 		stack_base[frame_base + op->dst] = container_load(c, idx);
 		DISPATCH();
 	}
+	JET_PROFILE_FIELD_KEY_MISS();
 
 	Atom key = s.constants[op->key_idx];
 	if (!is_type<jet::Type::Number>(key)) [[unlikely]]
@@ -849,121 +782,30 @@ JET_PRESERVE_NONE static void fast_stfk(VM_OP_PARAMS)
 	T& c = *unbox<T>(callee);
 	size_t idx = ic->ic_extra1;
 
-	auto&& write = [&](size_t i) -> bool
-	{
-		if constexpr (std::is_same_v<T, String>)
-		{
-			if (!is_type<jet::Type::Character>(value)) [[unlikely]]
-			{
-				return false;
-			}
-			c[i] = static_cast<char>(unbox<Character>(value));
-		}
-		else if constexpr (std::is_same_v<T, ByteVector>)
-		{
-			if (!is_byte(value)) [[unlikely]]
-			{
-				return false;
-			}
-			c[i] = static_cast<uint8_t>(unbox<Number>(value));
-		}
-		else
-		{
-			c[i] = value;
-		}
-		return true;
-	};
-
-	if (idx < c.size()) [[likely]]
-	{
-		if (!write(idx)) [[unlikely]]
-		{
-			JET_MUSTTAIL return die_set_bad_value(VM_OP_ARGS);
-		}
-		DISPATCH();
-	}
-
-	Atom key = s.constants[op->key_idx];
-	if (!is_type<jet::Type::Number>(key)) [[unlikely]]
-	{
-		JET_MUSTTAIL return die_set_bad_key(VM_OP_ARGS);
-	}
-	Number n = unbox<Number>(key);
-	if (!is_integer(n) || n < 0) [[unlikely]]
-	{
-		JET_MUSTTAIL return die_set_bad_key(VM_OP_ARGS);
-	}
-	idx = static_cast<size_t>(n);
 	if (idx >= c.size()) [[unlikely]]
 	{
-		JET_MUSTTAIL return die_set_oob(VM_OP_ARGS);
+		JET_PROFILE_FIELD_KEY_MISS();
+		Atom key = s.constants[op->key_idx];
+		if (!is_type<jet::Type::Number>(key)) [[unlikely]]
+		{
+			JET_MUSTTAIL return die_set_bad_key(VM_OP_ARGS);
+		}
+		Number n = unbox<Number>(key);
+		if (!is_integer(n) || n < 0) [[unlikely]]
+		{
+			JET_MUSTTAIL return die_set_bad_key(VM_OP_ARGS);
+		}
+		idx = static_cast<size_t>(n);
+		if (idx >= c.size()) [[unlikely]]
+		{
+			JET_MUSTTAIL return die_set_oob(VM_OP_ARGS);
+		}
+		ic->ic_extra1 = idx;
 	}
-	if (!write(idx)) [[unlikely]]
+	if (!container_store(c, idx, value)) [[unlikely]]
 	{
 		JET_MUSTTAIL return die_set_bad_value(VM_OP_ARGS);
 	}
-	ic->ic_extra1 = idx;
-	DISPATCH();
-}
-
-JET_PRESERVE_NONE static void fast_ldfk_struct(VM_OP_PARAMS)
-{
-	OP_ldfk* op = reinterpret_cast<OP_ldfk*>(pc - sizeof(OP_ldfk));
-	FieldIc* ic = &op->ic;
-	Struct* inst = unbox<Struct>(callee);
-
-	uintptr_t type_packed = reinterpret_cast<uintptr_t>(inst->type);
-	if ((ic->ic_extra1 >> 16) == type_packed) [[likely]]
-	{
-		uint16_t idx = static_cast<uint16_t>(ic->ic_extra1 & 0xFFFF);
-		stack_base[frame_base + op->dst] = inst->values[idx];
-		DISPATCH();
-	}
-
-	Atom key = s.constants[op->key_idx];
-	if (!is_type<jet::Type::Symbol>(key)) [[unlikely]]
-	{
-		JET_MUSTTAIL return die_struct_int_key(VM_OP_ARGS);
-	}
-	Symbol symbol = unbox<Symbol>(key);
-	int idx = inst->type->find(key);
-	if (idx < 0) [[unlikely]]
-	{
-		die_struct_no_field(inst->type, symbol);
-	}
-	ic->ic_extra1 = (type_packed << 16) | static_cast<uint16_t>(idx);
-	stack_base[frame_base + op->dst] = inst->values[idx];
-	DISPATCH();
-}
-
-JET_PRESERVE_NONE static void fast_stfk_struct(VM_OP_PARAMS)
-{
-	OP_stfk* op = reinterpret_cast<OP_stfk*>(pc - sizeof(OP_stfk));
-	FieldIc* ic = &op->ic;
-	Atom value = stack_base[frame_base + op->val];
-	Struct* inst = unbox<Struct>(callee);
-
-	uintptr_t type_packed = reinterpret_cast<uintptr_t>(inst->type);
-	if ((ic->ic_extra1 >> 16) == type_packed) [[likely]]
-	{
-		uint16_t idx = static_cast<uint16_t>(ic->ic_extra1 & 0xFFFF);
-		inst->values[idx] = value;
-		DISPATCH();
-	}
-
-	Atom key = s.constants[op->key_idx];
-	if (!is_type<jet::Type::Symbol>(key)) [[unlikely]]
-	{
-		JET_MUSTTAIL return die_struct_int_key(VM_OP_ARGS);
-	}
-	Symbol symbol = unbox<Symbol>(key);
-	int idx = inst->type->find(key);
-	if (idx < 0) [[unlikely]]
-	{
-		die_struct_no_field(inst->type, symbol);
-	}
-	ic->ic_extra1 = (type_packed << 16) | static_cast<uint16_t>(idx);
-	inst->values[idx] = value;
 	DISPATCH();
 }
 
@@ -996,13 +838,6 @@ namespace
 				fast_stfk<ByteVector>,
 				bytevector_u8_ref,
 			};
-			g_shape_by_tag[jet_tag::struct_] = {
-				fast_ldf_struct,
-				fast_stf_struct,
-				fast_ldfk_struct,
-				fast_stfk_struct,
-				slow_ref_struct,
-			};
 		}
 	} shape_table_init;
 } // namespace
@@ -1012,66 +847,108 @@ static uint16_t type_bits(Atom a)
 	return static_cast<uint16_t>(a.bits >> 48);
 }
 
+#ifdef JET_PROFILE
+static FieldReceiver profile_field_receiver(Atom object)
+{
+	return object.tag() == jet_tag::struct_ ? FieldReceiver::Struct : FieldReceiver::Container;
+}
+#endif
+
 static VmOp field_install_ldf(FieldIc* ic, Atom obj)
 {
-	ObjShape* shape = shape_of(obj);
+	const ObjShape* shape = shape_of(obj);
 	JET_DIE_UNLESS(shape, "ref: unsupported receiver type");
 	ic->ic_handler = reinterpret_cast<uint64_t>(shape->ldf_handler);
-	ic->ic_dispatch_key = type_bits(obj);
+	ic->ic_extra1 = ~static_cast<uint64_t>(0);
+	ic->ic_extra2 = ~static_cast<uint64_t>(0);
 	return shape->ldf_handler;
 }
 
 static VmOp field_install_stf(FieldIc* ic, Atom obj)
 {
-	ObjShape* shape = shape_of(obj);
+	const ObjShape* shape = shape_of(obj);
 	JET_DIE_UNLESS(shape, "set!: unsupported receiver type");
 	ic->ic_handler = reinterpret_cast<uint64_t>(shape->stf_handler);
-	ic->ic_dispatch_key = type_bits(obj);
+	ic->ic_extra1 = ~static_cast<uint64_t>(0);
+	ic->ic_extra2 = ~static_cast<uint64_t>(0);
 	return shape->stf_handler;
 }
 
 static VmOp field_install_ldfk(FieldIc* ic, Atom obj)
 {
-	ObjShape* shape = shape_of(obj);
+	const ObjShape* shape = shape_of(obj);
 	JET_DIE_UNLESS(shape, "ref: unsupported receiver type");
 	ic->ic_handler = reinterpret_cast<uint64_t>(shape->ldfk_handler);
-	ic->ic_dispatch_key = type_bits(obj);
 	ic->ic_extra1 = ~static_cast<uint64_t>(0);
 	return shape->ldfk_handler;
 }
 
 static VmOp field_install_stfk(FieldIc* ic, Atom obj)
 {
-	ObjShape* shape = shape_of(obj);
+	const ObjShape* shape = shape_of(obj);
 	JET_DIE_UNLESS(shape, "set!: unsupported receiver type");
 	ic->ic_handler = reinterpret_cast<uint64_t>(shape->stfk_handler);
-	ic->ic_dispatch_key = type_bits(obj);
 	ic->ic_extra1 = ~static_cast<uint64_t>(0);
 	return shape->stfk_handler;
 }
 
-template<typename Op, auto InstallHandler>
+enum class FieldDispatchKind
+{
+	Install,
+	Container,
+	Struct,
+};
+
+template<typename Op, Opcode opcode, auto InstallHandler, FieldDispatchKind kind>
 JET_PRESERVE_NONE static void op_field_reg(VM_OP_PARAMS)
 {
-	auto&& field_ic_hit = [](FieldIc* ic, Atom obj)
-	{
-		return ic->ic_handler != 0 && ic->ic_dispatch_key == type_bits(obj);
-	};
 	Op* op = reinterpret_cast<Op*>(pc);
 	Atom obj = stack_base[frame_base + op->obj];
+	bool hit = false;
+	if constexpr (kind == FieldDispatchKind::Container)
+	{
+		hit = op->ic.ic_dispatch_key == type_bits(obj);
+	}
+	else if constexpr (kind == FieldDispatchKind::Struct)
+	{
+		hit = obj.tag_is<jet_tag::struct_>() &&
+		      op->ic.ic_dispatch_key == reinterpret_cast<uint64_t>(unbox<Struct>(obj)->type);
+	}
+
+	if (!hit)
+	{
+		VmOp dispatch;
+		if (obj.tag_is<jet_tag::struct_>())
+		{
+			dispatch = op_field_reg<Op, opcode, InstallHandler, FieldDispatchKind::Struct>;
+			op->ic.ic_dispatch_key = reinterpret_cast<uint64_t>(unbox<Struct>(obj)->type);
+		}
+		else
+		{
+			dispatch = op_field_reg<Op, opcode, InstallHandler, FieldDispatchKind::Container>;
+			op->ic.ic_dispatch_key = type_bits(obj);
+		}
+		std::memcpy(pc - OPCODE_SIZE, &dispatch, sizeof(dispatch));
+	}
+
 	pc += sizeof(*op);
 	callee = obj;
 
-	VmOp h = field_ic_hit(&op->ic, obj)
+	JET_PROFILE_FIELD_DISPATCH(opcode, profile_field_receiver(obj), hit);
+	VmOp h = hit
 	         ? reinterpret_cast<VmOp>(op->ic.ic_handler)
 	         : InstallHandler(&op->ic, obj);
 	JET_MUSTTAIL return h(VM_OP_ARGS);
 }
 
-static constexpr auto& op_ldf  = op_field_reg<OP_ldf,  field_install_ldf>;
-static constexpr auto& op_stf  = op_field_reg<OP_stf,  field_install_stf>;
-static constexpr auto& op_ldfk = op_field_reg<OP_ldfk, field_install_ldfk>;
-static constexpr auto& op_stfk = op_field_reg<OP_stfk, field_install_stfk>;
+static constexpr auto& op_ldf =
+	op_field_reg<OP_ldf, Opcode::ldf, field_install_ldf, FieldDispatchKind::Install>;
+static constexpr auto& op_stf =
+	op_field_reg<OP_stf, Opcode::stf, field_install_stf, FieldDispatchKind::Install>;
+static constexpr auto& op_ldfk =
+	op_field_reg<OP_ldfk, Opcode::ldfk, field_install_ldfk, FieldDispatchKind::Install>;
+static constexpr auto& op_stfk =
+	op_field_reg<OP_stfk, Opcode::stfk, field_install_stfk, FieldDispatchKind::Install>;
 
 JET_ALWAYS_INLINE static Atom sub_op(Atom a, Atom b)
 {
@@ -1133,7 +1010,7 @@ JET_NOINLINE static VmOp resolve_call_stub(Atom callee, size_t nargs, bool tail)
 		StructType* t = unbox<StructType>(callee);
 		Arity a = struct_arity(t);
 		check_arity(a, nargs);
-		return &fast_call_struct;
+		return t->ops().constructor;
 	}
 	Prim* p = slow_unbox<Prim>(callee);
 	check_arity(p->arity, nargs);
@@ -1320,7 +1197,7 @@ JET_PRESERVE_NONE static void op_retv(VM_OP_PARAMS)
 	OP_retv* op = reinterpret_cast<OP_retv*>(pc);
 	Atom retval = stack_base[frame_base + op->src];
 	Frame* prev = frame - 1;
-	s.frames.pop_back();
+	s.frames.pop();
 	stack_base[frame_base] = retval;
 	frame = prev;
 	frame_base = prev->base;
@@ -1633,8 +1510,8 @@ void eval(VmState& vm, Frame& init_frame, Atom* constants, size_t n_constants, s
 	VmOp halt_handler = dispatch_table[static_cast<int>(Opcode::halt)];
 	std::memcpy(halt_buf, &halt_handler, sizeof(halt_handler));
 	halt_buf[VM_OP_SLOT_SIZE] = static_cast<uint8_t>(Opcode::halt);
-	vm.frames.push_back({halt_buf, nullptr, 0, initial_stack_size});
-	vm.frames.push_back(init_frame);
+	vm.frames.push({halt_buf, nullptr, 0, initial_stack_size});
+	vm.frames.push(init_frame);
 
 	Frame* frame = &vm.frames.back();
 	Code* pc = frame->code;

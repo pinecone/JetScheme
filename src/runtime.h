@@ -61,16 +61,42 @@ Atom string_ref(Atom s, Atom k);
 Atom bytevector_u8_ref(Atom bv, Atom k);
 void init_bytevectors(Env& e);
 
+struct EqualContext;
+struct Struct;
+class StructType;
+using EqualRecur = bool (*)(EqualContext&, Atom, Atom);
+
+enum class StructKind : uint8_t
+{
+	Scheme,
+	Tuple,
+};
+
+struct StructOps
+{
+	StructKind kind;
+	VmOp constructor;
+	ObjShape shape;
+	StructDestructor destroy;
+	bool (*equal)(EqualContext&, Struct*, Struct*, EqualRecur);
+	void (*display)(Struct*, std::string&);
+	void (*write)(Struct*, std::string&);
+};
+
 class StructType
 {
 public:
-	StructType(Atom name, std::vector<Atom> field_names)
-		: name_{name}, field_names_{std::move(field_names)}
+	StructType(Atom name, std::vector<Atom> field_names, Arity arity, const StructOps& ops)
+		: name_{name}, field_names_{std::move(field_names)}, arity_{arity},
+		destructor_id_{g_gc->register_struct_destructor(ops.destroy)}, kind_{ops.kind}, ops_{&ops}
 	{
 	}
 
 	Atom name() const { return name_; }
-	size_t size() const { return field_names_.size(); }
+	Arity arity() const { return arity_; }
+	uint16_t destructor_id() const { return destructor_id_; }
+	StructKind kind() const { return kind_; }
+	const StructOps& ops() const { return *ops_; }
 
 	int find(Atom key) const
 	{
@@ -87,6 +113,10 @@ public:
 private:
 	Atom name_;
 	std::vector<Atom> field_names_;
+	Arity arity_;
+	uint16_t destructor_id_;
+	StructKind kind_;
+	const StructOps* ops_;
 };
 
 inline bool operator==(StructType& a, StructType& b)
@@ -97,22 +127,67 @@ inline bool operator==(StructType& a, StructType& b)
 struct Struct
 {
 	StructType* type;
-	uint32_t n_fields;
-	Atom values[];
 
-	Struct(StructType* t, uint32_t n) : type{t}, n_fields{n} {}
-
-	static Struct* alloc(StructType* type, uint32_t n_fields)
-	{
-		size_t total = sizeof(Struct) + static_cast<size_t>(n_fields) * sizeof(Atom);
-		void* mem = g_gc->alloc(total, jet_tag::struct_);
-		Struct* obj = static_cast<Struct*>(mem);
-		new (obj) Struct{type, n_fields};
-		return obj;
-	}
+	explicit Struct(StructType* type_) : type{type_} {}
 
 	Struct(const Struct&) = delete;
 	Struct& operator=(const Struct&) = delete;
+};
+
+struct SchemeStruct : Struct
+{
+	uint32_t n_fields;
+	Atom values[];
+
+	SchemeStruct(StructType* type, uint32_t n) : Struct{type}, n_fields{n} {}
+
+	static SchemeStruct* alloc(StructType* type, uint32_t n_fields)
+	{
+		size_t total = sizeof(SchemeStruct) + static_cast<size_t>(n_fields) * sizeof(Atom);
+		void* mem = g_gc->alloc(total, jet_tag::struct_, type->destructor_id());
+		SchemeStruct* obj = static_cast<SchemeStruct*>(mem);
+		new (obj) SchemeStruct{type, n_fields};
+		return obj;
+	}
+
+	void trace(Gc& gc)
+	{
+		for (uint32_t i = 0; i < n_fields; ++i)
+		{
+			gc.mark_atom(values[i].bits);
+		}
+	}
+
+	SchemeStruct(const SchemeStruct&) = delete;
+	SchemeStruct& operator=(const SchemeStruct&) = delete;
+};
+
+struct Tuple : Struct
+{
+	uint32_t size;
+	Atom elements[];
+
+	Tuple(StructType* type, uint32_t size_) : Struct{type}, size{size_} {}
+
+	static Tuple* alloc(StructType* type, uint32_t size)
+	{
+		size_t total = sizeof(Tuple) + static_cast<size_t>(size) * sizeof(Atom);
+		void* mem = g_gc->alloc(total, jet_tag::struct_, type->destructor_id());
+		Tuple* obj = static_cast<Tuple*>(mem);
+		new (obj) Tuple{type, size};
+		return obj;
+	}
+
+	void trace(Gc& gc)
+	{
+		for (uint32_t i = 0; i < size; ++i)
+		{
+			gc.mark_atom(elements[i].bits);
+		}
+	}
+
+	Tuple(const Tuple&) = delete;
+	Tuple& operator=(const Tuple&) = delete;
 };
 
 inline bool operator==(Struct& a, Struct& b)
@@ -125,11 +200,119 @@ struct box_unbox_t<Struct>
 {
 	static Atom box(StructType* type, uint32_t n_fields)
 	{
-		return Atom::make_tagged(jet_tag::struct_, Struct::alloc(type, n_fields));
+		return Atom::make_tagged(jet_tag::struct_, SchemeStruct::alloc(type, n_fields));
 	}
 
 	static Struct* unbox(Atom x) { return static_cast<Struct*>(x.as_ptr()); }
 };
+
+inline const ObjShape* shape_of(Atom object)
+{
+	if (object.tag() == jet_tag::struct_)
+	{
+		return &unbox<Struct>(object)->type->ops().shape;
+	}
+	const ObjShape* shape = &g_shape_by_tag[object.tag()];
+	return shape->ldf_handler ? shape : nullptr;
+}
+
+template <auto Construct>
+JET_PRESERVE_NONE void struct_constructor_handler(VM_OP_PARAMS)
+{
+	StructType* type = unbox<StructType>(callee);
+	Struct* instance = Construct(type, args, stack_top);
+	stack_base[result_slot] = Atom::make_tagged(jet_tag::struct_, instance);
+	stack_top = stack_base + frame->top;
+	DISPATCH();
+}
+
+template <auto Resolve, auto Load>
+JET_PRESERVE_NONE void struct_ldf_handler(VM_OP_PARAMS)
+{
+	OP_ldf* op = reinterpret_cast<OP_ldf*>(pc - sizeof(OP_ldf));
+	FieldIc* ic = &op->ic;
+	Atom key = stack_base[frame_base + op->key];
+	Struct* instance = unbox<Struct>(callee);
+
+	if (ic->ic_extra2 == key.bits) [[likely]]
+	{
+		stack_base[frame_base + op->dst] = Load(instance, ic->ic_extra1);
+		DISPATCH();
+	}
+	JET_PROFILE_FIELD_KEY_MISS();
+	ic->ic_extra1 = Resolve(instance, key);
+	ic->ic_extra2 = key.bits;
+	stack_base[frame_base + op->dst] = Load(instance, ic->ic_extra1);
+	DISPATCH();
+}
+
+template <auto Resolve, auto Store>
+JET_PRESERVE_NONE void struct_stf_handler(VM_OP_PARAMS)
+{
+	OP_stf* op = reinterpret_cast<OP_stf*>(pc - sizeof(OP_stf));
+	FieldIc* ic = &op->ic;
+	Atom key = stack_base[frame_base + op->key];
+	Atom value = stack_base[frame_base + op->val];
+	Struct* instance = unbox<Struct>(callee);
+
+	if (ic->ic_extra2 == key.bits) [[likely]]
+	{
+		Store(instance, ic->ic_extra1, value);
+		DISPATCH();
+	}
+	JET_PROFILE_FIELD_KEY_MISS();
+	ic->ic_extra1 = Resolve(instance, key);
+	ic->ic_extra2 = key.bits;
+	Store(instance, ic->ic_extra1, value);
+	DISPATCH();
+}
+
+template <auto Resolve, auto Load>
+JET_PRESERVE_NONE void struct_ldfk_handler(VM_OP_PARAMS)
+{
+	OP_ldfk* op = reinterpret_cast<OP_ldfk*>(pc - sizeof(OP_ldfk));
+	FieldIc* ic = &op->ic;
+	Struct* instance = unbox<Struct>(callee);
+
+	if (ic->ic_extra1 != ~static_cast<uint64_t>(0)) [[likely]]
+	{
+		stack_base[frame_base + op->dst] = Load(instance, ic->ic_extra1);
+		DISPATCH();
+	}
+	JET_PROFILE_FIELD_KEY_MISS();
+	ic->ic_extra1 = Resolve(instance, s.constants[op->key_idx]);
+	stack_base[frame_base + op->dst] = Load(instance, ic->ic_extra1);
+	DISPATCH();
+}
+
+template <auto Resolve, auto Store>
+JET_PRESERVE_NONE void struct_stfk_handler(VM_OP_PARAMS)
+{
+	OP_stfk* op = reinterpret_cast<OP_stfk*>(pc - sizeof(OP_stfk));
+	FieldIc* ic = &op->ic;
+	Atom value = stack_base[frame_base + op->val];
+	Struct* instance = unbox<Struct>(callee);
+
+	if (ic->ic_extra1 != ~static_cast<uint64_t>(0)) [[likely]]
+	{
+		Store(instance, ic->ic_extra1, value);
+		DISPATCH();
+	}
+	JET_PROFILE_FIELD_KEY_MISS();
+	ic->ic_extra1 = Resolve(instance, s.constants[op->key_idx]);
+	Store(instance, ic->ic_extra1, value);
+	DISPATCH();
+}
+
+template <auto Resolve, auto Load>
+Atom struct_ref(Atom object, Atom key)
+{
+	Struct* instance = unbox<Struct>(object);
+	return Load(instance, Resolve(instance, key));
+}
+
+Atom display_to(Atom value, std::string& out);
+Atom write_to(Atom value, std::string& out);
 
 void init_structs(Env& e);
 

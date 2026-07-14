@@ -131,6 +131,15 @@ public:
 	bool is_number() { return (bits & QNAN_TAG) != QNAN_TAG; }
 	bool is_tagged() { return (bits & QNAN_TAG) == QNAN_TAG; }
 
+	template <int tag_value>
+	bool tag_is()
+	{
+		static_assert(tag_value >= 0 && tag_value < 16);
+		constexpr uint16_t encoded = static_cast<uint16_t>(
+			(QNAN_TAG >> 48) | (tag_value & 0x7) | ((tag_value & 0x8) << 12));
+		return static_cast<uint16_t>(bits >> 48) == encoded;
+	}
+
 	int tag() { return static_cast<int>(((bits >> 48) & 0x7) | ((bits >> 60) & 0x8)); }
 
 	void* as_ptr() { return reinterpret_cast<void*>(bits & PAYLOAD_MASK); }

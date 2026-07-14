@@ -73,8 +73,15 @@
 (<span class="b">isa?</span> p <span class="b">point</span>)                                   <span class="c">; =&gt; #t</span>
 (<span class="b">ref</span> p '<span class="n">x</span>)                                       <span class="c">; =&gt; 3</span>
 (<span class="k">setf!</span> p '<span class="n">x</span> <span class="n">10</span>)                                  <span class="c">; mutate field</span></code></pre>
+  <h3>Tuples</h3>
+  <p><strong><code>tuple</code>.</strong> Constructs an immutable, fixed-size tuple. Tuples use value-based
+  <code>equal?</code>, identity-based <code>eq?</code>, and numeric <code>ref</code> access.</p>
+<pre><code>(<span class="k">define</span> t (<span class="b">tuple</span> '<span class="n">a</span> '<span class="n">b</span> '<span class="n">c</span>))
+(<span class="b">isa?</span> t <span class="b">tuple</span>)                                 <span class="c">; =&gt; #t</span>
+(<span class="b">ref</span> t <span class="n">1</span>)                                        <span class="c">; =&gt; b</span></code></pre>
   <h3>Generic ops</h3>
-  <p><code>(ref v i)</code> is a polymorphic accessor. It works on vectors and strings (integer index) and structs (symbol field name).</p>
+  <p><code>(ref v i)</code> is a polymorphic accessor. It works on vectors, strings, and tuples (integer index) and
+  ordinary structs (symbol field name).</p>
   <p><code>(setf! v i x)</code> stores <code>x</code> at key <code>i</code> in <code>v</code>:</p>
 <pre><code>(<span class="k">setf!</span> v <span class="n">3</span> '<span class="n">x</span>)                                   <span class="c">; vector-set!</span>
 (<span class="k">setf!</span> s <span class="n">0</span> <span class="ch">#\H</span>)                                  <span class="c">; string-set!</span>

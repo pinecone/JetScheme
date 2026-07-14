@@ -127,6 +127,7 @@
 
 (define read (%prim "read"))
 (define display (%prim "display"))
+(define write (%prim "write"))
 
 ;;; equality
 (define eqv? (%prim "eqv?"))
@@ -292,6 +293,7 @@
 ;;; structs
 (define struct (%prim "struct"))
 (define isa? (%prim "isa?"))
+(define tuple (%prim "make-tuple"))
 
 ;;; test harness
 (define %check (%prim "%check"))

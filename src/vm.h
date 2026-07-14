@@ -13,6 +13,7 @@
 #include <new>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -71,14 +72,19 @@ constexpr bool is_nary(Arity& a)
 	return Arity::NAry == a.how;
 }
 
+struct Struct;
+using StructDestructor = void (*)(Struct*);
+
 struct Gc
 {
 	struct ObjEntry
 	{
 		uint32_t cell_idx;
 		uint32_t n_cells;
+		uint16_t destructor_id;
 		uint8_t tag;
 	};
+	static_assert(sizeof(ObjEntry) == 12);
 
 	static constexpr size_t CELL_SIZE = 16;
 	static constexpr size_t ARENA_SIZE = 1ULL << 30;
@@ -91,6 +97,7 @@ struct Gc
 	std::vector<ObjEntry> objects;
 	uint64_t* live_bits;
 	uint64_t* mark_bits;
+	std::vector<StructDestructor> struct_destructors{nullptr};
 	void* freelist[jet_tag::TAG_MAX][N_BUCKETS] = {};
 	uint32_t alloc_since_gc = 0;
 	uint32_t gc_threshold = 256;
@@ -98,7 +105,8 @@ struct Gc
 	Gc();
 	~Gc();
 
-	void* alloc(size_t obj_size, int tag);
+	uint16_t register_struct_destructor(StructDestructor destructor);
+	void* alloc(size_t obj_size, int tag, uint16_t destructor_id);
 	void sweep();
 	void mark_atom(uint64_t bits);
 	void mark_object(void* ptr, int tag);
@@ -117,10 +125,23 @@ struct Gc
 
 inline Gc* g_gc = nullptr;
 
+template <typename T>
+constexpr StructDestructor struct_destructor()
+{
+	if constexpr (std::is_trivially_destructible_v<T>)
+	{
+		return nullptr;
+	}
+	else
+	{
+		return [](Struct* instance) { static_cast<T*>(instance)->~T(); };
+	}
+}
+
 template <typename T, typename... Args>
 T* gc_alloc(int tag, Args&&... args)
 {
-	void* mem = g_gc->alloc(sizeof(T), tag);
+	void* mem = g_gc->alloc(sizeof(T), tag, 0);
 	T* obj = static_cast<T*>(mem);
 	new (obj) T(static_cast<Args&&>(args)...);
 	return obj;
@@ -260,6 +281,39 @@ struct Frame
 	size_t top;
 };
 
+class FrameStack
+{
+public:
+	bool can_push() const { return active_ < storage_.size(); }
+
+	Frame& push()
+	{
+		if (!can_push()) [[unlikely]]
+		{
+			storage_.resize(storage_.empty() ? 8 : storage_.size() * 2);
+		}
+		return push_unchecked();
+	}
+
+	Frame& push(const Frame& value)
+	{
+		Frame& frame = push();
+		frame = value;
+		return frame;
+	}
+
+	Frame& push_unchecked() { return storage_[active_++]; }
+
+	void pop() { --active_; }
+	Frame& back() { return storage_[active_ - 1]; }
+	Frame* begin() { return storage_.data(); }
+	Frame* end() { return storage_.data() + active_; }
+
+private:
+	std::vector<Frame> storage_;
+	size_t active_{};
+};
+
 class Env
 {
 public:
@@ -298,7 +352,7 @@ struct Lambda
 	static Lambda* alloc(Code* code, Arity arity, uint16_t n_locals, uint16_t n_captures)
 	{
 		size_t total = sizeof(Lambda) + static_cast<size_t>(n_captures) * sizeof(Atom);
-		void* mem = g_gc->alloc(total, jet_tag::procedure);
+		void* mem = g_gc->alloc(total, jet_tag::procedure, 0);
 		Lambda* obj = static_cast<Lambda*>(mem);
 		new (obj) Lambda{code, arity, n_locals, n_captures};
 		return obj;
@@ -327,7 +381,7 @@ struct box_unbox_t<Lambda>
 struct VmState
 {
 	InternedSymbols symbols;
-	std::vector<Frame> frames;
+	FrameStack frames;
 	Atom* stack_base;
 	Atom* stack_end;
 	Atom* stack_top;
@@ -360,12 +414,6 @@ struct ObjShape
 };
 
 extern ObjShape g_shape_by_tag[jet_tag::HEAP_END];
-
-inline ObjShape* shape_of(Atom a)
-{
-	ObjShape* sh = &g_shape_by_tag[a.tag()];
-	return sh->ldf_handler ? sh : nullptr;
-}
 
 #define DISPATCH()                                                                                           \
 	do                                                                                                       \

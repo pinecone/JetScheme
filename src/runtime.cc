@@ -484,7 +484,9 @@ static Atom eqv_prim(Atom* first, Atom*)
 
 static Atom eq_prim(Atom* first, Atom*) { return box(is_eq(first[0], first[1])); }
 
-static Atom equal_prim(Atom* first, Atom*)
+static bool equal_recur(EqualContext& context, Atom first, Atom second);
+
+struct EqualContext
 {
 	struct EqualPair
 	{
@@ -504,7 +506,8 @@ static Atom equal_prim(Atom* first, Atom*)
 	};
 
 	std::unordered_set<EqualPair, EqualPairHash> seen;
-	auto&& is_equal = [&seen](auto&& self, Atom a, Atom b) -> bool
+
+	bool compare(Atom a, Atom b)
 	{
 		if (is_eqv(a, b))
 		{
@@ -521,7 +524,7 @@ static Atom equal_prim(Atom* first, Atom*)
 				{
 					return true;
 				}
-				return self(self, car(a), car(b)) && self(self, cdr(a), cdr(b));
+				return compare(car(a), car(b)) && compare(cdr(a), cdr(b));
 			case jet::Type::Vector:
 			{
 				Vec& v1 = *unbox<Vec>(a);
@@ -536,7 +539,7 @@ static Atom equal_prim(Atom* first, Atom*)
 				}
 				for (auto it1 = v1.begin(), it2 = v2.begin(); it1 != v1.end(); ++it1, ++it2)
 				{
-					if (!self(self, *it1, *it2))
+					if (!compare(*it1, *it2))
 					{
 						return false;
 					}
@@ -547,11 +550,35 @@ static Atom equal_prim(Atom* first, Atom*)
 				return *unbox<String>(a) == *unbox<String>(b);
 			case jet::Type::ByteVector:
 				return *unbox<ByteVector>(a) == *unbox<ByteVector>(b);
+			case jet::Type::Struct:
+			{
+				Struct* first = unbox<Struct>(a);
+				Struct* second = unbox<Struct>(b);
+				if (first->type != second->type)
+				{
+					return false;
+				}
+				if (!seen.insert({a.bits, b.bits}).second)
+				{
+					return true;
+				}
+				return first->type->ops().equal(*this, first, second, equal_recur);
+			}
 			default:
 				return false;
 		}
-	};
-	return box(is_equal(is_equal, first[0], first[1]));
+	}
+};
+
+static bool equal_recur(EqualContext& context, Atom first, Atom second)
+{
+	return context.compare(first, second);
+}
+
+static Atom equal_prim(Atom* first, Atom*)
+{
+	EqualContext context;
+	return box(context.compare(first[0], first[1]));
 }
 
 static bool boolean_eq(Atom a, Atom b)
@@ -642,7 +669,7 @@ static void print_bytevector(ByteVector& v, std::string& out)
 	out += ')';
 }
 
-static Atom display_to(Atom a, std::string& out)
+Atom display_to(Atom a, std::string& out)
 {
 	switch (a.type())
 	{
@@ -702,14 +729,7 @@ static Atom display_to(Atom a, std::string& out)
 		case jet::Type::Struct:
 		{
 			Struct* s = unbox<Struct>(a);
-			out += "#s(";
-			out += symbol_to_string(unbox<Symbol>(s->type->name()));
-			for (uint32_t i = 0; i < s->n_fields; ++i)
-			{
-				out += ' ';
-				display_to(s->values[i], out);
-			}
-			out += ')';
+			s->type->ops().display(s, out);
 			break;
 		}
 
@@ -774,14 +794,7 @@ Atom write_to(Atom a, std::string& out)
 		case jet::Type::Struct:
 		{
 			Struct* s = unbox<Struct>(a);
-			out += "#s(";
-			out += symbol_to_string(unbox<Symbol>(s->type->name()));
-			for (uint32_t i = 0; i < s->n_fields; ++i)
-			{
-				out += ' ';
-				write_to(s->values[i], out);
-			}
-			out += ')';
+			s->type->ops().write(s, out);
 			break;
 		}
 
@@ -1374,9 +1387,160 @@ void init_port_file(Env& e)
 	e.bind("open-output-file", make_prim<open_output_file>());
 }
 
+static Struct* construct_scheme_struct(StructType* type, Atom* first, Atom* last)
+{
+	uint32_t size = static_cast<uint32_t>(last - first);
+	SchemeStruct* instance = SchemeStruct::alloc(type, size);
+	for (uint32_t i = 0; i < size; ++i)
+	{
+		instance->values[i] = first[i];
+	}
+	return instance;
+}
+
+static Struct* construct_tuple(StructType* type, Atom* first, Atom* last)
+{
+	size_t count = static_cast<size_t>(last - first);
+	uint32_t size = static_cast<uint32_t>(count);
+	Tuple* tuple = Tuple::alloc(type, size);
+	for (uint32_t i = 0; i < size; ++i)
+	{
+		tuple->elements[i] = first[i];
+	}
+	return tuple;
+}
+
+[[noreturn]] static void die_struct_no_field(StructType* type, Symbol field)
+{
+	const std::string& type_name = symbol_to_string(unbox<Symbol>(type->name()));
+	const std::string& field_name = symbol_to_string(field);
+	JET_DIE("struct '%s': no field named '%s'", type_name.c_str(), field_name.c_str());
+}
+
+static uint64_t resolve_scheme_field(Struct* instance, Atom key)
+{
+	JET_DIE_UNLESS(is_type<jet::Type::Symbol>(key), "struct field access requires a symbol key");
+	int index = instance->type->find(key);
+	if (index < 0)
+	{
+		die_struct_no_field(instance->type, unbox<Symbol>(key));
+	}
+	return static_cast<uint64_t>(index);
+}
+
+static Atom load_scheme_field(Struct* instance, uint64_t index)
+{
+	return static_cast<SchemeStruct*>(instance)->values[index];
+}
+
+static void store_scheme_field(Struct* instance, uint64_t index, Atom value)
+{
+	static_cast<SchemeStruct*>(instance)->values[index] = value;
+}
+
+static uint64_t resolve_tuple_ref(Struct* instance, Atom key)
+{
+	JET_DIE_UNLESS(is_positive_integer(key), "ref expects a non-negative integer index");
+	Tuple* tuple = static_cast<Tuple*>(instance);
+	size_t index = static_cast<size_t>(unbox<Number>(key));
+	JET_DIE_UNLESS(index < tuple->size, "ref index out of bounds");
+	return index;
+}
+
+static Atom load_tuple_field(Struct* instance, uint64_t index)
+{
+	return static_cast<Tuple*>(instance)->elements[index];
+}
+
+JET_PRESERVE_NONE static void immutable_tuple_set(VM_OP_PARAMS)
+{
+	JET_DIE("tuple is immutable");
+}
+
+static bool equal_scheme_struct(EqualContext&, Struct*, Struct*, EqualRecur)
+{
+	return false;
+}
+
+static bool equal_tuple(EqualContext& context, Struct* first, Struct* second, EqualRecur recur)
+{
+	Tuple* a = static_cast<Tuple*>(first);
+	Tuple* b = static_cast<Tuple*>(second);
+	if (a->size != b->size)
+	{
+		return false;
+	}
+	for (uint32_t i = 0; i < a->size; ++i)
+	{
+		if (!recur(context, a->elements[i], b->elements[i]))
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
+template <typename T, Atom (*print)(Atom, std::string&)>
+static void print_struct(Struct* instance, std::string& out)
+{
+	T* value = static_cast<T*>(instance);
+	out += "#s(";
+	out += symbol_to_string(unbox<Symbol>(value->type->name()));
+	uint32_t size;
+	Atom* elements;
+	if constexpr (std::is_same_v<T, SchemeStruct>)
+	{
+		size = value->n_fields;
+		elements = value->values;
+	}
+	else
+	{
+		size = value->size;
+		elements = value->elements;
+	}
+	for (uint32_t i = 0; i < size; ++i)
+	{
+		out += ' ';
+		print(elements[i], out);
+	}
+	out += ')';
+}
+
+static const StructOps scheme_struct_ops = {
+	StructKind::Scheme,
+	struct_constructor_handler<construct_scheme_struct>,
+	{
+		struct_ldf_handler<resolve_scheme_field, load_scheme_field>,
+		struct_stf_handler<resolve_scheme_field, store_scheme_field>,
+		struct_ldfk_handler<resolve_scheme_field, load_scheme_field>,
+		struct_stfk_handler<resolve_scheme_field, store_scheme_field>,
+		struct_ref<resolve_scheme_field, load_scheme_field>,
+	},
+	struct_destructor<SchemeStruct>(),
+	equal_scheme_struct,
+	print_struct<SchemeStruct, display_to>,
+	print_struct<SchemeStruct, write_to>,
+};
+
+static const StructOps tuple_ops = {
+	StructKind::Tuple,
+	struct_constructor_handler<construct_tuple>,
+	{
+		struct_ldf_handler<resolve_tuple_ref, load_tuple_field>,
+		immutable_tuple_set,
+		struct_ldfk_handler<resolve_tuple_ref, load_tuple_field>,
+		immutable_tuple_set,
+		struct_ref<resolve_tuple_ref, load_tuple_field>,
+	},
+	struct_destructor<Tuple>(),
+	equal_tuple,
+	print_struct<Tuple, display_to>,
+	print_struct<Tuple, write_to>,
+};
+
 static Atom slow_ref_field(Atom obj, Atom key)
 {
-	ObjShape* sh = shape_of(obj);
+	const ObjShape* sh = shape_of(obj);
 	JET_DIE_UNLESS(sh, "ref: unsupported receiver type");
 	return sh->slow_ref(obj, key);
 }
@@ -1391,7 +1555,8 @@ static Atom struct_ctor(Atom name, Atom names_list)
 		type_check(field, jet::Type::Symbol);
 		field_names.push_back(field);
 	}
-	return box<StructType>(name, std::move(field_names));
+	Arity arity = exactly(field_names.size());
+	return box<StructType>(name, std::move(field_names), arity, scheme_struct_ops);
 }
 
 static Atom isa(Atom value, Atom type)
@@ -1405,6 +1570,9 @@ static Atom isa(Atom value, Atom type)
 
 void init_structs(Env& e)
 {
+	static const std::string tuple_name = "tuple";
+	Atom name = box(static_cast<Symbol>(&tuple_name));
+	e.bind("make-tuple", box<StructType>(name, std::vector<Atom>{}, n_ary(), tuple_ops));
 	e.bind("struct", make_prim<struct_ctor>());
 	e.bind("isa?", make_prim<isa>());
 }
