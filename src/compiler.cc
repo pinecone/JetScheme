@@ -3574,6 +3574,7 @@ namespace
 				case ExprKind::Lambda:
 					e->lambda.params = orig->lambda.params;
 					e->lambda.is_variadic = orig->lambda.is_variadic;
+					e->lambda.lambda_name = orig->lambda.lambda_name;
 					e->lambda.names = orig->lambda.names;
 					e->lambda.captured_locals = {};
 					e->lambda.captured_before_init_locals = {};
