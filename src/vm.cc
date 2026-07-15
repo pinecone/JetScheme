@@ -1276,7 +1276,6 @@ JET_NOINLINE JET_PRESERVE_NONE static void slow_recur(VM_OP_PARAMS)
 
 JET_PRESERVE_NONE static void op_recur(VM_OP_PARAMS)
 {
-	JET_GC_CHECK();
 	if (OP_recur* op = reinterpret_cast<OP_recur*>(pc); op->w != 0)
 	{
 		JET_MUSTTAIL return slow_recur(VM_OP_ARGS);
