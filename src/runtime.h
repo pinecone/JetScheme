@@ -221,7 +221,7 @@ JET_PRESERVE_NONE void struct_constructor_handler(VM_OP_PARAMS)
 {
 	StructType* type = unbox<StructType>(callee);
 	Struct* instance = Construct(type, args, stack_top);
-	stack_base[result_slot] = Atom::make_tagged(jet_tag::struct_, instance);
+	*args = Atom::make_tagged(jet_tag::struct_, instance);
 	stack_top = stack_base + frame->top;
 	DISPATCH();
 }
@@ -231,18 +231,18 @@ JET_PRESERVE_NONE void struct_ldf_handler(VM_OP_PARAMS)
 {
 	OP_ldf* op = reinterpret_cast<OP_ldf*>(pc - sizeof(OP_ldf));
 	FieldIc* ic = &op->ic;
-	Atom key = stack_base[frame_base + op->key];
+	Atom key = frame_regs[op->key];
 	Struct* instance = unbox<Struct>(callee);
 
 	if (ic->ic_extra2 == key.bits) [[likely]]
 	{
-		stack_base[frame_base + op->dst] = Load(instance, ic->ic_extra1);
+		frame_regs[op->dst] = Load(instance, ic->ic_extra1);
 		DISPATCH();
 	}
 	JET_PROFILE_FIELD_KEY_MISS();
 	ic->ic_extra1 = Resolve(instance, key);
 	ic->ic_extra2 = key.bits;
-	stack_base[frame_base + op->dst] = Load(instance, ic->ic_extra1);
+	frame_regs[op->dst] = Load(instance, ic->ic_extra1);
 	DISPATCH();
 }
 
@@ -251,8 +251,8 @@ JET_PRESERVE_NONE void struct_stf_handler(VM_OP_PARAMS)
 {
 	OP_stf* op = reinterpret_cast<OP_stf*>(pc - sizeof(OP_stf));
 	FieldIc* ic = &op->ic;
-	Atom key = stack_base[frame_base + op->key];
-	Atom value = stack_base[frame_base + op->val];
+	Atom key = frame_regs[op->key];
+	Atom value = frame_regs[op->val];
 	Struct* instance = unbox<Struct>(callee);
 
 	if (ic->ic_extra2 == key.bits) [[likely]]
@@ -271,7 +271,7 @@ template <auto Load>
 JET_PRESERVE_NONE void struct_resolved_ldfk_handler(VM_OP_PARAMS)
 {
 	OP_ldfk* op = reinterpret_cast<OP_ldfk*>(pc);
-	Atom object = stack_base[frame_base + op->obj];
+	Atom object = frame_regs[op->obj];
 	if (!object.tag_is<jet_tag::struct_>() ||
 	    op->ic.ic_dispatch_key != reinterpret_cast<uint64_t>(unbox<Struct>(object)->type)) [[unlikely]]
 	{
@@ -279,7 +279,7 @@ JET_PRESERVE_NONE void struct_resolved_ldfk_handler(VM_OP_PARAMS)
 	}
 
 	Struct* instance = unbox<Struct>(object);
-	stack_base[frame_base + op->dst] = Load(instance, op->ic.ic_extra1);
+	frame_regs[op->dst] = Load(instance, op->ic.ic_extra1);
 	pc += sizeof(*op);
 	JET_PROFILE_FIELD_DISPATCH(Opcode::ldfk, FieldReceiver::Struct, true);
 	DISPATCH();
@@ -289,7 +289,7 @@ template <auto Store>
 JET_PRESERVE_NONE void struct_resolved_stfk_handler(VM_OP_PARAMS)
 {
 	OP_stfk* op = reinterpret_cast<OP_stfk*>(pc);
-	Atom object = stack_base[frame_base + op->obj];
+	Atom object = frame_regs[op->obj];
 	if (!object.tag_is<jet_tag::struct_>() ||
 	    op->ic.ic_dispatch_key != reinterpret_cast<uint64_t>(unbox<Struct>(object)->type)) [[unlikely]]
 	{
@@ -297,7 +297,7 @@ JET_PRESERVE_NONE void struct_resolved_stfk_handler(VM_OP_PARAMS)
 	}
 
 	Struct* instance = unbox<Struct>(object);
-	Store(instance, op->ic.ic_extra1, stack_base[frame_base + op->val]);
+	Store(instance, op->ic.ic_extra1, frame_regs[op->val]);
 	pc += sizeof(*op);
 	JET_PROFILE_FIELD_DISPATCH(Opcode::stfk, FieldReceiver::Struct, true);
 	DISPATCH();
@@ -312,14 +312,14 @@ JET_PRESERVE_NONE void struct_ldfk_handler(VM_OP_PARAMS)
 
 	if (ic->ic_extra1 != ~static_cast<uint64_t>(0)) [[likely]]
 	{
-		stack_base[frame_base + op->dst] = Load(instance, ic->ic_extra1);
+		frame_regs[op->dst] = Load(instance, ic->ic_extra1);
 		DISPATCH();
 	}
 	JET_PROFILE_FIELD_KEY_MISS();
 	ic->ic_extra1 = Resolve(instance, s.constants[op->key_idx]);
 	VmOp resolved = instance->type->ops().shape.resolved_ldfk_handler;
 	std::memcpy(reinterpret_cast<Code*>(op) - OPCODE_SIZE, &resolved, sizeof(resolved));
-	stack_base[frame_base + op->dst] = Load(instance, ic->ic_extra1);
+	frame_regs[op->dst] = Load(instance, ic->ic_extra1);
 	DISPATCH();
 }
 
@@ -328,7 +328,7 @@ JET_PRESERVE_NONE void struct_stfk_handler(VM_OP_PARAMS)
 {
 	OP_stfk* op = reinterpret_cast<OP_stfk*>(pc - sizeof(OP_stfk));
 	FieldIc* ic = &op->ic;
-	Atom value = stack_base[frame_base + op->val];
+	Atom value = frame_regs[op->val];
 	Struct* instance = unbox<Struct>(callee);
 
 	if (ic->ic_extra1 != ~static_cast<uint64_t>(0)) [[likely]]
@@ -405,7 +405,7 @@ JET_PRESERVE_NONE inline void prim_stub_varargs(VM_OP_PARAMS)
 {
 	JET_PROFILE_PRIM;
 	Atom result = fn(args, stack_top);
-	stack_base[result_slot] = result;
+	*args = result;
 	stack_top = stack_base + frame->top;
 	DISPATCH();
 }
@@ -426,7 +426,7 @@ JET_PRESERVE_NONE inline void prim_stub_typed(VM_OP_PARAMS)
 			return box(fn(args[Is] ...));
 		}
 	}(std::make_index_sequence<T::arity>{});
-	stack_base[result_slot] = result;
+	*args = result;
 	stack_top = stack_base + frame->top;
 	DISPATCH();
 }

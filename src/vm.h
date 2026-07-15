@@ -395,12 +395,12 @@ struct VmState
 };
 
 #define VM_OP_PARAMS                                                                                         \
-	VmState& s, Frame* frame, Code* pc, Atom* stack_top, Atom callee, Atom* args, size_t result_slot,        \
-	Atom* stack_base, size_t frame_base
+	VmState& s, Frame* frame, Code* pc, Atom* stack_top, Atom callee, Atom* args, Atom* stack_base,           \
+	Atom* frame_regs
 using VmOp = void (*)(VM_OP_PARAMS) JET_PRESERVE_NONE;
 static_assert(sizeof(VmOp) == VM_OP_SLOT_SIZE);
 
-#define VM_OP_ARGS s, frame, pc, stack_top, callee, args, result_slot, stack_base, frame_base
+#define VM_OP_ARGS s, frame, pc, stack_top, callee, args, stack_base, frame_regs
 
 JET_PRESERVE_NONE void field_ldfk_miss(VM_OP_PARAMS);
 JET_PRESERVE_NONE void field_stfk_miss(VM_OP_PARAMS);
