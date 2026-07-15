@@ -402,6 +402,9 @@ static_assert(sizeof(VmOp) == VM_OP_SLOT_SIZE);
 
 #define VM_OP_ARGS s, frame, pc, stack_top, callee, args, result_slot, stack_base, frame_base
 
+JET_PRESERVE_NONE void field_ldfk_miss(VM_OP_PARAMS);
+JET_PRESERVE_NONE void field_stfk_miss(VM_OP_PARAMS);
+
 void collect(VmState& s);
 
 struct ObjShape
@@ -410,6 +413,8 @@ struct ObjShape
 	VmOp stf_handler;
 	VmOp ldfk_handler;
 	VmOp stfk_handler;
+	VmOp resolved_ldfk_handler;
+	VmOp resolved_stfk_handler;
 	Atom (*slow_ref)(Atom, Atom);
 };
 

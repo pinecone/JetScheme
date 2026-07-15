@@ -267,6 +267,42 @@ JET_PRESERVE_NONE void struct_stf_handler(VM_OP_PARAMS)
 	DISPATCH();
 }
 
+template <auto Load>
+JET_PRESERVE_NONE void struct_resolved_ldfk_handler(VM_OP_PARAMS)
+{
+	OP_ldfk* op = reinterpret_cast<OP_ldfk*>(pc);
+	Atom object = stack_base[frame_base + op->obj];
+	if (!object.tag_is<jet_tag::struct_>() ||
+	    op->ic.ic_dispatch_key != reinterpret_cast<uint64_t>(unbox<Struct>(object)->type)) [[unlikely]]
+	{
+		JET_MUSTTAIL return field_ldfk_miss(VM_OP_ARGS);
+	}
+
+	Struct* instance = unbox<Struct>(object);
+	stack_base[frame_base + op->dst] = Load(instance, op->ic.ic_extra1);
+	pc += sizeof(*op);
+	JET_PROFILE_FIELD_DISPATCH(Opcode::ldfk, FieldReceiver::Struct, true);
+	DISPATCH();
+}
+
+template <auto Store>
+JET_PRESERVE_NONE void struct_resolved_stfk_handler(VM_OP_PARAMS)
+{
+	OP_stfk* op = reinterpret_cast<OP_stfk*>(pc);
+	Atom object = stack_base[frame_base + op->obj];
+	if (!object.tag_is<jet_tag::struct_>() ||
+	    op->ic.ic_dispatch_key != reinterpret_cast<uint64_t>(unbox<Struct>(object)->type)) [[unlikely]]
+	{
+		JET_MUSTTAIL return field_stfk_miss(VM_OP_ARGS);
+	}
+
+	Struct* instance = unbox<Struct>(object);
+	Store(instance, op->ic.ic_extra1, stack_base[frame_base + op->val]);
+	pc += sizeof(*op);
+	JET_PROFILE_FIELD_DISPATCH(Opcode::stfk, FieldReceiver::Struct, true);
+	DISPATCH();
+}
+
 template <auto Resolve, auto Load>
 JET_PRESERVE_NONE void struct_ldfk_handler(VM_OP_PARAMS)
 {
@@ -281,6 +317,8 @@ JET_PRESERVE_NONE void struct_ldfk_handler(VM_OP_PARAMS)
 	}
 	JET_PROFILE_FIELD_KEY_MISS();
 	ic->ic_extra1 = Resolve(instance, s.constants[op->key_idx]);
+	VmOp resolved = instance->type->ops().shape.resolved_ldfk_handler;
+	std::memcpy(reinterpret_cast<Code*>(op) - OPCODE_SIZE, &resolved, sizeof(resolved));
 	stack_base[frame_base + op->dst] = Load(instance, ic->ic_extra1);
 	DISPATCH();
 }
@@ -300,6 +338,8 @@ JET_PRESERVE_NONE void struct_stfk_handler(VM_OP_PARAMS)
 	}
 	JET_PROFILE_FIELD_KEY_MISS();
 	ic->ic_extra1 = Resolve(instance, s.constants[op->key_idx]);
+	VmOp resolved = instance->type->ops().shape.resolved_stfk_handler;
+	std::memcpy(reinterpret_cast<Code*>(op) - OPCODE_SIZE, &resolved, sizeof(resolved));
 	Store(instance, ic->ic_extra1, value);
 	DISPATCH();
 }

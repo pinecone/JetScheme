@@ -54,6 +54,23 @@
 ($check (= 101 (ref pp 'x)))
 ($check (= 9999 (ref pp2 'x)))
 
+;; A constant-key access site must recover when the receiver shape changes.
+(define alternate-point (struct 'alternate-point '(x z)))
+(define ap (alternate-point 300 400))
+(define (read-xs objects)
+  (if (null? objects)
+      '()
+      (cons (ref (car objects) 'x) (read-xs (cdr objects)))))
+($check (equal? '(101 300 9999) (read-xs (list pp ap pp2))))
+(define (write-xs! objects values)
+  (if (null? objects)
+      #t
+      (begin
+        (setf! (car objects) 'x (car values))
+        (write-xs! (cdr objects) (cdr values)))))
+(write-xs! (list pp ap pp2) '(11 22 33))
+($check (equal? '(11 22 33) (read-xs (list pp ap pp2))))
+
 ;; All field types are atoms — strings, lists, other structs all work.
 (define box-t (struct 'box '(label contents)))
 (define b (box-t "thing" (list 1 2 3)))

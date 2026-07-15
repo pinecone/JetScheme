@@ -668,19 +668,8 @@ template <typename T>
 JET_PRESERVE_NONE static void fast_ldf(VM_OP_PARAMS)
 {
 	OP_ldf* op = reinterpret_cast<OP_ldf*>(pc - sizeof(OP_ldf));
-	FieldIc* ic = &op->ic;
 	Atom key = stack_base[frame_base + op->key];
 	T& c = *unbox<T>(callee);
-
-	if (ic->ic_extra2 == key.bits) [[likely]]
-	{
-		if (size_t idx = ic->ic_extra1; idx < c.size()) [[likely]]
-		{
-			stack_base[frame_base + op->dst] = container_load(c, idx);
-			DISPATCH();
-		}
-	}
-	JET_PROFILE_FIELD_KEY_MISS();
 
 	if (!is_type<jet::Type::Number>(key)) [[unlikely]]
 	{
@@ -696,8 +685,6 @@ JET_PRESERVE_NONE static void fast_ldf(VM_OP_PARAMS)
 	{
 		JET_MUSTTAIL return die_ref_oob(VM_OP_ARGS);
 	}
-	ic->ic_extra1 = idx;
-	ic->ic_extra2 = key.bits;
 	stack_base[frame_base + op->dst] = container_load(c, idx);
 	DISPATCH();
 }
@@ -706,31 +693,23 @@ template <typename T>
 JET_PRESERVE_NONE static void fast_stf(VM_OP_PARAMS)
 {
 	OP_stf* op = reinterpret_cast<OP_stf*>(pc - sizeof(OP_stf));
-	FieldIc* ic = &op->ic;
 	Atom key = stack_base[frame_base + op->key];
 	Atom value = stack_base[frame_base + op->val];
 	T& c = *unbox<T>(callee);
-	size_t idx = ic->ic_extra1;
 
-	if (ic->ic_extra2 != key.bits || idx >= c.size()) [[unlikely]]
+	if (!is_type<jet::Type::Number>(key)) [[unlikely]]
 	{
-		JET_PROFILE_FIELD_KEY_MISS();
-		if (!is_type<jet::Type::Number>(key)) [[unlikely]]
-		{
-			JET_MUSTTAIL return die_set_bad_key(VM_OP_ARGS);
-		}
-		Number n = unbox<Number>(key);
-		if (!is_integer(n) || n < 0) [[unlikely]]
-		{
-			JET_MUSTTAIL return die_set_bad_key(VM_OP_ARGS);
-		}
-		idx = static_cast<size_t>(n);
-		if (idx >= c.size()) [[unlikely]]
-		{
-			JET_MUSTTAIL return die_set_oob(VM_OP_ARGS);
-		}
-		ic->ic_extra1 = idx;
-		ic->ic_extra2 = key.bits;
+		JET_MUSTTAIL return die_set_bad_key(VM_OP_ARGS);
+	}
+	Number n = unbox<Number>(key);
+	if (!is_integer(n) || n < 0) [[unlikely]]
+	{
+		JET_MUSTTAIL return die_set_bad_key(VM_OP_ARGS);
+	}
+	size_t idx = static_cast<size_t>(n);
+	if (idx >= c.size()) [[unlikely]]
+	{
+		JET_MUSTTAIL return die_set_oob(VM_OP_ARGS);
 	}
 	if (!container_store(c, idx, value)) [[unlikely]]
 	{
@@ -822,6 +801,8 @@ namespace
 				fast_stf<Vec>,
 				fast_ldfk<Vec>,
 				fast_stfk<Vec>,
+				nullptr,
+				nullptr,
 				vector_ref,
 			};
 			g_shape_by_tag[jet_tag::string] = {
@@ -829,6 +810,8 @@ namespace
 				fast_stf<String>,
 				fast_ldfk<String>,
 				fast_stfk<String>,
+				nullptr,
+				nullptr,
 				string_ref,
 			};
 			g_shape_by_tag[jet_tag::bytevector] = {
@@ -836,6 +819,8 @@ namespace
 				fast_stf<ByteVector>,
 				fast_ldfk<ByteVector>,
 				fast_stfk<ByteVector>,
+				nullptr,
+				nullptr,
 				bytevector_u8_ref,
 			};
 		}
@@ -945,10 +930,20 @@ static constexpr auto& op_ldf =
 	op_field_reg<OP_ldf, Opcode::ldf, field_install_ldf, FieldDispatchKind::Install>;
 static constexpr auto& op_stf =
 	op_field_reg<OP_stf, Opcode::stf, field_install_stf, FieldDispatchKind::Install>;
-static constexpr auto& op_ldfk =
-	op_field_reg<OP_ldfk, Opcode::ldfk, field_install_ldfk, FieldDispatchKind::Install>;
-static constexpr auto& op_stfk =
-	op_field_reg<OP_stfk, Opcode::stfk, field_install_stfk, FieldDispatchKind::Install>;
+JET_PRESERVE_NONE void field_ldfk_miss(VM_OP_PARAMS)
+{
+	JET_MUSTTAIL return op_field_reg<OP_ldfk, Opcode::ldfk, field_install_ldfk, FieldDispatchKind::Install>(
+		VM_OP_ARGS);
+}
+
+JET_PRESERVE_NONE void field_stfk_miss(VM_OP_PARAMS)
+{
+	JET_MUSTTAIL return op_field_reg<OP_stfk, Opcode::stfk, field_install_stfk, FieldDispatchKind::Install>(
+		VM_OP_ARGS);
+}
+
+static constexpr auto& op_ldfk = field_ldfk_miss;
+static constexpr auto& op_stfk = field_stfk_miss;
 
 JET_ALWAYS_INLINE static Atom sub_op(Atom a, Atom b)
 {
