@@ -284,6 +284,7 @@ struct Frame
 class FrameStack
 {
 public:
+	size_t size() const { return active_; }
 	bool can_push() const { return active_ < storage_.size(); }
 
 	Frame& push()
