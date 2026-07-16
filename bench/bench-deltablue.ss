@@ -1,3 +1,8 @@
+;; SPDX-License-Identifier: GPL-2.0-or-later
+;; Copyright 2008 the V8 project authors. All rights reserved.
+;; Copyright 1996 John Maloney and Mario Wolczko.
+;; This is a translated and modified version of the DeltaBlue benchmark.
+
 ;; deltablue: incremental constraint solver. Builds an equality chain plus
 ;; a network of scale/offset projections, repeatedly edits one endpoint and
 ;; propagates. Stresses dispatch, struct + list mutation, and worklist loops.

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Head-to-head jet benchmark vs lua and python for a single git ref.
+"""Head-to-head jet benchmark vs lua, python, and jsc for a single git ref.
 
 Builds the jet ref in a temp worktree, then for each bench runs jet against
-every comparand (lua, python) that has a sibling source file, interleaving the
+every available comparand (lua, python, jsc), interleaving the
 runs per iteration. Reports per-bench median time, ratio, and jet's
 wins/ties/losses with a one-sided binomial p-value, plus an overall geomean
 ratio per comparand. A bench whose comparand source is missing is skipped for
@@ -11,7 +11,8 @@ that comparand only; missing .ss is fatal.
 Usage:
     ./ab-cross [<ref>] [-n RUNS] [-b BENCH ...] [--keep]
 
-Set LUA or PYTHON to an empty string to disable that comparand.
+Set LUA, PYTHON, or JSC to an empty string to disable that comparand. Set
+JSC_VERSION when JSC does not point into Apple's JavaScriptCore framework.
 
 Examples:
     ./ab-cross                       # use HEAD
@@ -20,6 +21,7 @@ Examples:
 """
 import argparse
 import os
+import plistlib
 import shutil
 import statistics
 import subprocess
@@ -32,6 +34,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
 DEFAULT_BENCHES = sorted(p.stem for p in HERE.glob("bench-*.ss"))
+SYSTEM_JSC = Path("/System/Library/Frameworks/JavaScriptCore.framework/Versions/A/Helpers/jsc")
 
 
 def die(msg):
@@ -80,11 +83,6 @@ def time_run(cmd):
     return dt
 
 
-def compile_bench(bin, src, bc):
-    with bc.open("wb") as f:
-        run([str(bin), "compile", str(src)], stdout=f)
-
-
 def lua_version(lua):
     r = subprocess.run([lua, "-v"], capture_output=True, text=True)
     return (r.stderr.strip() or r.stdout.strip()).splitlines()[0]
@@ -93,6 +91,27 @@ def lua_version(lua):
 def python_version(py):
     r = subprocess.run([py, "-V"], capture_output=True, text=True)
     return (r.stdout.strip() or r.stderr.strip()).splitlines()[0]
+
+
+def jsc_version(jsc):
+    if "JSC_VERSION" in os.environ:
+        return os.environ["JSC_VERSION"] or "version unavailable"
+    path = Path(jsc).resolve()
+    framework = next((p for p in (path, *path.parents)
+                      if p.name == "JavaScriptCore.framework"), None)
+    if framework is None:
+        return "version unavailable"
+    plist = framework / "Resources" / "Info.plist"
+    try:
+        with plist.open("rb") as f:
+            info = plistlib.load(f)
+    except (OSError, plistlib.InvalidFileException):
+        return "version unavailable"
+    release = info.get("CFBundleShortVersionString")
+    build = info.get("CFBundleVersion")
+    if release and build and release != build:
+        return f"{release}, build {build}"
+    return str(release or build or "version unavailable")
 
 
 def sign_p(wins, n_decisive):
@@ -137,8 +156,14 @@ def main():
         py = os.environ["PYTHON"] or None
     else:
         py = shutil.which("python3") or shutil.which("python")
-    if lua is None and py is None:
-        die("no 'lua' or 'python3' on PATH (or LUA/PYTHON env)")
+    if "JSC" in os.environ:
+        jsc = os.environ["JSC"] or None
+    else:
+        jsc = shutil.which("jsc")
+        if jsc is None and SYSTEM_JSC.exists():
+            jsc = str(SYSTEM_JSC)
+    if lua is None and py is None and jsc is None:
+        die("no comparand found (or enabled with LUA/PYTHON/JSC env)")
 
     r = subprocess.run(["git", "rev-parse", "--verify", f"{args.ref}^{{commit}}"],
                        cwd=REPO, capture_output=True)
@@ -155,23 +180,24 @@ def main():
         print(f"  lua:    {lua}  ({lua_version(lua)})")
     if py:
         print(f"  python: {py}  ({python_version(py)})")
+    if jsc:
+        print(f"  jsc:    {jsc}  ({jsc_version(jsc)})")
     print(f"  runs:   {args.runs} per interpreter per bench, interleaved")
     print()
 
-    # Per bench: compile jet, record which comparand sources exist.
-    bcs = {}
+    sources_by_bench = {}
     for b in benches:
         ss_src = HERE / f"{b}.ss"
         if not ss_src.exists():
             die(f"missing scheme source: {ss_src}")
-        bc = tmp / f"{b}.bc"
-        compile_bench(bin_jet, ss_src, bc)
         sources = {}
         if lua and (HERE / f"{b}.lua").exists():
             sources["lua"] = HERE / f"{b}.lua"
         if py and (HERE / f"{b}.py").exists():
             sources["python"] = HERE / f"{b}.py"
-        bcs[b] = (bc, sources)
+        if jsc and (HERE / f"{b}.js").exists():
+            sources["jsc"] = HERE / f"{b}.js"
+        sources_by_bench[b] = (ss_src, sources)
 
     name_w = max(len(b) for b in benches)
     header = (f"  {'bench':<{name_w}}  {'vs':<6} {'jet(ms)':>9} {'rival(ms)':>10}  "
@@ -179,19 +205,21 @@ def main():
     print(header)
     print("  " + "-" * (len(header) - 2))
 
-    ratios_by_lang = {"lua": [], "python": []}
+    ratios_by_lang = {"lua": [], "python": [], "jsc": []}
     cmd_for = {
         "lua": lambda src: [lua, str(src)],
         "python": lambda src: [py, str(src)],
+        "jsc": lambda src: [jsc, "--useJIT=false", str(HERE / "run-jsc-benchmark.js"),
+                            "--", str(HERE / "js"), str(src), src.stem],
     }
 
     for b in benches:
-        bc, sources = bcs[b]
+        ss_src, sources = sources_by_bench[b]
         if not sources:
             print(f"  {b:<{name_w}}  (no comparand source)")
             continue
         for lang, src in sources.items():
-            cmd_jet = [str(bin_jet), "exec", str(bc)]
+            cmd_jet = [str(bin_jet), "run", str(ss_src)]
             cmd_rival = cmd_for[lang](src)
             # warmup
             time_run(cmd_jet)
