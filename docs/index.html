@@ -30,26 +30,28 @@
 
 <section id="benchmarks">
   <h2>Benchmarks</h2>
-<pre><code><span class="cmd">make</span> ab-cross-bench   <span class="c"># jet and rivals all built with -O2</span></code></pre>
+<pre><code><span class="cmd">git</span> checkout <a class="commit" href="https://github.com/pinecone/JetScheme/commit/f8d12df">f8d12df<span class="ext">↗</span></a>
+<span class="cmd">make</span> ab-cross-bench</code></pre>
 
   <div class="table-wrap">
     <table>
+      <caption>median runtime (ms)</caption>
       <thead>
-        <tr><th rowspan="2" class="hint">runtime in ms<br><a href="https://github.com/pinecone/JetScheme/commit/751f656">commit <span class="sha">751f656</span><span class="ext">↗</span></a></th><th colspan="3">🍎 MacBook Air (Apple M5)</th><th colspan="3" class="sep">🎮 Steam Deck OG (AMD Zen 2)</th></tr>
-        <tr><th>jet</th><th>lua5.5</th><th>python3.14</th><th class="sep">jet</th><th>lua5.5</th><th>python3.14</th></tr>
+        <tr><th rowspan="2" class="hint" aria-label="benchmark"></th><th colspan="4">🍎 MacBook Air (Apple M5)</th><th colspan="4" class="sep">🎮 Steam Deck OG (AMD Zen 2)</th></tr>
+        <tr><th>jet</th><th>lua5.5</th><th>python3.14</th><th title="JavaScriptCore build 22625.1.22.11.4, LLInt">jsc/llint</th><th class="sep">jet</th><th>lua5.5</th><th>python3.14</th><th title="JavaScriptCore 2.52.3, LLInt">jsc/llint</th></tr>
       </thead>
       <tbody>
-        <tr><td>astar</td><td>50</td><td>69</td><td>154</td><td class="sep">150</td><td>214</td><td>451</td></tr>
-        <tr><td>cdjs</td><td>53</td><td>113</td><td>162</td><td class="sep">130</td><td>322</td><td>351</td></tr>
-        <tr><td>deltablue</td><td>70</td><td>139</td><td>233</td><td class="sep">193</td><td>550</td><td>555</td></tr>
-        <tr><td>json</td><td>79</td><td>146</td><td>148</td><td class="sep">220</td><td>399</td><td>313</td></tr>
-        <tr><td>nbody</td><td>164</td><td>370</td><td>601</td><td class="sep">355</td><td>895</td><td>1293</td></tr>
-        <tr><td>raytrace</td><td>152</td><td>533</td><td>509</td><td class="sep">528</td><td>1489</td><td>1298</td></tr>
-        <tr><td>richards</td><td>53</td><td>127</td><td>195</td><td class="sep">139</td><td>287</td><td>400</td></tr>
-        <tr><td>splay</td><td>24</td><td>45</td><td>40</td><td class="sep">56</td><td>129</td><td>68</td></tr>
+        <tr><td>astar</td><td>53</td><td>68</td><td>154</td><td>79</td><td class="sep">160</td><td>215</td><td>448</td><td>274</td></tr>
+        <tr><td>cdjs</td><td>55</td><td>112</td><td>161</td><td>95</td><td class="sep">136</td><td>323</td><td>352</td><td>305</td></tr>
+        <tr><td>deltablue</td><td>72</td><td>139</td><td>232</td><td>246</td><td class="sep">198</td><td>552</td><td>556</td><td>812</td></tr>
+        <tr><td>json</td><td>80</td><td>146</td><td>148</td><td>325</td><td class="sep">224</td><td>396</td><td>312</td><td>1141</td></tr>
+        <tr><td>nbody</td><td>165</td><td>373</td><td>598</td><td>410</td><td class="sep">356</td><td>897</td><td>1296</td><td>1171</td></tr>
+        <tr><td>raytrace</td><td>155</td><td>534</td><td>511</td><td>622</td><td class="sep">535</td><td>1481</td><td>1295</td><td>2535</td></tr>
+        <tr><td>richards</td><td>54</td><td>127</td><td>196</td><td>116</td><td class="sep">144</td><td>285</td><td>401</td><td>375</td></tr>
+        <tr><td>splay</td><td>25</td><td>45</td><td>40</td><td>24</td><td class="sep">58</td><td>128</td><td>67</td><td>93</td></tr>
       </tbody>
       <tfoot>
-        <tr><th>overall jet is…</th><td></td><td><span>2.11×</span> faster</td><td><span>2.85×</span> faster</td><td class="sep"></td><td><span>2.23×</span> faster</td><td><span>2.38×</span> faster</td></tr>
+        <tr><th>overall jet is…</th><td></td><td><span>2.04×</span> faster</td><td><span>2.76×</span> faster</td><td><span>2.27×</span> faster</td><td class="sep"></td><td><span>2.16×</span> faster</td><td><span>2.31×</span> faster</td><td><span>2.92×</span> faster</td></tr>
       </tfoot>
     </table>
   </div>

@@ -308,6 +308,15 @@ pre code .s   { color: var(--green); }
 pre code .ch  { color: var(--green); }
 pre code .cmd { color: var(--blue); }
 
+pre code a.commit { border-bottom: 0; }
+
+pre code a.commit .ext {
+  margin-left: 0.15em;
+  vertical-align: 0.03em;
+  font-size: 0.85em;
+  color: var(--fg-muted);
+}
+
 /* Tables */
 .table-wrap {
   overflow-x: auto;
@@ -317,14 +326,22 @@ pre code .cmd { color: var(--blue); }
 table {
   border-collapse: collapse;
   width: 100%;
-  font-size: var(--fs-base);
+  min-width: 48rem;
+  font-size: var(--fs-small);
+}
+
+table caption {
+  color: var(--fg-muted);
+  text-align: left;
+  padding: 0 var(--sp-2) var(--sp-2);
+  font-size: var(--fs-small);
 }
 
 thead th {
   color: var(--cyan-pale);
   font-weight: 600;
   text-align: left;
-  padding: var(--sp-2) var(--sp-4);
+  padding: var(--sp-2);
   border-bottom: 1px solid var(--bg-highlight);
   font-size: var(--fs-small);
   letter-spacing: 0.02em;
@@ -337,24 +354,8 @@ thead th.hint {
 
 thead tr:nth-child(2) th { width: 12%; }
 
-thead th.hint a {
-  display: block;
-  text-align: left;
-  font-size: var(--fs-micro);
-  border-bottom: 0;
-}
-
-thead th.hint a .sha { font-family: var(--font-mono); }
-
-thead th.hint a .ext {
-  margin-left: 0.15em;
-  vertical-align: 0.03em;
-  font-size: 0.85em;
-  color: var(--fg-muted);
-}
-
 tbody td {
-  padding: var(--sp-2) var(--sp-4);
+  padding: var(--sp-2);
   color: var(--fg-dark);
 }
 
@@ -380,7 +381,7 @@ p.caption {
 tbody tr:hover td { background: rgba(122,162,247,0.04); }
 
 tfoot th, tfoot td {
-  padding: var(--sp-2) var(--sp-4);
+  padding: var(--sp-2);
   border-top: 1px solid var(--bg-highlight);
   font-size: var(--fs-small);
 }
