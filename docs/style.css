@@ -352,7 +352,12 @@ thead th.hint {
   font-weight: 400;
 }
 
-thead tr:nth-child(2) th { width: 12%; }
+thead tr:first-child th:not(.hint) { text-align: center; }
+
+thead tr:nth-child(2) th {
+  width: 12%;
+  text-align: center;
+}
 
 tbody td {
   padding: var(--sp-2);
@@ -367,6 +372,7 @@ tbody td:first-child {
 tbody td:nth-child(n+2) {
   font-family: var(--font-mono);
   color: var(--green);
+  text-align: center;
 }
 
 th.sep, td.sep { border-left: 1px solid var(--bg-highlight); }
@@ -395,7 +401,10 @@ tfoot th {
   letter-spacing: 0.02em;
 }
 
-tfoot td { color: var(--green); }
+tfoot td {
+  color: var(--green);
+  text-align: center;
+}
 
 /* Footer */
 footer {
