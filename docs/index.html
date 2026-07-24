@@ -9,6 +9,13 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700&family=Poiret+One&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
+<script
+  type="module"
+  blocking="render"
+  src="https://cdn.jsdelivr.net/npm/justif@0.5.1/dist/auto.js"
+  integrity="sha384-DnIhwLwkHYcy1EkiE+4CmcVwlrGwWNxXiqxBt8n0HgxG23S897N5gJrH1OdjdX3R"
+  crossorigin="anonymous"
+></script>
 </head>
 <body>
 <main>
@@ -60,14 +67,115 @@
 <section id="docs">
   <h2>Docs</h2>
 
-  <h3>Language</h3>
-  <p>The language tracks R7RS-small with the following deviations:</p>
-  <p><strong>No numeric tower; all numbers are just 64-bit doubles.</strong> <code>exact?</code> and <code>integer?</code> are <code>#t</code> for integral doubles.
-  <p><strong>Strings and characters are byte-level.</strong> Storage is UTF-8; <code>string-length</code>, <code>string-ref</code>, <code>string-set!</code>, <code>char-&gt;integer</code> are byte-indexed. Bytewise compare gives correct codepoint order on valid UTF-8. Char predicates, <code>char-upcase</code>/<code>-downcase</code>, <code>string-upcase</code>/<code>-downcase</code> are ASCII-only.</p>
+  <p>Everything on this page is included: the standard library is plain
+  Scheme (<code>lib/prelude.ss</code>, auto-loaded at startup), and the rest is
+  built into the VM.</p>
 
-  <h3>SRFI</h3>
-  <p><strong>SRFI 1.</strong> <code>first</code>, <code>second</code>, <code>third</code>, <code>fourth</code>, <code>fifth</code>, <code>take</code>, <code>drop</code>, <code>last</code>, <code>concatenate</code>, <code>fold</code>, <code>fold-right</code>, <code>reduce-right</code>, <code>filter</code>.</p>
-  <p><strong>SRFI 60.</strong> <code>bitwise-and</code>, <code>bitwise-ior</code>, <code>bitwise-xor</code>, <code>bitwise-not</code>, <code>arithmetic-shift</code>. Operate on integral doubles.</p>
+  <h3>The language</h3>
+  <p>JetScheme is a compact dialect of Scheme in the R7RS-small tradition:
+  lexical scope, first-class functions, and proper tail calls, so deep tail
+  recursion doesn't grow the stack. The forms are <code>quote</code>,
+  <code>define</code>, <code>lambda</code>, <code>if</code>, <code>begin</code>,
+  <code>let</code>, <code>let*</code>, <code>letrec</code>, <code>letrec*</code>
+  (plus named <code>let</code>), <code>set!</code>, <code>and</code>,
+  <code>or</code>, <code>cond</code> with <code>else</code>, <code>when</code>,
+  <code>unless</code>, and <code>include</code>, which includes another
+  source file. <code>apply</code> covers calls whose argument list isn't known
+  until runtime. Macros, quasiquote, and continuations aren't implemented
+  yet.</p>
+<pre><code>(<span class="k">define</span> (<span class="b">make-counter</span>)
+  (<span class="k">let</span> ((n <span class="n">0</span>))
+    (<span class="k">lambda</span> ()
+      (<span class="k">set!</span> n (+ n <span class="n">1</span>))
+      n)))
+
+(<span class="k">define</span> a (<span class="b">make-counter</span>))
+(<span class="k">define</span> b (<span class="b">make-counter</span>))
+
+(<span class="b">displayn</span> (<span class="b">list</span> (a) (a) (b)))   <span class="c">; prints (1 2 1) — b kept its own n</span></code></pre>
+  <p><strong>All numbers are 64-bit doubles.</strong> There's no exact/inexact split; <code>exact?</code> and
+  <code>integer?</code> are <code>#t</code> for integral doubles.
+  <strong>Strings and characters are byte-level UTF-8.</strong>
+  <code>string-length</code>, <code>string-ref</code>, and
+  <code>string-set!</code> are byte-indexed; bytewise comparison still yields
+  correct codepoint order on valid UTF-8. Case conversion and character
+  classes are ASCII-only.</p>
+
+  <h3>Numbers</h3>
+  <p><code>+</code> <code>-</code> <code>*</code> <code>/</code>,
+  <code>quotient</code>, <code>remainder</code>, <code>modulo</code>,
+  <code>abs</code>, <code>square</code>, <code>expt</code>, <code>sqrt</code>,
+  <code>exp</code>, <code>log</code>, <code>sin</code>, <code>cos</code>,
+  <code>tan</code>, <code>asin</code>, <code>acos</code>, <code>atan</code>,
+  <code>floor</code>, <code>ceiling</code>, <code>truncate</code>,
+  <code>round</code>, <code>min</code>, <code>max</code>, and
+  <code>random</code>, which takes no arguments (<code>random-seed</code>
+  reseeds it from the OS).</p>
+  <p>Comparisons <code>=</code> <code>&lt;</code> <code>&lt;=</code>
+  <code>&gt;</code> <code>&gt;=</code> and predicates <code>zero?</code>,
+  <code>positive?</code>, <code>negative?</code>, <code>even?</code>,
+  <code>odd?</code>, <code>number?</code>. Convert with
+  <code>number-&gt;string</code> and <code>string-&gt;number</code>.
+  <strong>Bitwise ops</strong> — <code>bitwise-and</code>,
+  <code>bitwise-ior</code>, <code>bitwise-xor</code>, <code>bitwise-not</code>,
+  <code>arithmetic-shift</code> — operate on integral doubles.</p>
+
+  <h3>Pairs &amp; lists</h3>
+  <p><code>cons</code>, <code>car</code>, <code>cdr</code>,
+  <code>set-car!</code>, <code>set-cdr!</code>, <code>pair?</code>,
+  <code>null?</code>, <code>list</code>, <code>list?</code>, the
+  <code>caar</code>&hellip;<code>cddddr</code> combinations, and the named
+  accessors <code>first</code> through <code>fifth</code> and
+  <code>rest</code>.</p>
+  <p>List operations: <code>length</code>, <code>append</code>,
+  <code>reverse</code>, <code>take</code>, <code>drop</code>,
+  <code>last</code>, <code>concatenate</code>, <code>map</code>,
+  <code>for-each</code>, <code>filter</code>, <code>fold</code>,
+  <code>fold-right</code>, <code>reduce-right</code>, and the association-list
+  lookups <code>assq</code>, <code>assv</code>, <code>assoc</code>.</p>
+<pre><code>(<span class="k">define</span> (<span class="b">sum</span> xs)
+  (<span class="k">let</span> loop ((xs xs) (total <span class="n">0</span>))     <span class="c">; named let — loops via tail call</span>
+    (<span class="k">if</span> (<span class="b">null?</span> xs)
+        total
+        (loop (<span class="b">cdr</span> xs) (+ total (<span class="b">car</span> xs))))))
+
+(<span class="b">displayn</span> (<span class="b">sum</span> '(<span class="n">1</span> <span class="n">2</span> <span class="n">3</span> <span class="n">4</span> <span class="n">5</span>)))               <span class="c">; prints 15</span></code></pre>
+
+  <h3>Strings &amp; characters</h3>
+  <p><code>string</code>, <code>make-string</code>, <code>string-append</code>,
+  <code>substring</code>, <code>string-copy</code>, <code>string-copy!</code>,
+  <code>string-fill!</code>, <code>string-length</code>; indexing and mutation
+  go through the generic <code>ref</code> / <code>setf!</code> described below.
+  Comparisons come in case-sensitive (<code>string=?</code>,
+  <code>string&lt;?</code>, &hellip;) and case-insensitive
+  (<code>string-ci=?</code>, &hellip;) variants. Beyond comparisons there
+  are <code>string-upcase</code>, <code>string-downcase</code>,
+  <code>string-for-each</code>, <code>string-map</code>, and conversions
+  between strings, lists, and vectors (<code>string-&gt;list</code>,
+  <code>list-&gt;string</code>, <code>string-&gt;vector</code>,
+  <code>vector-&gt;string</code>).</p>
+  <p>Characters: <code>char-&gt;integer</code>, <code>integer-&gt;char</code>,
+  comparisons (<code>char=?</code>, <code>char-ci=?</code>, &hellip;),
+  predicates <code>char-alphabetic?</code>,
+  <code>char-numeric?</code>, <code>char-whitespace?</code>,
+  <code>char-upper-case?</code>, <code>char-lower-case?</code>, plus
+  <code>char-upcase</code>, <code>char-downcase</code>, and
+  <code>digit-value</code>. Named literals: <code>#\space</code>,
+  <code>#\newline</code>, <code>#\tab</code>, <code>#\return</code>,
+  <code>#\null</code>, <code>#\escape</code>, <code>#\backspace</code>,
+  <code>#\delete</code>.</p>
+
+  <h3>Vectors &amp; bytevectors</h3>
+  <p><code>vector</code>, <code>make-vector</code>, <code>vector?</code>,
+  <code>vector-length</code>; <code>bytevector</code>, <code>make-bytevector</code>,
+  <code>bytevector?</code>, <code>bytevector-length</code>,
+  <code>bytevector-copy</code>, <code>bytevector-copy!</code>,
+  <code>bytevector-append</code>. Both are read and written
+  through <code>ref</code> / <code>setf!</code>;
+  <code>vector-ref</code>, <code>vector-set!</code>,
+  <code>bytevector-u8-ref</code>, and <code>bytevector-u8-set!</code> are
+  also available.</p>
+
   <h3>Structs</h3>
   <p><strong><code>struct</code>, <code>isa?</code>.</strong> Each <code>(struct ...)</code> call yields a distinct type, even when invoked twice with the same name and field list.</p>
 <pre><code>(<span class="k">define</span> <span class="b">point</span> (<span class="b">struct</span> '<span class="n">point</span> '(<span class="n">x</span> <span class="n">y</span>)))            <span class="c">; create a fresh type</span>
@@ -75,27 +183,68 @@
 (<span class="b">isa?</span> p <span class="b">point</span>)                                   <span class="c">; =&gt; #t</span>
 (<span class="b">ref</span> p '<span class="n">x</span>)                                       <span class="c">; =&gt; 3</span>
 (<span class="k">setf!</span> p '<span class="n">x</span> <span class="n">10</span>)                                  <span class="c">; mutate field</span></code></pre>
+
   <h3>Tuples</h3>
   <p><strong><code>tuple</code>.</strong> Constructs an immutable, fixed-size tuple. Tuples use value-based
   <code>equal?</code>, identity-based <code>eq?</code>, and numeric <code>ref</code> access.</p>
 <pre><code>(<span class="k">define</span> t (<span class="b">tuple</span> '<span class="n">a</span> '<span class="n">b</span> '<span class="n">c</span>))
 (<span class="b">isa?</span> t <span class="b">tuple</span>)                                   <span class="c">; =&gt; #t</span>
 (<span class="b">ref</span> t <span class="n">1</span>)                                        <span class="c">; =&gt; b</span></code></pre>
-  <h3>Generic ops</h3>
+
+  <h3>Generic access</h3>
   <p><code>(ref v i)</code> is a polymorphic accessor. It works on vectors, strings, and tuples (integer index) and
   ordinary structs (symbol field name).</p>
   <p><code>(setf! v i x)</code> stores <code>x</code> at key <code>i</code> in <code>v</code>:</p>
 <pre><code>(<span class="k">setf!</span> v <span class="n">3</span> '<span class="n">x</span>)                                   <span class="c">; vector-set!</span>
 (<span class="k">setf!</span> s <span class="n">0</span> <span class="ch">#\H</span>)                                  <span class="c">; string-set!</span>
 (<span class="k">setf!</span> pt '<span class="n">x</span> <span class="n">99</span>)                                 <span class="c">; struct field mutation</span></code></pre>
-  <h3>OS env</h3>
-  <p><strong><code>argv</code>.</strong> Vector of strings holding the script's command-line arguments (excluding the binary and script path).</p>
-  <p><code>$JET_PRELUDE/lib/prelude.ss</code> is the bundled prelude, auto-loaded unless <code>--no-prelude</code> is given.</p>
+
+  <h3>Equality &amp; symbols</h3>
+  <p><code>eq?</code> compares identity, <code>eqv?</code> identity-or-number,
+  and <code>equal?</code> compares structures recursively. There are also
+  type-specific predicates <code>boolean=?</code>, <code>symbol=?</code>,
+  and <code>string=?</code>. Symbols convert with
+  <code>symbol-&gt;string</code> and <code>string-&gt;symbol</code>;
+  <code>symbol?</code> and <code>procedure?</code> test for symbols and
+  procedures.</p>
+
+  <h3>I/O &amp; files</h3>
+  <p><code>display</code> prints human-readable and <code>write</code> prints
+  machine-readable, both to stdout; <code>newline</code> prints a newline,
+  and <code>displayn</code> is <code>display</code> followed by a newline.
+  <code>read</code> parses one datum at a time from an input port:</p>
+<pre><code>(<span class="k">define</span> p (<span class="b">open-input-file</span> <span class="s">"data.ss"</span>))
+(<span class="k">define</span> a (<span class="b">read</span> p))                                <span class="c">; first datum</span>
+(<span class="k">define</span> b (<span class="b">read</span> p))                                <span class="c">; second datum</span>
+(<span class="b">close-input-port</span> p)</code></pre>
+  <p>For character-level file work there are <code>open-input-file</code>,
+  <code>open-output-file</code>, <code>read-char</code>, <code>write-char</code>,
+  <code>close-input-port</code>, <code>close-output-port</code>, plus the
+  predicates <code>input-port?</code>, <code>output-port?</code>, and
+  <code>eof-object?</code>.</p>
+
+  <h3>Running programs</h3>
+  <p><code>argv</code> is a vector of the script's command-line arguments, with
+  the binary and script path already stripped; <code>exit</code> ends the
+  process. The prelude auto-loads from <code>$JET_PRELUDE/lib/prelude.ss</code>
+  — set <code>JET_PRELUDE</code> to use a different one, or pass
+  <code>--no-prelude</code> to skip it.</p>
+  <p>Besides <code>jet run</code> (or just <code>jet file.ss</code>) the binary
+  provides <code>jet compile</code> (source → bytecode on stdout),
+  <code>jet exec</code> (run pre-compiled bytecode), and <code>jet
+  disasm</code> (disassemble source or bytecode).
+  <code>--no-inline</code>, <code>--no-lift-lambdas</code>, and
+  <code>--no-specialize-ops</code> switch off individual optimizations; debug
+  builds add <code>--trace</code> for an opcode-by-opcode execution trace.</p>
+  <p>The compiler also understands <code>($check expr)</code>: if
+  <code>expr</code> is false it reports the source position and fails.
+  <code>$file</code>, <code>$line</code>, and <code>$col</code> expose that
+  position directly.</p>
 </section>
 
 <section id="optimizations">
   <h2>Impl</h2>
-  <p><strong>JetScheme</strong> leans heavily on techniques described in:</p>
+  <p><strong>JetScheme</strong> is built on techniques described in:</p>
   <ul>
     <li><strong>Tail-threaded dispatch</strong> <a class="cite" href="https://dl.acm.org/doi/10.1145/362248.362270">(Bell, 1973)</a> — each opcode is its own small function; each function ends by tail-calling the next opcode's function directly. There's no central dispatch loop and no callee-save spills between opcodes; hot VM state stays in registers across the whole run.</li>
     <li><strong>Inline caching</strong> <a class="cite" href="https://dl.acm.org/doi/10.1145/800017.800542">(Deutsch &amp; Schiffman, 1984)</a> — on the first time through a call site, the slow path patches the opcode in place to point at a specialized fast version of itself. Subsequent passes through the same site skip the lookup, key compare, and type check entirely.</li>

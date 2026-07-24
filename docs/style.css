@@ -30,10 +30,7 @@
 /* Tokyo Night (night variant) palette + JetScheme tokens */
 :root {
   color-scheme: dark;
-  --bg-darkest:     #0c0e14;
-  --bg-dark:        #16161e;
   --bg:             #030314;
-  --bg-line:        #1e202e;
   --bg-highlight:   #292e42;
 
   --fg:             #c0caf5;
@@ -43,19 +40,16 @@
 
   --comment:        #565f89;
 
-  --red:            #f7768e;
   --orange:         #ff9e64;
   --green:          #9ece6a;
-  --teal:           #73daca;
   --cyan:           #7dcfff;
   --cyan-pale:      #89ddff;
   --blue:           #7aa2f7;
   --magenta:        #bb9af7;
   --magenta-hot:    #ff007c;
 
-  --h1: #9cdbfb;
   --h2: #bb9af7;
-  --h3: #9ece6a;
+  --h3: var(--cyan-pale);
 
   --font-sans:    -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro", system-ui, ui-sans-serif, "Segoe UI", sans-serif;
   --font-display: "Poiret One", ui-sans-serif, system-ui, sans-serif;
@@ -128,6 +122,7 @@ h2 {
   text-transform: uppercase;
   letter-spacing: 0.10em;
   margin: var(--sp-7) 0 var(--sp-4) 0;
+  text-shadow: 0 0 14px rgba(187, 154, 247, 0.35);
 }
 
 h3 {
@@ -150,11 +145,14 @@ h3 {
   margin: 0;
   font-family: var(--font-display);
   font-size: var(--fs-title);
-  color: var(--green);
+  color: #ffe1f2; /* lit neon core */
   text-transform: none;
   letter-spacing: 0.02em;
   font-weight: 400;
-  -webkit-text-stroke: 0.5px var(--green);
+  text-shadow:
+    0 0 6px  color-mix(in srgb, var(--magenta-hot) 85%, transparent),
+    0 0 18px color-mix(in srgb, var(--magenta-hot) 50%, transparent),
+    0 0 48px color-mix(in srgb, var(--magenta-hot) 35%, transparent);
 }
 
 #benchmarks h2 {
@@ -223,11 +221,6 @@ a.cite {
 }
 a.cite:hover { color: var(--fg-dark); border-bottom-color: var(--fg-muted); }
 
-.cs {
-  color: var(--h1);
-  font-weight: 700;
-}
-
 ul, ol {
   list-style: none;
   padding: 0;
@@ -237,25 +230,28 @@ ul, ol {
 
 li {
   position: relative;
-  padding-left: 1.5rem;
   margin: 0 0 var(--sp-2) 0;
 }
 
+/* Markers hang in the gutter so the text's left edge stays flush.
+   Anchored with right:100% + margin-right so the gap to the text is
+   constant regardless of how wide the marker glyph is (emoji widths
+   vary across platforms). */
 li::before {
   content: "▸";
   color: var(--blue);
   position: absolute;
-  left: 0;
+  right: 100%;
   top: 0;
+  margin-right: 0.5rem;
 }
 
 #optimizations li::before {
   content: "💡";
-  filter: drop-shadow(0 0 4px rgba(255, 235, 60, 0.85));
-}
-
-#benchmarks li::before {
-  content: "📐";
+  font-size: 0.9em;
+  /* optically center the bulb on the first text line */
+  top: 0.2em;
+  filter: drop-shadow(0 0 3px rgba(255, 235, 60, 0.85));
 }
 
 /* Links */
@@ -420,4 +416,5 @@ footer {
 @media (max-width: 560px) {
   main { padding: var(--sp-6) 1.1rem var(--sp-7); }
   pre { font-size: var(--fs-micro); padding: var(--sp-3); }
+  li::before { margin-right: 0.2rem; }
 }
