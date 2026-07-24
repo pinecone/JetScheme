@@ -51,7 +51,7 @@
   --h2: #bb9af7;
   --h3: var(--cyan-pale);
 
-  --font-sans:    -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro", system-ui, ui-sans-serif, "Segoe UI", sans-serif;
+  --font-sans:    "IBM Plex Sans", "Manrope", -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro", system-ui, ui-sans-serif, "Segoe UI", sans-serif;
   --font-display: "Poiret One", ui-sans-serif, system-ui, sans-serif;
   --font-heading: "Manrope", ui-sans-serif, system-ui, sans-serif;
   --font-mono:    "0xProto", ui-monospace, "SFMono-Regular", "Menlo", "Consolas", monospace;
@@ -80,13 +80,18 @@
 
 * { box-sizing: border-box; }
 
+/* 106.25% = 17px at the default root size, and scales with the
+   user's browser font-size preference (a px value would override it). */
+html {
+  font-size: 106.25%;
+}
+
 html, body {
   margin: 0;
   padding: 0;
   background: var(--bg);
   color: var(--fg);
   font-family: var(--font-sans);
-  font-size: 15px;
   line-height: 1.65;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -98,7 +103,7 @@ body {
 }
 
 main {
-  max-width: 53.75rem;
+  max-width: 51rem; /* the 48rem benchmark table plus side padding */
   margin: 0 auto;
   padding: var(--sp-6) var(--sp-5) var(--sp-8);
 }
