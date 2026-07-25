@@ -880,12 +880,6 @@ Atom string_ref(Atom s, Atom k)
 	return box(static_cast<Character>(static_cast<uint8_t>(string[index])));
 }
 
-static Atom string_set(Atom s, Atom k, Atom c)
-{
-	(*slow_unbox<String>(s))[string_index(s, k, "string-set!")] = static_cast<char>(slow_unbox<Character>(c));
-	return Atom{};
-}
-
 static Atom substring(Atom* first, Atom* last)
 {
 	String& s = *slow_unbox<String>(first[0]);
@@ -905,32 +899,6 @@ static Atom string_copy(Atom* first, Atom* last)
 	JET_DIE_UNLESS(start <= end && end <= n, "string-copy: bad range [%zu, %zu) for length %zu", start, end,
 	               n);
 	return box(s.substr(start, end - start));
-}
-
-static Atom string_copy_bang(Atom* first, Atom* last)
-{
-	JET_DIE_UNLESS(last - first >= 3, "string-copy! expects at least 3 arguments");
-	String& dst = *slow_unbox<String>(first[0]);
-	size_t at = static_cast<size_t>(slow_unbox<Number>(first[1]));
-	String& src = *slow_unbox<String>(first[2]);
-	size_t n = src.size();
-	size_t s_start = last - first >= 4 ? static_cast<size_t>(slow_unbox<Number>(first[3])) : 0;
-	size_t s_end = last - first >= 5 ? static_cast<size_t>(slow_unbox<Number>(first[4])) : n;
-	JET_DIE_UNLESS(s_start <= s_end && s_end <= n, "string-copy!: bad source range");
-	JET_DIE_UNLESS(at + (s_end - s_start) <= dst.size(), "string-copy!: destination too small");
-	dst.replace(at, s_end - s_start, src, s_start, s_end - s_start);
-	return Atom{};
-}
-
-static Atom string_fill_bang(Atom* first, Atom* last)
-{
-	String& s = *slow_unbox<String>(first[0]);
-	char c = static_cast<char>(slow_unbox<Character>(first[1]));
-	size_t start = last - first >= 3 ? static_cast<size_t>(slow_unbox<Number>(first[2])) : 0;
-	size_t end = last - first >= 4 ? static_cast<size_t>(slow_unbox<Number>(first[3])) : s.size();
-	JET_DIE_UNLESS(start <= end && end <= s.size(), "string-fill!: bad range");
-	std::fill(s.begin() + start, s.begin() + end, c);
-	return Atom{};
 }
 
 template <typename Op>
@@ -1090,11 +1058,8 @@ void init_strings(Env& e)
 	e.bind("string", make_prim<string_ctor>(n_ary()));
 	e.bind("string-length", make_prim<string_length>());
 	e.bind("string-ref", make_prim<string_ref>());
-	e.bind("string-set!", make_prim<string_set>());
 	e.bind("substring", make_prim<substring>(at_least(1)));
 	e.bind("string-copy", make_prim<string_copy>(at_least(1)));
-	e.bind("string-copy!", make_prim<string_copy_bang>(at_least(3)));
-	e.bind("string-fill!", make_prim<string_fill_bang>(at_least(2)));
 	e.bind("string=?", make_prim<string_folding_pred<std::equal_to<String>>>(at_least(2)));
 	e.bind("string<?", make_prim<string_folding_pred<std::less<String>>>(at_least(2)));
 	e.bind("string<=?", make_prim<string_folding_pred<std::less_equal<String>>>(at_least(2)));

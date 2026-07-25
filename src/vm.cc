@@ -613,6 +613,11 @@ JET_NOINLINE JET_PRESERVE_NONE static void die_set_bad_value(VM_OP_PARAMS)
 	JET_DIE("set!/ref: incompatible value type for receiver");
 }
 
+JET_NOINLINE JET_PRESERVE_NONE static void die_set_string_immutable(VM_OP_PARAMS)
+{
+	JET_DIE("set!/ref: strings are immutable");
+}
+
 template <typename T>
 static Atom container_load(T& c, size_t i)
 {
@@ -633,15 +638,7 @@ static Atom container_load(T& c, size_t i)
 template <typename T>
 JET_ALWAYS_INLINE static bool container_store(T& c, size_t i, Atom value)
 {
-	if constexpr (std::is_same_v<T, String>)
-	{
-		if (!is_type<jet::Type::Character>(value)) [[unlikely]]
-		{
-			return false;
-		}
-		c[i] = static_cast<char>(unbox<Character>(value));
-	}
-	else if constexpr (std::is_same_v<T, ByteVector>)
+	if constexpr (std::is_same_v<T, ByteVector>)
 	{
 		if (!is_type<jet::Type::Number>(value)) [[unlikely]]
 		{
@@ -807,9 +804,9 @@ namespace
 			};
 			g_shape_by_tag[jet_tag::string] = {
 				fast_ldf<String>,
-				fast_stf<String>,
+				die_set_string_immutable,
 				fast_ldfk<String>,
-				fast_stfk<String>,
+				die_set_string_immutable,
 				nullptr,
 				nullptr,
 				string_ref,

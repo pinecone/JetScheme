@@ -223,11 +223,8 @@
 (define string (%prim "string"))
 (define string-length (%prim "string-length"))
 (define (string-ref s i) (ref s i))
-(define (string-set! s i c) (setf! s i c))
 (define substring (%prim "substring"))
 (define string-copy (%prim "string-copy"))
-(define string-copy! (%prim "string-copy!"))
-(define string-fill! (%prim "string-fill!"))
 (define string=? (%prim "string=?"))
 (define string<? (%prim "string<?"))
 (define string<=? (%prim "string<=?"))
@@ -246,20 +243,6 @@
 (define vector->string (%prim "vector->string"))
 (define string->number (%prim "string->number"))
 (define number->string (%prim "number->string"))
-
-(define (string-for-each f s)
-  (let ((n (string-length s)))
-    (let loop ((i 0))
-      (if (< i n)
-          (begin (f (string-ref s i)) (loop (+ i 1)))))))
-
-(define (string-map f s)
-  (let ((n (string-length s)))
-    (let ((out (make-string n)))
-      (let loop ((i 0))
-        (if (< i n)
-            (begin (string-set! out i (f (string-ref s i))) (loop (+ i 1)))
-            out)))))
 
 ;;; characters
 (define char? (%prim "char?"))

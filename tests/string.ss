@@ -24,29 +24,12 @@
 ($check (string=? "abc" (string #\a #\b #\c)))
 ($check (string=? "" (string)))
 
-;; mutation
-(define m (make-string 3 #\x))
-(string-set! m 1 #\y)
-($check (string=? m "xyx"))
-
-(define f (make-string 5 #\.))
-(string-fill! f #\!)
-($check (string=? f "!!!!!"))
-(string-fill! f #\? 1 4)
-($check (string=? f "!???!"))
-
 ;; copy
 ($check (string=? "ell" (substring "hello" 1 4)))
 ($check (string=? "hello" (substring "hello" 0)))
 ($check (string=? "lo" (substring "hello" 3)))
 ($check (string=? "hello" (string-copy "hello")))
 ($check (string=? "ell" (string-copy "hello" 1 4)))
-
-(define dst (make-string 5 #\.))
-(string-copy! dst 1 "abc")
-($check (string=? dst ".abc."))
-(string-copy! dst 0 "xyzzy" 2 4)
-($check (string=? dst "zzbc."))
 
 ;; comparison
 ($check (string=? "abc" "abc"))
@@ -87,13 +70,6 @@
 ($check (string=? "-3.5" (number->string -3.5)))
 ($check (string=? "ff" (number->string 255 16)))
 ($check (string=? "1000" (number->string 8 2)))
-
-;; iter (prelude-side)
-(define seen 0)
-(string-for-each (lambda (c) (set! seen (+ seen (char->integer c)))) "abc")
-($check (= (+ 97 98 99) seen))
-
-($check (string=? "ABC" (string-map char-upcase "abc")))
 
 ;; Display and string values
 (define black_things '("soot" "licorice" "midnight" "some chalkboards"
