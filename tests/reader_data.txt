@@ -35,5 +35,7 @@ set!
 '#(1 2)
 #('a 'b)
 (((((deep)))))
+(a . b)
+#u8(1 2 3)
 ;; trailing comment then atom
    99

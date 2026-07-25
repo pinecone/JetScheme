@@ -580,6 +580,7 @@ namespace
 		int line = 1;
 		int col = 1;
 		bool in_quote = false;
+		int quote_depth = 0;
 		bool read_mode = false;
 		std::vector<Token> tokens{};
 		Token pending_{};
@@ -589,6 +590,12 @@ namespace
 		TokenKind classify_token_text(std::string_view text)
 		{
 			return (in_quote || read_mode) ? TokenKind::Variable : classify_ident(text);
+		}
+
+		static bool is_quoted_atom(TokenKind k)
+		{
+			return k == TokenKind::Number || k == TokenKind::String || k == TokenKind::Boolean ||
+			       k == TokenKind::Character || k == TokenKind::Variable;
 		}
 
 		bool at_end() { return port->eof(); }
@@ -881,13 +888,11 @@ namespace
 
 				case ')':
 					advance();
-					in_quote = false;
 					emit(TokenKind::RParen, intern(std::string{c}), l);
 					break;
 
 				case '\'':
 					advance();
-					in_quote = true;
 					emit(TokenKind::Quote, intern(std::string{c}), l);
 					break;
 
@@ -914,14 +919,43 @@ namespace
 
 				default:
 					lex_number_or_ident();
-					// Quote mode wraps a single Variable token; for lists, in_quote exits via ')'.
-					if (in_quote && pending_.kind == TokenKind::Variable)
+					break;
+			}
+
+			// Quote mode spans exactly one datum; inside it, keywords lex as Variable.
+			switch (pending_.kind)
+			{
+				case TokenKind::Quote:
+				case TokenKind::QuoteWord:
+					if (!in_quote)
+					{
+						quote_depth = 0;
+					}
+					in_quote = true;
+					break;
+
+				case TokenKind::LParen:
+					if (in_quote)
+					{
+						++quote_depth;
+					}
+					break;
+
+				case TokenKind::RParen:
+					if (in_quote)
+					{
+						JET_DIE_UNLESS(quote_depth > 0, "%d:%d: unexpected ')' in quoted datum", l.line, l.col);
+						in_quote = --quote_depth > 0;
+					}
+					break;
+
+				default:
+					if (in_quote && quote_depth == 0 && is_quoted_atom(pending_.kind))
 					{
 						in_quote = false;
 					}
 					break;
 			}
-
 			return pending_;
 		}
 

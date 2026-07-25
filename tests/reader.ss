@@ -121,6 +121,12 @@
 (define deep (read p))
 ($check (eq? 'deep (car (car (car (car (car deep)))))))
 
+;; dotted pair and bytevector
+($check (equal? '(a . b) (read p)))
+(define dbv (read p))
+($check (= 3 (bytevector-length dbv)))
+($check (= 2 (ref dbv 1)))
+
 ;; trailing whitespace and comments still yield atom
 ($check (= 99 (read p)))
 
