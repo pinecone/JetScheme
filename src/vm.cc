@@ -1504,6 +1504,7 @@ void eval(VmState& vm, Frame& init_frame, Atom* constants, size_t n_constants, s
 	vm.frames.push({halt_buf, nullptr, 0, initial_stack_size});
 	vm.frames.push(init_frame);
 
+	JET_PROFILE_BEGIN();
 	Frame* frame = &vm.frames.back();
 	Code* pc = frame->code;
 	Atom* stack_top = vm.stack_top;

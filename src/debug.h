@@ -6,6 +6,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <ctime>
+#include <vector>
 
 #ifdef JET_DEBUG
 #  include <cstdio>
@@ -88,6 +90,9 @@ struct Profile
 	uint64_t prim_calls;
 	uint64_t gc_collections;
 	uint64_t gc_ticks;
+	std::vector<uint64_t> gc_pauses;
+	uint64_t start_ticks;
+	uint64_t start_ns;
 	uint64_t last_stamp;
 	uint8_t last_op;
 	uint8_t pending_field_op;
@@ -102,6 +107,13 @@ extern Profile g_profile;
 constexpr size_t field_outcome(bool receiver_miss, bool key_miss)
 {
 	return (receiver_miss ? 2 : 0) + (key_miss ? 1 : 0);
+}
+
+inline uint64_t profile_wall_ns()
+{
+	timespec ts;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return static_cast<uint64_t>(ts.tv_sec) * 1000000000ULL + static_cast<uint64_t>(ts.tv_nsec);
 }
 
 inline uint64_t profile_ticks()
@@ -178,12 +190,19 @@ struct ProfileGcTimer
 	{
 		uint64_t d = profile_ticks() - t0;
 		g_profile.gc_ticks += d;
+		g_profile.gc_pauses.push_back(d);
 		// Excludes the collection from the charge to the opcode that
 		// triggered it.
 		g_profile.last_stamp += d;
 	}
 };
 #define JET_PROFILE_GC_TIMER ProfileGcTimer _jet_gc_timer{}
+#define JET_PROFILE_BEGIN()                                                                                 \
+	do                                                                                                       \
+	{                                                                                                        \
+		g_profile.start_ticks = profile_ticks();                                                               \
+		g_profile.start_ns = profile_wall_ns();                                                                \
+	} while (0)
 
 void profile_print();
 
@@ -197,6 +216,7 @@ void profile_print();
 #define JET_PROFILE_FIELD_DISPATCH(op, kind, hit) ((void)0)
 #define JET_PROFILE_FIELD_KEY_MISS() ((void)0)
 #define JET_PROFILE_GC_TIMER ((void)0)
+#define JET_PROFILE_BEGIN() ((void)0)
 
 inline void profile_print() {}
 
