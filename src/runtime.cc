@@ -322,9 +322,36 @@ static Atom vector_set(Atom v, Atom idx, Atom val)
 	return val;
 }
 
+static Atom vector_push(Atom v, Atom val)
+{
+	slow_unbox<Vec>(v)->push_back(val);
+	return val;
+}
+
+static Atom vector_pop(Atom v)
+{
+	Vec& mv = *slow_unbox<Vec>(v);
+	JET_DIE_WHEN(mv.empty(), "vector-pop!: vector is empty");
+	Atom last = mv.back();
+	mv.pop_back();
+	return last;
+}
+
+static Atom vector_pop_first(Atom v)
+{
+	Vec& mv = *slow_unbox<Vec>(v);
+	JET_DIE_WHEN(mv.empty(), "vector-pop-first!: vector is empty");
+	Atom first = mv.front();
+	mv.erase(mv.begin());
+	return first;
+}
+
 void init_vecs(Env& e)
 {
 	e.bind("vector?", make_prim<is_type<jet::Type::Vector>>());
+	e.bind("vector-push!", make_prim<vector_push>());
+	e.bind("vector-pop!", make_prim<vector_pop>());
+	e.bind("vector-pop-first!", make_prim<vector_pop_first>());
 	e.bind("vector-length", make_prim<vector_length>());
 	e.bind("vector-ref", make_prim<vector_ref>());
 	e.bind("vector-set!", make_prim<vector_set>());

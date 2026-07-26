@@ -59,3 +59,18 @@
 
 ;; locally shadowed `ref`: the let-bound function wins, not the builtin.
 ($check (= 42 (let ((ref (lambda (v i) 42))) (ref rv 0))))
+
+;; growable vectors: push!, pop!, pop-first!
+(define gv (vector 1 2 3))
+($check (= 4 (vector-push! gv 4)))
+($check (= 4 (vector-length gv)))
+($check (= 4 (ref gv 3)))
+($check (= 4 (vector-pop! gv)))
+($check (= 1 (vector-pop-first! gv)))
+($check (= 2 (vector-length gv)))
+($check (= 2 (ref gv 0)))
+($check (= 3 (ref gv 1)))
+(define gv2 (make-vector 0 #f))
+(vector-push! gv2 'a)
+($check (eq? 'a (vector-pop-first! gv2)))
+($check (= 0 (vector-length gv2)))

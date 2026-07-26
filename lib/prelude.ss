@@ -196,6 +196,9 @@
 (define (vector-set! v i x) (setf! v i x))
 (define vector-length (%prim "vector-length"))
 (define vector? (%prim "vector?"))
+(define vector-push! (%prim "vector-push!"))
+(define vector-pop! (%prim "vector-pop!"))
+(define vector-pop-first! (%prim "vector-pop-first!"))
 
 ;;; bytevectors
 (define bytevector (%prim "bytevector"))
