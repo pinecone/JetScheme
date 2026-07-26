@@ -247,9 +247,9 @@ void Gc::sweep()
 	}
 	objects_end = out;
 
-	size_t live = objects_end - objects;
+	size_t next = HEAP_GROWTH_FACTOR * (objects_end - objects);
 	alloc_since_gc = 0;
-	gc_threshold = live < 256 ? 256 : static_cast<uint32_t>(live);
+	gc_threshold = next < MIN_GC_THRESHOLD ? MIN_GC_THRESHOLD : static_cast<uint32_t>(next);
 }
 
 void collect(VmState& s)

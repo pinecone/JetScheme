@@ -107,6 +107,11 @@ struct Gc
 	static constexpr size_t BITMAP_WORDS = TOTAL_CELLS / 64;
 	static constexpr size_t N_BUCKETS = 256;
 
+	// Allocations permitted per live object before the next collection. GC work per
+	// allocation falls as 1 + 2/k, while the arena high-water mark grows as (1+k)*live.
+	static constexpr size_t HEAP_GROWTH_FACTOR = 4;
+	static constexpr uint32_t MIN_GC_THRESHOLD = 256;
+
 	char* arena_base;
 	size_t bump_cells = 0;
 	ObjEntry* objects = nullptr;
