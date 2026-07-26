@@ -12,6 +12,8 @@
 #include <string>
 #include <string_view>
 #include <type_traits>
+#include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -85,6 +87,8 @@ enum class StructKind : uint8_t
 {
 	Scheme,
 	Tuple,
+	HashSet,
+	HashMap,
 };
 
 struct StructOps
@@ -179,10 +183,14 @@ struct SchemeStruct : Struct
 
 struct Tuple : Struct
 {
+	static constexpr uint32_t hash_unset = 0;
+	static constexpr uint32_t hash_illegal = 1;
+
 	uint32_t size;
+	uint32_t hash;
 	Atom elements[];
 
-	Tuple(StructType* type, uint32_t size_) : Struct{type}, size{size_} {}
+	Tuple(StructType* type, uint32_t size_) : Struct{type}, size{size_}, hash{hash_unset} {}
 
 	static Tuple* alloc(StructType* type, uint32_t size)
 	{
@@ -203,6 +211,81 @@ struct Tuple : Struct
 
 	Tuple(const Tuple&) = delete;
 	Tuple& operator=(const Tuple&) = delete;
+};
+
+static_assert(sizeof(Tuple) == 16);
+
+bool is_eqv(Atom a, Atom b);
+
+inline bool is_eq(Atom a, Atom b)
+{
+	return a.bits == b.bits;
+}
+
+// Hashing a value and proving it a legal key are one walk, so the verdict travels with the key.
+struct TableKey
+{
+	Atom atom;
+	uint64_t hash;
+};
+
+struct KeyHash
+{
+	size_t operator()(const TableKey& key) const { return key.hash; }
+};
+
+struct KeyEqual
+{
+	bool operator()(const TableKey& first, const TableKey& second) const;
+};
+
+struct HashSet : Struct
+{
+	std::unordered_set<TableKey, KeyHash, KeyEqual> items;
+
+	explicit HashSet(StructType* type) : Struct{type} {}
+
+	static HashSet* alloc(StructType* type)
+	{
+		void* mem = g_gc->alloc(sizeof(HashSet), jet_tag::struct_, type->destructor_id());
+		return new (mem) HashSet{type};
+	}
+
+	void trace(Gc& gc)
+	{
+		for (const TableKey& item : items)
+		{
+			gc.mark_atom(item.atom.bits);
+		}
+	}
+
+	HashSet(const HashSet&) = delete;
+	HashSet& operator=(const HashSet&) = delete;
+};
+
+struct HashMap : Struct
+{
+	std::unordered_map<TableKey, Atom, KeyHash, KeyEqual> entries;
+
+	explicit HashMap(StructType* type) : Struct{type} {}
+
+	static HashMap* alloc(StructType* type)
+	{
+		void* mem = g_gc->alloc(sizeof(HashMap), jet_tag::struct_, type->destructor_id());
+		return new (mem) HashMap{type};
+	}
+
+	void trace(Gc& gc)
+	{
+		for (const std::pair<const TableKey, Atom>& entry : entries)
+		{
+			gc.mark_atom(entry.first.atom.bits);
+			gc.mark_atom(entry.second.bits);
+		}
+	}
+
+	HashMap(const HashMap&) = delete;
+	HashMap& operator=(const HashMap&) = delete;
 };
 
 inline bool operator==(Struct& a, Struct& b)
@@ -576,13 +659,6 @@ bool compare_objects(Atom obj1, Atom obj2)
 	{
 		return a == b;
 	}
-}
-
-bool is_eqv(Atom a, Atom b);
-
-inline bool is_eq(Atom a, Atom b)
-{
-	return a.bits == b.bits;
 }
 
 void init_equivalence(Env& e);

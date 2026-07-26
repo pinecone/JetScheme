@@ -270,5 +270,11 @@
 (define isa? (%prim "isa?"))
 (define tuple (%prim "make-tuple"))
 
+;;; hash tables
+(define hashset (%prim "hashset"))
+(define hashmap (%prim "hashmap"))
+(define hashset? (%prim "hashset?"))
+(define hashmap? (%prim "hashmap?"))
+
 ;;; test harness
 (define %check (%prim "%check"))

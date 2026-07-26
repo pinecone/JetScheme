@@ -210,6 +210,12 @@ void Gc::mark_object(void* ptr, int tag)
 				case StructKind::Tuple:
 					static_cast<Tuple*>(s)->trace(*this);
 					break;
+				case StructKind::HashSet:
+					static_cast<HashSet*>(s)->trace(*this);
+					break;
+				case StructKind::HashMap:
+					static_cast<HashMap*>(s)->trace(*this);
+					break;
 			}
 			break;
 		}

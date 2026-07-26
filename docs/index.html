@@ -92,13 +92,29 @@
 (<span class="k">define</span> a (<span class="b">make-counter</span>))
 (<span class="k">define</span> b (<span class="b">make-counter</span>))
 
-(<span class="b">displayn</span> (<span class="b">list</span> (a) (a) (b)))   <span class="c">; prints (1 2 1) — b kept its own n</span></code></pre>
+(<span class="b">displayn</span> (<span class="b">list</span> (a) (a) (b)))                    <span class="c">; prints (1 2 1) — b kept its own n</span></code></pre>
   <p><strong>All numbers are 64-bit doubles.</strong> There's no exact/inexact split; <code>exact?</code> and
   <code>integer?</code> are <code>#t</code> for integral doubles.
   <strong>Strings are immutable and byte-level UTF-8.</strong>
   <code>string-length</code> and <code>string-ref</code> are byte-indexed;
   bytewise comparison still yields correct codepoint order on valid UTF-8.
   Case conversion and character classes are ASCII-only.</p>
+  <p><strong><code>ref</code> and <code>setf!</code> are generic accessors.</strong>
+  <code>(ref v i)</code> is a polymorphic read: it works on vectors, strings, bytevectors, and
+  tuples (integer index), ordinary structs (symbol field name), and hashsets and hashmaps (any legal
+  key). <code>(setf! v i x)</code> stores <code>x</code> at key <code>i</code> in <code>v</code>:</p>
+<pre><code>(<span class="k">define</span> v (<span class="b">vector</span> <span class="n">10</span> <span class="n">20</span> <span class="n">30</span>))
+(<span class="b">ref</span> v <span class="n">0</span>)                                        <span class="c">; =&gt; 10   (vector-ref)</span>
+(<span class="k">setf!</span> v <span class="n">0</span> <span class="n">99</span>)                                   <span class="c">; vector-set!</span>
+(<span class="b">ref</span> v <span class="n">0</span>)                                        <span class="c">; =&gt; 99</span>
+
+(<span class="k">define</span> pt (<span class="b">point</span> <span class="n">3</span> <span class="n">4</span>))                          <span class="c">; a struct (see below)</span>
+(<span class="b">ref</span> pt '<span class="n">x</span>)                                      <span class="c">; =&gt; 3    (struct field read)</span>
+(<span class="k">setf!</span> pt '<span class="n">x</span> <span class="n">10</span>)                                 <span class="c">; struct field mutation</span>
+
+(<span class="k">define</span> m (<span class="b">hashmap</span> '<span class="n">a</span> <span class="n">1</span>))                        <span class="c">; a hashmap (see below)</span>
+(<span class="k">setf!</span> m '<span class="n">b</span> <span class="n">2</span>)                                   <span class="c">; insert or overwrite</span>
+(<span class="b">ref</span> m '<span class="n">b</span>)                                       <span class="c">; =&gt; 2    (any legal key)</span></code></pre>
 
   <h3>Numbers</h3>
   <p><code>+</code> <code>-</code> <code>*</code> <code>/</code>,
@@ -133,18 +149,18 @@
   <code>fold-right</code>, <code>reduce-right</code>, and the association-list
   lookups <code>assq</code>, <code>assv</code>, <code>assoc</code>.</p>
 <pre><code>(<span class="k">define</span> (<span class="b">sum</span> xs)
-  (<span class="k">let</span> loop ((xs xs) (total <span class="n">0</span>))     <span class="c">; named let — loops via tail call</span>
+  (<span class="k">let</span> loop ((xs xs) (total <span class="n">0</span>))                  <span class="c">; named let — loops via tail call</span>
     (<span class="k">if</span> (<span class="b">null?</span> xs)
         total
         (loop (<span class="b">cdr</span> xs) (+ total (<span class="b">car</span> xs))))))
 
-(<span class="b">displayn</span> (<span class="b">sum</span> '(<span class="n">1</span> <span class="n">2</span> <span class="n">3</span> <span class="n">4</span> <span class="n">5</span>)))               <span class="c">; prints 15</span></code></pre>
+(<span class="b">displayn</span> (<span class="b">sum</span> '(<span class="n">1</span> <span class="n">2</span> <span class="n">3</span> <span class="n">4</span> <span class="n">5</span>)))                    <span class="c">; prints 15</span></code></pre>
 
   <h3>Strings &amp; characters</h3>
   <p><code>string</code>, <code>make-string</code>, <code>string-append</code>,
   <code>substring</code>, <code>string-copy</code>,
   <code>string-length</code>; indexing goes through the generic
-  <code>ref</code> described below.
+  <code>ref</code> described above.
   Comparisons come in case-sensitive (<code>string=?</code>,
   <code>string&lt;?</code>, &hellip;) and case-insensitive
   (<code>string-ci=?</code>, &hellip;) variants. Beyond comparisons there
@@ -189,14 +205,6 @@
 (<span class="b">isa?</span> t <span class="b">tuple</span>)                                   <span class="c">; =&gt; #t</span>
 (<span class="b">ref</span> t <span class="n">1</span>)                                        <span class="c">; =&gt; b</span></code></pre>
 
-  <h3>Generic access</h3>
-  <p><code>(ref v i)</code> is a polymorphic accessor. It works on vectors, strings, bytevectors, and tuples
-  (integer index) and ordinary structs (symbol field name).</p>
-  <p><code>(setf! v i x)</code> stores <code>x</code> at key <code>i</code> in <code>v</code>:</p>
-<pre><code>(<span class="k">setf!</span> v <span class="n">3</span> '<span class="n">x</span>)                                   <span class="c">; vector-set!</span>
-(<span class="k">setf!</span> bv <span class="n">0</span> <span class="n">72</span>)                                  <span class="c">; bytevector-u8-set!</span>
-(<span class="k">setf!</span> pt '<span class="n">x</span> <span class="n">99</span>)                                 <span class="c">; struct field mutation</span></code></pre>
-
   <h3>Equality &amp; symbols</h3>
   <p><code>eq?</code> compares identity, <code>eqv?</code> identity-or-number,
   and <code>equal?</code> compares structures recursively. There are also
@@ -205,6 +213,24 @@
   <code>symbol-&gt;string</code> and <code>string-&gt;symbol</code>;
   <code>symbol?</code> and <code>procedure?</code> test for symbols and
   procedures.</p>
+<pre><code>(<span class="b">eq?</span> '<span class="n">a</span> '<span class="n">a</span>)                                      <span class="c">; =&gt; #t   same symbol</span>
+(<span class="b">eq?</span> (<span class="b">string-&gt;symbol</span> <span class="s">"a"</span>) '<span class="n">a</span>)                    <span class="c">; =&gt; #t   same symbol from a string</span>
+(<span class="b">eqv?</span> <span class="n">2</span> <span class="n">2</span>)                                       <span class="c">; =&gt; #t   numbers compare by value</span>
+(<span class="b">equal?</span> '(<span class="n">1</span> <span class="n">2</span>) '(<span class="n">1</span> <span class="n">2</span>))                           <span class="c">; =&gt; #t   same contents</span>
+(<span class="b">eq?</span> '(<span class="n">1</span> <span class="n">2</span>) '(<span class="n">1</span> <span class="n">2</span>))                              <span class="c">; =&gt; #f   different pairs</span></code></pre>
+
+  <h3>Hash tables & Sets</h3>
+  <p><strong><code>hashset</code>, <code>hashmap</code>, <code>hashset?</code>, <code>hashmap?</code>.</strong>
+  Both are read and written through <code>ref</code> / <code>setf!</code>. <code>ref</code> on a hashset answers
+  membership; <code>ref</code> on a hashmap raises an error when the key is absent. A hashset element can only be
+  set to <code>#t</code>.</p>
+<pre><code>(<span class="k">define</span> m (<span class="b">hashmap</span> '<span class="n">a</span> <span class="n">1</span> '<span class="n">b</span> <span class="n">2</span>))
+(<span class="b">ref</span> m '<span class="n">a</span>)                                       <span class="c">; =&gt; 1</span>
+(<span class="k">setf!</span> m '<span class="n">c</span> <span class="n">3</span>)                                   <span class="c">; insert or overwrite</span>
+(<span class="b">ref</span> (<span class="b">hashset</span> '<span class="n">a</span>) '<span class="n">b</span>)                            <span class="c">; =&gt; #f</span></code></pre>
+  <p><strong>Keys are immutable.</strong> Legal keys are numbers, booleans, characters, the empty list, the eof object, symbols, strings, and tuples whose
+  elements are themselves legal keys. Everything mutable or reachable from something mutable — pairs, vectors,
+  bytevectors, structs, procedures, ports, and the tables themselves — is rejected with a runtime error. During construction duplicate keys collapse, and the last value wins.</p>
 
   <h3>I/O &amp; files</h3>
   <p><code>display</code> prints human-readable and <code>write</code> prints

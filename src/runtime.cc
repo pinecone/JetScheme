@@ -514,7 +514,21 @@ struct EqualContext
 		}
 	};
 
+	enum class Cycles : uint8_t
+	{
+		No,
+		Maybe,
+	};
+
 	std::unordered_set<EqualPair, EqualPairHash> seen;
+	Cycles cycles;
+
+	explicit EqualContext(Cycles cycles_) : cycles{cycles_} {}
+
+	bool first_visit(Atom a, Atom b)
+	{
+		return cycles == Cycles::No || seen.insert({a.bits, b.bits}).second;
+	}
 
 	bool compare(Atom a, Atom b)
 	{
@@ -529,7 +543,7 @@ struct EqualContext
 		switch (a.type())
 		{
 			case jet::Type::Pair:
-				if (!seen.insert({a.bits, b.bits}).second)
+				if (!first_visit(a, b))
 				{
 					return true;
 				}
@@ -542,7 +556,7 @@ struct EqualContext
 				{
 					return false;
 				}
-				if (!seen.insert({a.bits, b.bits}).second)
+				if (!first_visit(a, b))
 				{
 					return true;
 				}
@@ -567,7 +581,7 @@ struct EqualContext
 				{
 					return false;
 				}
-				if (!seen.insert({a.bits, b.bits}).second)
+				if (!first_visit(a, b))
 				{
 					return true;
 				}
@@ -584,10 +598,21 @@ static bool equal_recur(EqualContext& context, Atom first, Atom second)
 	return context.compare(first, second);
 }
 
+static bool is_equal(Atom first, Atom second, EqualContext::Cycles cycles)
+{
+	EqualContext context{cycles};
+	return context.compare(first, second);
+}
+
+bool KeyEqual::operator()(const TableKey& first, const TableKey& second) const
+{
+	return first.hash == second.hash &&
+	       is_equal(first.atom, second.atom, EqualContext::Cycles::No);
+}
+
 static Atom equal_prim(Atom* first, Atom*)
 {
-	EqualContext context;
-	return box(context.compare(first[0], first[1]));
+	return box(is_equal(first[0], first[1], EqualContext::Cycles::Maybe));
 }
 
 static bool boolean_eq(Atom a, Atom b)
@@ -1546,11 +1571,358 @@ static Atom isa(Atom value, Atom type)
 	return box(unbox<Struct>(value)->type == unbox<StructType>(type));
 }
 
+static uint64_t mix64(uint64_t x)
+{
+	x ^= x >> 33;
+	x *= 0xff51afd7ed558ccdULL;
+	x ^= x >> 33;
+	x *= 0xc4ceb9fe1a85ec53ULL;
+	x ^= x >> 33;
+	return x;
+}
+
+static uint64_t combine_hash(uint64_t accumulator, uint64_t value)
+{
+	return mix64(accumulator ^ (value + 0x9e3779b97f4a7c15ULL + (accumulator << 6) + (accumulator >> 2)));
+}
+
+static bool key_hash_try(Atom key, uint64_t& out, Atom& culprit);
+
+static bool tuple_hash32(Tuple* tuple, uint32_t& out, Atom& culprit)
+{
+	if (tuple->hash == Tuple::hash_illegal) [[unlikely]]
+	{
+		culprit = Atom::make_tagged(jet_tag::struct_, tuple);
+		return false;
+	}
+	if (tuple->hash != Tuple::hash_unset)
+	{
+		out = tuple->hash;
+		return true;
+	}
+	uint64_t accumulator = mix64(tuple->size + 1);
+	for (uint32_t i = 0; i < tuple->size; ++i)
+	{
+		uint64_t element;
+		if (!key_hash_try(tuple->elements[i], element, culprit)) [[unlikely]]
+		{
+			tuple->hash = Tuple::hash_illegal;
+			return false;
+		}
+		accumulator = combine_hash(accumulator, element);
+	}
+	uint32_t folded = static_cast<uint32_t>(accumulator ^ (accumulator >> 32));
+	tuple->hash = folded < 2 ? folded + 2 : folded;
+	out = tuple->hash;
+	return true;
+}
+
+static bool key_hash_try(Atom key, uint64_t& out, Atom& culprit)
+{
+	// mix64 is a bijection, so equal inputs mean equal hashes. Different key types can otherwise
+	// feed it the same small integer: libc++'s std::hash maps the empty string to 0, which is also
+	// number 0.0's bit pattern; tuple folds and subnormal-double bits both live in the low integer
+	// range. The string +1 and the tuple's bit 32 keep those domains apart.
+	switch (key.type())
+	{
+		case jet::Type::Number:
+		{
+			double value = key.as_double();
+			if (std::isnan(value)) [[unlikely]]
+			{
+				culprit = key;
+				return false;
+			}
+			out = mix64(Atom::from_double(value == 0.0 ? 0.0 : value).bits);
+			return true;
+		}
+		case jet::Type::Boolean:
+		case jet::Type::Character:
+		case jet::Type::EmptyList:
+		case jet::Type::Eof:
+		case jet::Type::Symbol:
+			out = mix64(key.bits);
+			return true;
+		case jet::Type::String:
+			out = mix64(std::hash<std::string_view>{}(*unbox<String>(key)) + 1);
+			return true;
+		case jet::Type::Struct:
+		{
+			Struct* instance = unbox<Struct>(key);
+			if (instance->type->kind() != StructKind::Tuple)
+			{
+				culprit = key;
+				return false;
+			}
+			uint32_t folded;
+			if (!tuple_hash32(static_cast<Tuple*>(instance), folded, culprit))
+			{
+				return false;
+			}
+			out = mix64(static_cast<uint64_t>(folded) | (1ULL << 32));
+			return true;
+		}
+		default:
+			culprit = key;
+			return false;
+	}
+}
+
+[[noreturn]] static void die_illegal_key(Atom culprit)
+{
+	if (is_type<jet::Type::Number>(culprit))
+	{
+		JET_DIE("hash key cannot be NaN");
+	}
+	if (is_type<jet::Type::Struct>(culprit))
+	{
+		StructType* type = unbox<Struct>(culprit)->type;
+		if (type->kind() == StructKind::Tuple)
+		{
+			JET_DIE("hash key tuple holds a value of a type that cannot be a key");
+		}
+		JET_DIE("value of type %s cannot be a hash key",
+		        symbol_to_string(unbox<Symbol>(type->name())).c_str());
+	}
+	JET_DIE("value of type %s cannot be a hash key", type_name(culprit.type()).data());
+}
+
+static TableKey make_key(Atom key)
+{
+	uint64_t hash;
+	Atom culprit;
+	if (!key_hash_try(key, hash, culprit)) [[unlikely]]
+	{
+		die_illegal_key(culprit);
+	}
+	return {key, hash};
+}
+
+static Atom hashset_lookup(Struct* instance, Atom key)
+{
+	HashSet* set = static_cast<HashSet*>(instance);
+	return box(set->items.find(make_key(key)) != set->items.end());
+}
+
+static Atom hashmap_lookup(Struct* instance, Atom key)
+{
+	HashMap* map = static_cast<HashMap*>(instance);
+	auto it = map->entries.find(make_key(key));
+	JET_DIE_WHEN(it == map->entries.end(), "ref: key not found in hashmap");
+	return it->second;
+}
+
+static void hashset_insert(Struct* instance, Atom key, Atom value)
+{
+	JET_DIE_UNLESS(value.bits == box(true).bits, "setf!: a hashset element can only be set to #t");
+	static_cast<HashSet*>(instance)->items.insert(make_key(key));
+}
+
+static void hashmap_insert(Struct* instance, Atom key, Atom value)
+{
+	static_cast<HashMap*>(instance)->entries.insert_or_assign(make_key(key), value);
+}
+
+template <auto Lookup>
+static Atom table_ref(Atom object, Atom key)
+{
+	return Lookup(unbox<Struct>(object), key);
+}
+
+template <auto Lookup>
+JET_PRESERVE_NONE static void table_ldf_handler(VM_OP_PARAMS)
+{
+	OP_ldf* op = reinterpret_cast<OP_ldf*>(pc - sizeof(OP_ldf));
+	frame_regs[op->dst] = Lookup(unbox<Struct>(callee), frame_regs[op->key]);
+	DISPATCH();
+}
+
+template <auto Store>
+JET_PRESERVE_NONE static void table_stf_handler(VM_OP_PARAMS)
+{
+	OP_stf* op = reinterpret_cast<OP_stf*>(pc - sizeof(OP_stf));
+	Store(unbox<Struct>(callee), frame_regs[op->key], frame_regs[op->val]);
+	DISPATCH();
+}
+
+template <auto Lookup>
+JET_PRESERVE_NONE static void table_resolved_ldfk_handler(VM_OP_PARAMS)
+{
+	OP_ldfk* op = reinterpret_cast<OP_ldfk*>(pc);
+	Atom object = frame_regs[op->obj];
+	if (!object.tag_is<jet_tag::struct_>() ||
+	    op->ic.ic_dispatch_key != reinterpret_cast<uint64_t>(unbox<Struct>(object)->type)) [[unlikely]]
+	{
+		JET_MUSTTAIL return field_ldfk_miss(VM_OP_ARGS);
+	}
+	frame_regs[op->dst] = Lookup(unbox<Struct>(object), s.constants[op->key_idx]);
+	pc += sizeof(*op);
+	JET_PROFILE_FIELD_DISPATCH(Opcode::ldfk, FieldReceiver::Struct, true);
+	DISPATCH();
+}
+
+template <auto Store>
+JET_PRESERVE_NONE static void table_resolved_stfk_handler(VM_OP_PARAMS)
+{
+	OP_stfk* op = reinterpret_cast<OP_stfk*>(pc);
+	Atom object = frame_regs[op->obj];
+	if (!object.tag_is<jet_tag::struct_>() ||
+	    op->ic.ic_dispatch_key != reinterpret_cast<uint64_t>(unbox<Struct>(object)->type)) [[unlikely]]
+	{
+		JET_MUSTTAIL return field_stfk_miss(VM_OP_ARGS);
+	}
+	Store(unbox<Struct>(object), s.constants[op->key_idx], frame_regs[op->val]);
+	pc += sizeof(*op);
+	JET_PROFILE_FIELD_DISPATCH(Opcode::stfk, FieldReceiver::Struct, true);
+	DISPATCH();
+}
+
+template <auto Lookup>
+JET_PRESERVE_NONE static void table_ldfk_handler(VM_OP_PARAMS)
+{
+	OP_ldfk* op = reinterpret_cast<OP_ldfk*>(pc - sizeof(OP_ldfk));
+	Struct* instance = unbox<Struct>(callee);
+	VmOp resolved = instance->type->ops().shape.resolved_ldfk_handler;
+	std::memcpy(reinterpret_cast<Code*>(op) - OPCODE_SIZE, &resolved, sizeof(resolved));
+	frame_regs[op->dst] = Lookup(instance, s.constants[op->key_idx]);
+	DISPATCH();
+}
+
+template <auto Store>
+JET_PRESERVE_NONE static void table_stfk_handler(VM_OP_PARAMS)
+{
+	OP_stfk* op = reinterpret_cast<OP_stfk*>(pc - sizeof(OP_stfk));
+	Struct* instance = unbox<Struct>(callee);
+	VmOp resolved = instance->type->ops().shape.resolved_stfk_handler;
+	std::memcpy(reinterpret_cast<Code*>(op) - OPCODE_SIZE, &resolved, sizeof(resolved));
+	Store(instance, s.constants[op->key_idx], frame_regs[op->val]);
+	DISPATCH();
+}
+
+static Struct* construct_hashset(StructType* type, Atom* first, Atom* last)
+{
+	HashSet* set = HashSet::alloc(type);
+	for (Atom* it = first; it != last; ++it)
+	{
+		set->items.insert(make_key(*it));
+	}
+	return set;
+}
+
+static Struct* construct_hashmap(StructType* type, Atom* first, Atom* last)
+{
+	size_t count = static_cast<size_t>(last - first);
+	JET_DIE_WHEN(count % 2 != 0, "hashmap: expected an even number of arguments, given %zu", count);
+	HashMap* map = HashMap::alloc(type);
+	for (Atom* it = first; it != last; it += 2)
+	{
+		map->entries.insert_or_assign(make_key(it[0]), it[1]);
+	}
+	return map;
+}
+
+static bool equal_hashset(EqualContext&, Struct* first, Struct* second, EqualRecur)
+{
+	HashSet* a = static_cast<HashSet*>(first);
+	HashSet* b = static_cast<HashSet*>(second);
+	if (a->items.size() != b->items.size())
+	{
+		return false;
+	}
+	for (const TableKey& item : a->items)
+	{
+		if (b->items.find(item) == b->items.end())
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
+static bool equal_hashmap(EqualContext& context, Struct* first, Struct* second, EqualRecur recur)
+{
+	HashMap* a = static_cast<HashMap*>(first);
+	HashMap* b = static_cast<HashMap*>(second);
+	if (a->entries.size() != b->entries.size())
+	{
+		return false;
+	}
+	for (const std::pair<const TableKey, Atom>& entry : a->entries)
+	{
+		auto it = b->entries.find(entry.first);
+		if (it == b->entries.end() || !recur(context, entry.second, it->second))
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
+static void print_hashset(Struct*, std::string& out)
+{
+	out += "#<hashset>";
+}
+
+static void print_hashmap(Struct*, std::string& out)
+{
+	out += "#<hashmap>";
+}
+
+static const StructOps hashset_ops = {
+	StructKind::HashSet,
+	struct_constructor_handler<construct_hashset>,
+	{
+		table_ldf_handler<hashset_lookup>,
+		table_stf_handler<hashset_insert>,
+		table_ldfk_handler<hashset_lookup>,
+		table_stfk_handler<hashset_insert>,
+		table_resolved_ldfk_handler<hashset_lookup>,
+		table_resolved_stfk_handler<hashset_insert>,
+		table_ref<hashset_lookup>,
+	},
+	struct_destructor<HashSet>(),
+	equal_hashset,
+	print_hashset,
+	print_hashset,
+};
+
+static const StructOps hashmap_ops = {
+	StructKind::HashMap,
+	struct_constructor_handler<construct_hashmap>,
+	{
+		table_ldf_handler<hashmap_lookup>,
+		table_stf_handler<hashmap_insert>,
+		table_ldfk_handler<hashmap_lookup>,
+		table_stfk_handler<hashmap_insert>,
+		table_resolved_ldfk_handler<hashmap_lookup>,
+		table_resolved_stfk_handler<hashmap_insert>,
+		table_ref<hashmap_lookup>,
+	},
+	struct_destructor<HashMap>(),
+	equal_hashmap,
+	print_hashmap,
+	print_hashmap,
+};
+
+template <StructKind kind>
+static Atom is_kind(Atom value)
+{
+	return box(is_type<jet::Type::Struct>(value) && unbox<Struct>(value)->type->kind() == kind);
+}
+
 void init_structs(Env& e)
 {
 	static const std::string tuple_name = "tuple";
+	static const std::string hashset_name = "hashset";
+	static const std::string hashmap_name = "hashmap";
 	Atom name = box(static_cast<Symbol>(&tuple_name));
 	e.bind("make-tuple", box<StructType>(name, std::vector<Atom>{}, n_ary(), tuple_ops));
+	e.bind("hashset", box<StructType>(box(static_cast<Symbol>(&hashset_name)), std::vector<Atom>{},
+	                                  n_ary(), hashset_ops));
+	e.bind("hashmap", box<StructType>(box(static_cast<Symbol>(&hashmap_name)), std::vector<Atom>{},
+	                                  n_ary(), hashmap_ops));
+	e.bind("hashset?", make_prim<is_kind<StructKind::HashSet>>());
+	e.bind("hashmap?", make_prim<is_kind<StructKind::HashMap>>());
 	e.bind("struct", make_prim<struct_ctor>());
 	e.bind("isa?", make_prim<isa>());
 }
