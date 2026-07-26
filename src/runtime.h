@@ -23,12 +23,12 @@ struct Cons
 
 bool operator==(Cons& p1, Cons& p2);
 
-inline Cons* make_cons(Atom obj1, Atom obj2)
+JET_ALWAYS_INLINE inline Cons* make_cons(Atom obj1, Atom obj2)
 {
 	return gc_alloc<Cons>(jet_tag::pair, obj1, obj2);
 }
 
-inline Atom cons(Atom obj1, Atom obj2)
+JET_ALWAYS_INLINE inline Atom cons(Atom obj1, Atom obj2)
 {
 	return Atom::make_tagged(jet_tag::pair, make_cons(obj1, obj2));
 }

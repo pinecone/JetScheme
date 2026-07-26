@@ -7,6 +7,7 @@
 #include "runtime.h"
 #include <array>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <string>
@@ -61,21 +62,6 @@ JET_ALWAYS_INLINE static void destroy_object(
 	}
 }
 
-static inline void set_bit(uint64_t* bits, size_t i)
-{
-	bits[i / 64] |= 1ULL << (i % 64);
-}
-
-static inline void clear_bit(uint64_t* bits, size_t i)
-{
-	bits[i / 64] &= ~(1ULL << (i % 64));
-}
-
-static inline bool test_bit(uint64_t* bits, size_t i)
-{
-	return (bits[i / 64] >> (i % 64)) & 1ULL;
-}
-
 Gc::Gc()
 {
 	void* p = ::mmap(nullptr, ARENA_SIZE, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
@@ -95,19 +81,19 @@ Gc::Gc()
 Gc::~Gc()
 {
 	const StructDestructor* struct_destructor_table = struct_destructors.data();
-	for (ObjEntry& e : objects)
+	for (ObjEntry* e = objects; e != objects_end; ++e)
 	{
-		void* object = arena_base + static_cast<size_t>(e.cell_idx) * CELL_SIZE;
-		destroy_object(e, object, struct_destructor_table);
+		void* object = arena_base + static_cast<size_t>(e->cell_idx) * CELL_SIZE;
+		destroy_object(*e, object, struct_destructor_table);
 	}
+	::free(objects);
 	::munmap(arena_base, ARENA_SIZE);
 	::munmap(live_bits, BITMAP_WORDS * sizeof(uint64_t));
 	::munmap(mark_bits, BITMAP_WORDS * sizeof(uint64_t));
 }
 
-void* Gc::alloc(size_t total_size, int tag, uint16_t destructor_id)
+void* Gc::alloc_slow(size_t n, int tag, uint16_t destructor_id)
 {
-	size_t n = (total_size + CELL_SIZE - 1) / CELL_SIZE;
 	void* mem;
 	uint32_t start;
 
@@ -130,9 +116,25 @@ void* Gc::alloc(size_t total_size, int tag, uint16_t destructor_id)
 		set_bit(live_bits, start + i);
 	}
 
-	objects.push_back({start, static_cast<uint32_t>(n), destructor_id, static_cast<uint8_t>(tag)});
+	if (objects_end == objects_cap)
+	{
+		grow_objects();
+	}
+	*objects_end++ = {start, static_cast<uint32_t>(n), destructor_id, static_cast<uint8_t>(tag)};
 	++alloc_since_gc;
 	return mem;
+}
+
+void Gc::grow_objects()
+{
+	size_t size = objects_end - objects;
+	size_t cap = objects_cap - objects;
+	size_t next = cap ? 2 * cap : 1024;
+	ObjEntry* fresh = static_cast<ObjEntry*>(std::realloc(objects, next * sizeof(ObjEntry)));
+	JET_DIE_UNLESS(fresh != nullptr, "gc: out of memory growing the object table");
+	objects = fresh;
+	objects_end = fresh + size;
+	objects_cap = fresh + next;
 }
 
 void Gc::mark_atom(uint64_t bits)
@@ -221,33 +223,33 @@ void Gc::mark_object(void* ptr, int tag)
 void Gc::sweep()
 {
 	const StructDestructor* struct_destructor_table = struct_destructors.data();
-	size_t out = 0;
-	for (size_t i = 0; i < objects.size(); ++i)
+	ObjEntry* out = objects;
+	for (ObjEntry* e = objects; e != objects_end; ++e)
 	{
-		ObjEntry& e = objects[i];
-		if (test_bit(mark_bits, e.cell_idx))
+		if (test_bit(mark_bits, e->cell_idx))
 		{
-			objects[out++] = e;
+			*out++ = *e;
 		}
 		else
 		{
-			void* obj = arena_base + static_cast<size_t>(e.cell_idx) * CELL_SIZE;
-			destroy_object(e, obj, struct_destructor_table);
-			for (uint32_t k = 0; k < e.n_cells; ++k)
+			void* obj = arena_base + static_cast<size_t>(e->cell_idx) * CELL_SIZE;
+			destroy_object(*e, obj, struct_destructor_table);
+			for (uint32_t k = 0; k < e->n_cells; ++k)
 			{
-				clear_bit(live_bits, e.cell_idx + k);
+				clear_bit(live_bits, e->cell_idx + k);
 			}
-			if (e.n_cells < Gc::N_BUCKETS)
+			if (e->n_cells < Gc::N_BUCKETS)
 			{
-				*static_cast<void**>(obj) = freelist[e.tag][e.n_cells];
-				freelist[e.tag][e.n_cells] = obj;
+				*static_cast<void**>(obj) = freelist[e->tag][e->n_cells];
+				freelist[e->tag][e->n_cells] = obj;
 			}
 		}
 	}
-	objects.resize(out);
+	objects_end = out;
 
+	size_t live = objects_end - objects;
 	alloc_since_gc = 0;
-	gc_threshold = objects.size() < 256 ? 256 : static_cast<uint32_t>(objects.size());
+	gc_threshold = live < 256 ? 256 : static_cast<uint32_t>(live);
 }
 
 void collect(VmState& s)

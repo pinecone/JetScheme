@@ -75,6 +75,21 @@ constexpr bool is_nary(Arity& a)
 struct Struct;
 using StructDestructor = void (*)(Struct*);
 
+inline void set_bit(uint64_t* bits, size_t i)
+{
+	bits[i / 64] |= 1ULL << (i % 64);
+}
+
+inline void clear_bit(uint64_t* bits, size_t i)
+{
+	bits[i / 64] &= ~(1ULL << (i % 64));
+}
+
+inline bool test_bit(uint64_t* bits, size_t i)
+{
+	return (bits[i / 64] >> (i % 64)) & 1ULL;
+}
+
 struct Gc
 {
 	struct ObjEntry
@@ -94,7 +109,9 @@ struct Gc
 
 	char* arena_base;
 	size_t bump_cells = 0;
-	std::vector<ObjEntry> objects;
+	ObjEntry* objects = nullptr;
+	ObjEntry* objects_end = nullptr;
+	ObjEntry* objects_cap = nullptr;
 	uint64_t* live_bits;
 	uint64_t* mark_bits;
 	std::vector<StructDestructor> struct_destructors{nullptr};
@@ -106,19 +123,39 @@ struct Gc
 	~Gc();
 
 	uint16_t register_struct_destructor(StructDestructor destructor);
-	void* alloc(size_t obj_size, int tag, uint16_t destructor_id);
+	JET_NOINLINE void* alloc_slow(size_t n, int tag, uint16_t destructor_id);
+	JET_NOINLINE void grow_objects();
 	void sweep();
 	void mark_atom(uint64_t bits);
 	void mark_object(void* ptr, int tag);
 	void mark_lambda(struct Lambda* la);
 
+	JET_ALWAYS_INLINE void* alloc(size_t obj_size, int tag, uint16_t destructor_id)
+	{
+		size_t n = (obj_size + CELL_SIZE - 1) / CELL_SIZE;
+		void* mem = n < N_BUCKETS ? freelist[tag][n] : nullptr;
+		if (mem == nullptr || objects_end == objects_cap) [[unlikely]]
+		{
+			return alloc_slow(n, tag, destructor_id);
+		}
+		freelist[tag][n] = *static_cast<void**>(mem);
+		uint32_t start = static_cast<uint32_t>((static_cast<char*>(mem) - arena_base) / CELL_SIZE);
+		for (size_t i = 0; i < n; ++i)
+		{
+			set_bit(live_bits, start + i);
+		}
+		*objects_end++ = {start, static_cast<uint32_t>(n), destructor_id, static_cast<uint8_t>(tag)};
+		++alloc_since_gc;
+		return mem;
+	}
+
 	bool should_collect() { return alloc_since_gc > gc_threshold; }
 
 	void begin_mark()
 	{
-		for (ObjEntry& e : objects)
+		for (ObjEntry* e = objects; e != objects_end; ++e)
 		{
-			mark_bits[e.cell_idx / 64] &= ~(1ULL << (e.cell_idx % 64));
+			clear_bit(mark_bits, e->cell_idx);
 		}
 	}
 };
@@ -139,7 +176,7 @@ constexpr StructDestructor struct_destructor()
 }
 
 template <typename T, typename... Args>
-T* gc_alloc(int tag, Args&&... args)
+JET_ALWAYS_INLINE T* gc_alloc(int tag, Args&&... args)
 {
 	void* mem = g_gc->alloc(sizeof(T), tag, 0);
 	T* obj = static_cast<T*>(mem);
