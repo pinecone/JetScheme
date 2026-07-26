@@ -17,16 +17,31 @@
 
 struct Cons
 {
-	Cons(Atom car_, Atom cdr_);
+	Cons(Atom car_, Atom cdr_) : car{car_}, cdr{cdr_} {}
 	mutable Atom car, cdr;
 };
 
 bool operator==(Cons& p1, Cons& p2);
 
-Atom cons(Atom obj1, Atom obj2);
+inline Cons* make_cons(Atom obj1, Atom obj2)
+{
+	return gc_alloc<Cons>(jet_tag::pair, obj1, obj2);
+}
 
-Atom car(Atom a);
-Atom cdr(Atom a);
+inline Atom cons(Atom obj1, Atom obj2)
+{
+	return Atom::make_tagged(jet_tag::pair, make_cons(obj1, obj2));
+}
+
+inline Atom car(Atom a)
+{
+	return slow_unbox<Cons>(a)->car;
+}
+
+inline Atom cdr(Atom a)
+{
+	return slow_unbox<Cons>(a)->cdr;
+}
 
 Atom is_list(Atom a);
 

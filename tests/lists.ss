@@ -55,6 +55,26 @@
 ;; append
 ($check (equal? '(1 2 3 4 5 6 7) (append '(1 2 3) '() '(4 5) '() '(6 7) '())))
 ($check (null? (append '() '() '())))
+($check (null? (append)))
+($check (equal? '(1 2) (append '(1 2))))
+($check (equal? 7 (append 7)))
+($check (equal? '(1 2 3) (append '() '(1 2 3))))
+($check (equal? '(1 2 3) (append '(1 2 3) '())))
+
+(define tail-arg '(3 4))
+($check (eq? tail-arg (cddr (append '(1 2) tail-arg))))
+($check (eq? tail-arg (append '() tail-arg)))
+
+(define src '(1 2))
+(define joined (append src '(3)))
+($check (equal? '(1 2) src))
+(set-car! joined 99)
+($check (equal? '(1 2) src))
+($check (equal? '(99 2 3) joined))
+
+($check (equal? '(1 2 . 5) (append '(1 2) 5)))
+($check (equal? '(1 . 2) (append '() '(1) 2)))
+($check (equal? '(a b c . d) (append '(a) '(b) '(c) 'd)))
 
 ;; take, drop
 ($check (equal? '(a b) (take '(a b c d e) 2)))

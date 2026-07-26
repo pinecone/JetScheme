@@ -30,26 +30,9 @@ std::string_view type_name(jet::Type type)
 	}
 }
 
-Cons::Cons(Atom car_, Atom cdr_) : car{car_}, cdr{cdr_} {}
-
 bool operator==(Cons& p1, Cons& p2)
 {
 	return &p1 == &p2;
-}
-
-Atom cons(Atom obj1, Atom obj2)
-{
-	return box(Cons{obj1, obj2});
-}
-
-Atom car(Atom a)
-{
-	return slow_unbox<Cons>(a)->car;
-}
-
-Atom cdr(Atom a)
-{
-	return slow_unbox<Cons>(a)->cdr;
 }
 
 Atom is_list(Atom a)
@@ -69,9 +52,35 @@ static Atom set_cdr(Atom pair, Atom x)
 	return Atom{};
 }
 
+static Atom append_prim(Atom* first, Atom* last)
+{
+	Atom head = box(EmptyList{});
+	Atom* slot = &head;
+	for (; last - first > 1; ++first)
+	{
+		Atom x = *first;
+		while (is_type<jet::Type::Pair>(x))
+		{
+			Cons* src = unbox<Cons>(x);
+			Cons* cell = make_cons(src->car, box(EmptyList{}));
+			*slot = Atom::make_tagged(jet_tag::pair, cell);
+			slot = &cell->cdr;
+			x = src->cdr;
+		}
+		JET_DIE_UNLESS(is_type<jet::Type::EmptyList>(x), "append expects a list, given %s",
+		               type_name(x.type()).data());
+	}
+	if (first != last)
+	{
+		*slot = *first;
+	}
+	return head;
+}
+
 void init_lists(Env& e)
 {
 	e.bind("cons", make_prim<cons>());
+	e.bind("append", make_prim<append_prim>(n_ary()));
 
 	e.bind("car", make_prim<car>());
 	e.bind("cdr", make_prim<cdr>());
