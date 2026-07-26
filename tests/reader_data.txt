@@ -37,5 +37,10 @@ set!
 (((((deep)))))
 (a . b)
 #u8(1 2 3)
+`(a ,b ,@c)
+,x
+,@y
+`#(1 ,y)
+``(a ,,b)
 ;; trailing comment then atom
    99

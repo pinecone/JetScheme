@@ -127,6 +127,22 @@
 ($check (= 3 (bytevector-length dbv)))
 ($check (= 2 (ref dbv 1)))
 
+;; quasiquote marks are datum abbreviations: nothing is evaluated
+($check (equal? '(quasiquote (a (unquote b) (unquote-splicing c))) (read p)))
+($check (equal? '(unquote x) (read p)))
+($check (equal? '(unquote-splicing y) (read p)))
+
+;; `#(1 ,y) -> (quasiquote #(1 (unquote y)))
+(define rqv (read p))
+($check (eq? 'quasiquote (car rqv)))
+($check (vector? (car (cdr rqv))))
+($check (= 1 (ref (car (cdr rqv)) 0)))
+($check (equal? '(unquote y) (ref (car (cdr rqv)) 1)))
+
+;; nesting is preserved verbatim, not collapsed
+($check (equal? '(quasiquote (quasiquote (a (unquote (unquote b)))))
+                (read p)))
+
 ;; trailing whitespace and comments still yield atom
 ($check (= 99 (read p)))
 

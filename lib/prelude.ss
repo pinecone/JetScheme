@@ -50,13 +50,13 @@
 
 (define append
   (lambda ls
-    (fold-right
-     (lambda (a b)
-       (if (null? a)
-           b
-           (cons (car a) (append (cdr a) b))))
-     '()
-     ls)))
+    (let outer ((ls ls))
+      (cond ((null? ls) '())
+            ((null? (cdr ls)) (car ls))
+            (else (let inner ((a (car ls)) (b (outer (cdr ls))))
+                    (if (null? a)
+                        b
+                        (cons (car a) (inner (cdr a) b)))))))))
 
 (define (concatenate list-of-lists)
   (reduce-right append '() list-of-lists))

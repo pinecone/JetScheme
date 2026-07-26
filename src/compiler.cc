@@ -39,6 +39,9 @@ enum class TokenKind : uint8_t
 	LParen,
 	RParen,
 	Quote,
+	Quasiquote,
+	Unquote,
+	UnquoteSplicing,
 	Hash,
 	Number,
 	String,
@@ -352,7 +355,7 @@ struct Program
 inline bool is_delimiter(char c)
 {
 	return c == '\0' || c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '(' || c == ')' || c == '"' ||
-	       c == ';';
+	       c == ';' || c == '`' || c == ',';
 }
 
 inline char decode_char_literal(std::string_view body, SourceLoc loc)
@@ -579,8 +582,6 @@ namespace
 		uint32_t file_id = 0;
 		int line = 1;
 		int col = 1;
-		bool in_quote = false;
-		int quote_depth = 0;
 		bool read_mode = false;
 		std::vector<Token> tokens{};
 		Token pending_{};
@@ -589,13 +590,7 @@ namespace
 
 		TokenKind classify_token_text(std::string_view text)
 		{
-			return (in_quote || read_mode) ? TokenKind::Variable : classify_ident(text);
-		}
-
-		static bool is_quoted_atom(TokenKind k)
-		{
-			return k == TokenKind::Number || k == TokenKind::String || k == TokenKind::Boolean ||
-			       k == TokenKind::Character || k == TokenKind::Variable;
+			return read_mode ? TokenKind::Variable : classify_ident(text);
 		}
 
 		bool at_end() { return port->eof(); }
@@ -896,6 +891,24 @@ namespace
 					emit(TokenKind::Quote, intern(std::string{c}), l);
 					break;
 
+				case '`':
+					advance();
+					emit(TokenKind::Quasiquote, intern(std::string{c}), l);
+					break;
+
+				case ',':
+					advance();
+					if (!at_end() && peek() == '@')
+					{
+						advance();
+						emit(TokenKind::UnquoteSplicing, intern(std::string{",@"}), l);
+					}
+					else
+					{
+						emit(TokenKind::Unquote, intern(std::string{c}), l);
+					}
+					break;
+
 				case '"':
 					lex_string();
 					break;
@@ -922,40 +935,6 @@ namespace
 					break;
 			}
 
-			// Quote mode spans exactly one datum; inside it, keywords lex as Variable.
-			switch (pending_.kind)
-			{
-				case TokenKind::Quote:
-				case TokenKind::QuoteWord:
-					if (!in_quote)
-					{
-						quote_depth = 0;
-					}
-					in_quote = true;
-					break;
-
-				case TokenKind::LParen:
-					if (in_quote)
-					{
-						++quote_depth;
-					}
-					break;
-
-				case TokenKind::RParen:
-					if (in_quote)
-					{
-						JET_DIE_UNLESS(quote_depth > 0, "%d:%d: unexpected ')' in quoted datum", l.line, l.col);
-						in_quote = --quote_depth > 0;
-					}
-					break;
-
-				default:
-					if (in_quote && quote_depth == 0 && is_quoted_atom(pending_.kind))
-					{
-						in_quote = false;
-					}
-					break;
-			}
 			return pending_;
 		}
 
@@ -1142,6 +1121,11 @@ namespace
 					advance();
 					return parse_datum();
 				}
+				case TokenKind::Quasiquote:
+				{
+					advance();
+					return parse_quasiquote(1);
+				}
 				case TokenKind::Hash:
 					if (peek().text == "#u8")
 					{
@@ -1182,6 +1166,13 @@ namespace
 				if (head.text == "$check")
 				{
 					return parse_dollar_check(loc);
+				}
+				if (head.text == "quasiquote")
+				{
+					advance();
+					Expr* e = parse_quasiquote(1);
+					expect(TokenKind::RParen);
+					return e;
 				}
 			}
 
@@ -1769,6 +1760,73 @@ namespace
 			return e;
 		}
 
+		static bool is_symbol_token(TokenKind k)
+		{
+			switch (k)
+			{
+				case TokenKind::Variable:
+				case TokenKind::Lambda:
+				case TokenKind::Define:
+				case TokenKind::If:
+				case TokenKind::Set:
+				case TokenKind::Setf:
+				case TokenKind::QuoteWord:
+				case TokenKind::Apply:
+				case TokenKind::Let:
+				case TokenKind::LetStar:
+				case TokenKind::Letrec:
+				case TokenKind::Begin:
+				case TokenKind::When:
+				case TokenKind::Unless:
+				case TokenKind::Cond:
+				case TokenKind::And:
+				case TokenKind::Or:
+				case TokenKind::Include:
+					return true;
+				default:
+					return false;
+			}
+		}
+
+		Expr* make_symbol(SourceLoc loc, std::string_view name)
+		{
+			Expr* e = make_expr(ExprKind::SymbolLit, loc);
+			e->symbol_lit.name = name;
+			return e;
+		}
+
+		Expr* make_call(SourceLoc loc, std::string_view proc, std::vector<Expr*> args)
+		{
+			Expr* proc_ref = make_expr(ExprKind::VarRef, loc);
+			proc_ref->var_ref.name = arena.copy_string(proc);
+
+			Expr* e = make_expr(ExprKind::Call, loc);
+			e->call.proc = proc_ref;
+			e->call.args = make_slice(args);
+			return e;
+		}
+
+		// (list 'tag inner): the reader form of a nested quasiquote level, rebuilt as data.
+		Expr* make_tagged_datum(SourceLoc loc, const char* tag, Expr* inner)
+		{
+			return make_call(loc, "list", {make_symbol(loc, arena.copy_string(tag)), inner});
+		}
+
+		static const char* reader_tag_name(TokenKind k)
+		{
+			switch (k)
+			{
+				case TokenKind::Quote:
+					return "quote";
+				case TokenKind::Quasiquote:
+					return "quasiquote";
+				case TokenKind::Unquote:
+					return "unquote";
+				default:
+					return "unquote-splicing";
+			}
+		}
+
 		Expr* parse_datum()
 		{
 			Token& tok = peek();
@@ -1781,30 +1839,13 @@ namespace
 				case TokenKind::Character:
 					return parse_expr();
 
-				case TokenKind::Variable:
-				{
-					Expr* e = make_expr(ExprKind::SymbolLit, tok.loc);
-					e->symbol_lit.name = advance().text;
-					return e;
-				}
-
 				case TokenKind::Quote:
+				case TokenKind::Quasiquote:
+				case TokenKind::Unquote:
+				case TokenKind::UnquoteSplicing:
 				{
-					SourceLoc qloc = peek().loc;
-					advance();
-					Expr* inner = parse_datum();
-
-					Expr* list_ref = make_expr(ExprKind::VarRef, qloc);
-					list_ref->var_ref.name = arena.copy_string("list");
-
-					Expr* quote_sym = make_expr(ExprKind::SymbolLit, qloc);
-					quote_sym->symbol_lit.name = arena.copy_string("quote");
-
-					std::vector<Expr*> args{quote_sym, inner};
-					Expr* call = make_expr(ExprKind::Call, qloc);
-					call->call.proc = list_ref;
-					call->call.args = make_slice(args);
-					return call;
+					SourceLoc qloc = advance().loc;
+					return make_tagged_datum(qloc, reader_tag_name(tok.kind), parse_datum());
 				}
 
 				case TokenKind::LParen:
@@ -1818,88 +1859,254 @@ namespace
 					return parse_quoted_vector();
 
 				default:
-					JET_DIE("%d:%d: unexpected token in datum", tok.loc.line, tok.loc.col);
+					JET_DIE_UNLESS(is_symbol_token(tok.kind), "%d:%d: unexpected token in datum",
+					               tok.loc.line, tok.loc.col);
+					return make_symbol(tok.loc, advance().text);
 			}
 		}
 
-		Expr* parse_quoted_list()
+		struct QqItem
 		{
-			// '(a b c) → Call{VarRef{"list"}, [a, b, c]}.
-			SourceLoc loc = peek().loc;
-			expect(TokenKind::LParen);
+			Expr* value;
+			bool splice;
+		};
 
-			std::vector<Expr*> elems;
+		static bool has_splice(std::vector<QqItem>& items)
+		{
+			for (QqItem& item : items)
+			{
+				if (item.splice)
+				{
+					return true;
+				}
+			}
+			return false;
+		}
+
+		std::vector<Expr*> item_values(std::vector<QqItem>& items)
+		{
+			std::vector<Expr*> values;
+			for (QqItem& item : items)
+			{
+				values.push_back(item.value);
+			}
+			return values;
+		}
+
+		// Builds the template right to left so a dotted tail and splices compose:
+		// spliced segments become (append seg rest), plain ones (cons val rest).
+		Expr* build_qq_list(SourceLoc loc, std::vector<QqItem>& items, Expr* tail)
+		{
+			if (!tail && !has_splice(items))
+			{
+				return make_call(loc, "list", item_values(items));
+			}
+
+			Expr* result = tail ? tail : make_call(loc, "list", {});
+			for (size_t i = items.size(); i-- > 0;)
+			{
+				result = make_call(loc, items[i].splice ? "append" : "cons", {items[i].value, result});
+			}
+			return result;
+		}
+
+		// A nested unquote is rebuilt as data. Its operand may itself splice, and then
+		// the values land in the rebuilt form's tail: ,,@(list 1 2) is (unquote 1 2).
+		Expr* parse_qq_reconstruct(SourceLoc loc, const char* tag, int depth)
+		{
+			if (depth == 1 && peek().kind == TokenKind::UnquoteSplicing)
+			{
+				advance();
+				return make_call(loc, "cons", {make_symbol(loc, arena.copy_string(tag)), parse_expr()});
+			}
+			return make_tagged_datum(loc, tag, parse_quasiquote(depth));
+		}
+
+		// (unquote e), (unquote-splicing e) and (quasiquote t) mean exactly what the
+		// reader marks mean; the caller has already consumed the opening paren.
+		Expr* parse_qq_word_form(SourceLoc loc, int depth, bool* splice)
+		{
+			if (peek().kind != TokenKind::Variable)
+			{
+				return nullptr;
+			}
+			std::string_view word = peek().text;
+			bool splicing = word == "unquote-splicing";
+			bool unquoting = word == "unquote";
+			bool nesting = word == "quasiquote";
+			if (!splicing && !unquoting && !nesting)
+			{
+				return nullptr;
+			}
+			advance();
+
+			Expr* result = nullptr;
+			if (nesting)
+			{
+				result = make_tagged_datum(loc, "quasiquote", parse_quasiquote(depth + 1));
+			}
+			else if (depth == 1)
+			{
+				JET_DIE_UNLESS(!splicing || splice, "%d:%d: unquote-splicing outside of a list template",
+				               loc.line, loc.col);
+				if (splicing)
+				{
+					*splice = true;
+				}
+				result = parse_expr();
+			}
+			else
+			{
+				result = parse_qq_reconstruct(loc, splicing ? "unquote-splicing" : "unquote", depth - 1);
+			}
+			expect(TokenKind::RParen);
+			return result;
+		}
+
+		Expr* parse_qq_after_lparen(SourceLoc loc, int depth, bool* splice)
+		{
+			if (Expr* word = parse_qq_word_form(loc, depth, splice))
+			{
+				return word;
+			}
+			std::vector<QqItem> items;
 			Expr* tail = nullptr;
+			parse_items(depth, items, tail);
+			expect(TokenKind::RParen);
+			return build_qq_list(loc, items, tail);
+		}
+
+		// depth 0 is plain quoted data: no level to count, so nothing evaluates.
+		Expr* parse_element(int depth)
+		{
+			return depth == 0 ? parse_datum() : parse_quasiquote(depth);
+		}
+
+		void parse_items(int depth, std::vector<QqItem>& items, Expr*& tail)
+		{
 			while (peek().kind != TokenKind::RParen)
 			{
 				if (peek().kind == TokenKind::Dot)
 				{
 					advance();
-					JET_DIE_UNLESS(!elems.empty(), "%d:%d: dotted pair needs a head", peek().loc.line,
+					JET_DIE_UNLESS(!items.empty(), "%d:%d: dotted pair needs a head", peek().loc.line,
 					               peek().loc.col);
-					tail = parse_datum();
+					tail = parse_element(depth);
 					JET_DIE_UNLESS(peek().kind == TokenKind::RParen,
 					               "%d:%d: extra tokens after dot in dotted pair", peek().loc.line,
 					               peek().loc.col);
-					break;
+					return;
 				}
-				elems.push_back(parse_datum());
-			}
-			expect(TokenKind::RParen);
-
-			if (tail)
-			{
-				Expr* result = tail;
-				for (size_t i = elems.size(); i-- > 0;)
+				if (depth == 1 && peek().kind == TokenKind::UnquoteSplicing)
 				{
-					Expr* cons_ref = make_expr(ExprKind::VarRef, loc);
-					cons_ref->var_ref.name = arena.copy_string("cons");
-					std::vector<Expr*> args{elems[i], result};
-					Expr* call = make_expr(ExprKind::Call, loc);
-					call->call.proc = cons_ref;
-					call->call.args = make_slice(args);
-					result = call;
+					advance();
+					items.push_back({parse_expr(), true});
+					continue;
 				}
-				return result;
+				if (depth > 0 && peek().kind == TokenKind::LParen)
+				{
+					SourceLoc loc = advance().loc;
+					bool splice = false;
+					Expr* value = parse_qq_after_lparen(loc, depth, &splice);
+					items.push_back({value, splice});
+					continue;
+				}
+				items.push_back({parse_element(depth), false});
 			}
+		}
 
-			Expr* list_ref = make_expr(ExprKind::VarRef, loc);
-			list_ref->var_ref.name = arena.copy_string("list");
+		// #(...) at depth 0, or a vector template: the parens are already consumed.
+		Expr* parse_vector_body(SourceLoc loc, int depth)
+		{
+			std::vector<QqItem> items;
+			Expr* tail = nullptr;
+			parse_items(depth, items, tail);
+			expect(TokenKind::RParen);
+			JET_DIE_UNLESS(!tail, "%d:%d: dotted tail in a vector", loc.line, loc.col);
 
-			Expr* e = make_expr(ExprKind::Call, loc);
-			e->call.proc = list_ref;
-			e->call.args = make_slice(elems);
+			if (!has_splice(items))
+			{
+				return make_call(loc, "vector", item_values(items));
+			}
+			Expr* e = make_expr(ExprKind::Apply, loc);
+			e->apply.proc = make_expr(ExprKind::VarRef, loc);
+			e->apply.proc->var_ref.name = arena.copy_string("vector");
+			e->apply.args = build_qq_list(loc, items, nullptr);
 			return e;
 		}
 
+		Expr* parse_quasiquote(int depth)
+		{
+			Token& tok = peek();
+			SourceLoc loc = tok.loc;
+
+			switch (tok.kind)
+			{
+				case TokenKind::Unquote:
+					advance();
+					if (depth == 1)
+					{
+						return parse_expr();
+					}
+					return parse_qq_reconstruct(loc, "unquote", depth - 1);
+
+				case TokenKind::UnquoteSplicing:
+					JET_DIE_UNLESS(depth > 1, "%d:%d: unquote-splicing outside of a list template", loc.line,
+					               loc.col);
+					advance();
+					return parse_qq_reconstruct(loc, "unquote-splicing", depth - 1);
+
+				case TokenKind::Quasiquote:
+					advance();
+					return make_tagged_datum(loc, "quasiquote", parse_quasiquote(depth + 1));
+
+				case TokenKind::Quote:
+					advance();
+					return make_tagged_datum(loc, "quote", parse_quasiquote(depth));
+
+				case TokenKind::LParen:
+					advance();
+					return parse_qq_after_lparen(loc, depth, nullptr);
+
+				case TokenKind::Hash:
+					if (tok.text == "#u8")
+					{
+						return parse_quoted_bytevector();
+					}
+					advance();
+					expect(TokenKind::LParen);
+					return parse_vector_body(loc, depth);
+
+				default:
+					return parse_datum();
+			}
+		}
+
+		// '(a b c) → (list a b c), '(a . b) → (cons a b).
+		Expr* parse_quoted_list()
+		{
+			SourceLoc loc = peek().loc;
+			expect(TokenKind::LParen);
+
+			std::vector<QqItem> items;
+			Expr* tail = nullptr;
+			parse_items(0, items, tail);
+			expect(TokenKind::RParen);
+			return build_qq_list(loc, items, tail);
+		}
+
+		// #(a b c) → (vector a b c).
 		Expr* parse_quoted_vector()
 		{
-			// #(a b c) → Call{VarRef{"vector"}, [a, b, c]}.
-			SourceLoc loc = peek().loc;
-			advance();
+			SourceLoc loc = advance().loc;
 			expect(TokenKind::LParen);
-
-			std::vector<Expr*> elems;
-			while (peek().kind != TokenKind::RParen)
-			{
-				elems.push_back(parse_datum());
-			}
-			expect(TokenKind::RParen);
-
-			Expr* vec_ref = make_expr(ExprKind::VarRef, loc);
-			vec_ref->var_ref.name = arena.copy_string("vector");
-
-			Expr* e = make_expr(ExprKind::Call, loc);
-			e->call.proc = vec_ref;
-			e->call.args = make_slice(elems);
-			return e;
+			return parse_vector_body(loc, 0);
 		}
 
+		// #u8(1 2 3) → (bytevector 1 2 3).
 		Expr* parse_quoted_bytevector()
 		{
-			// #u8(a b c) -> Call{VarRef{"bytevector"}, [a, b, c]}.
-			SourceLoc loc = peek().loc;
-			advance();
+			SourceLoc loc = advance().loc;
 			expect(TokenKind::LParen);
 
 			std::vector<Expr*> elems;
@@ -1908,14 +2115,7 @@ namespace
 				elems.push_back(parse_datum());
 			}
 			expect(TokenKind::RParen);
-
-			Expr* bv_ref = make_expr(ExprKind::VarRef, loc);
-			bv_ref->var_ref.name = arena.copy_string("bytevector");
-
-			Expr* e = make_expr(ExprKind::Call, loc);
-			e->call.proc = bv_ref;
-			e->call.args = make_slice(elems);
-			return e;
+			return make_call(loc, "bytevector", elems);
 		}
 	};
 
