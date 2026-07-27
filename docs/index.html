@@ -67,22 +67,20 @@
 <section id="docs">
   <h2>Docs</h2>
 
-  <p>Everything on this page is included: the standard library is plain
-  Scheme (<code>lib/prelude.ss</code>, auto-loaded at startup), and the rest is
-  built into the VM.</p>
+  <p>The standard library is plain Scheme, in <code>lib/prelude.ss</code>, and it
+  loads at startup. Everything else is built into the VM.</p>
 
   <h3>The language</h3>
-  <p>JetScheme is a compact dialect of Scheme in the R7RS-small tradition:
-  lexical scope, first-class functions, and proper tail calls, so deep tail
-  recursion doesn't grow the stack. The forms are <code>quote</code>,
+  <p>JetScheme is a small Scheme, close to R7RS-small: lexical scope,
+  first-class functions, and proper tail calls. Deep tail recursion runs in
+  constant stack space. The forms are <code>quote</code>,
   <code>define</code>, <code>lambda</code>, <code>if</code>, <code>begin</code>,
   <code>let</code>, <code>let*</code>, <code>letrec</code>, <code>letrec*</code>
   (plus named <code>let</code>), <code>set!</code>, <code>and</code>,
   <code>or</code>, <code>cond</code> with <code>else</code>, <code>when</code>,
   <code>unless</code>, <code>quasiquote</code>, and <code>include</code>, which
-  includes another source file. <code>apply</code> covers calls whose argument
-  list isn't known until runtime. Macros and continuations aren't implemented
-  yet.</p>
+  reads in another source file. <code>apply</code> calls a procedure with an
+  argument list you build at runtime.</p>
 <pre><code>(<span class="k">define</span> (<span class="b">make-counter</span>)
   (<span class="k">let</span> ((n <span class="n">0</span>))
     (<span class="k">lambda</span> ()
@@ -93,26 +91,27 @@
 (<span class="k">define</span> b (<span class="b">make-counter</span>))
 
 (<span class="b">displayn</span> (<span class="b">list</span> (a) (a) (b)))                    <span class="c">; prints (1 2 1) — b kept its own n</span></code></pre>
-  <p><strong>All numbers are 64-bit doubles.</strong> There's no exact/inexact split; <code>exact?</code> and
-  <code>integer?</code> are <code>#t</code> for integral doubles.
-  <strong>Strings are immutable and byte-level UTF-8.</strong>
-  <code>string-length</code> and <code>string-ref</code> are byte-indexed;
-  bytewise comparison still yields correct codepoint order on valid UTF-8.
-  Case conversion and character classes are ASCII-only.</p>
+  <p><strong>All numbers are 64-bit doubles.</strong> <code>exact?</code> and
+  <code>integer?</code> answer <code>#t</code> for every integral value.</p>
+  <p><strong>Strings are immutable and byte-level UTF-8.</strong>
+  <code>string-length</code> and <code>string-ref</code> are byte-indexed, and
+  comparison sorts by codepoint. Case conversion and character classes cover
+  ASCII.</p>
   <p><strong><code>ref</code> and <code>setf!</code> are generic accessors.</strong>
-  <code>(ref v i)</code> is a polymorphic read: it works on vectors, strings, bytevectors, and
-  tuples (integer index), ordinary structs (symbol field name), and hashsets and hashmaps (any legal
-  key). <code>(setf! v i x)</code> stores <code>x</code> at key <code>i</code> in <code>v</code>:</p>
+  <code>(ref v i)</code> reads and <code>(setf! v i x)</code> stores <code>x</code> at
+  key <code>i</code> in <code>v</code>. Vectors, strings, bytevectors, and tuples
+  take an integer index; structs take a field name; hashsets and hashmaps take any
+  legal key:</p>
 <pre><code>(<span class="k">define</span> v (<span class="b">vector</span> <span class="n">10</span> <span class="n">20</span> <span class="n">30</span>))
 (<span class="b">ref</span> v <span class="n">0</span>)                                        <span class="c">; =&gt; 10   (vector-ref)</span>
 (<span class="k">setf!</span> v <span class="n">0</span> <span class="n">99</span>)                                   <span class="c">; vector-set!</span>
 (<span class="b">ref</span> v <span class="n">0</span>)                                        <span class="c">; =&gt; 99</span>
 
-(<span class="k">define</span> pt (<span class="b">point</span> <span class="n">3</span> <span class="n">4</span>))                          <span class="c">; a struct (see below)</span>
+(<span class="k">define</span> pt (<span class="b">point</span> <span class="n">3</span> <span class="n">4</span>))                          <span class="c">; a point struct</span>
 (<span class="b">ref</span> pt '<span class="n">x</span>)                                      <span class="c">; =&gt; 3    (struct field read)</span>
 (<span class="k">setf!</span> pt '<span class="n">x</span> <span class="n">10</span>)                                 <span class="c">; struct field mutation</span>
 
-(<span class="k">define</span> m (<span class="b">hashmap</span> '<span class="n">a</span> <span class="n">1</span>))                        <span class="c">; a hashmap (see below)</span>
+(<span class="k">define</span> m (<span class="b">hashmap</span> '<span class="n">a</span> <span class="n">1</span>))                        <span class="c">; one key, one value</span>
 (<span class="k">setf!</span> m '<span class="n">b</span> <span class="n">2</span>)                                   <span class="c">; insert or overwrite</span>
 (<span class="b">ref</span> m '<span class="n">b</span>)                                       <span class="c">; =&gt; 2    (any legal key)</span></code></pre>
 
@@ -124,8 +123,8 @@
   <code>tan</code>, <code>asin</code>, <code>acos</code>, <code>atan</code>,
   <code>floor</code>, <code>ceiling</code>, <code>truncate</code>,
   <code>round</code>, <code>min</code>, <code>max</code>, and
-  <code>random</code>, which takes no arguments (<code>random-seed</code>
-  reseeds it from the OS).</p>
+  <code>random</code>, which takes no arguments. <code>random-seed</code> reseeds
+  it from the OS.</p>
   <p>Comparisons <code>=</code> <code>&lt;</code> <code>&lt;=</code>
   <code>&gt;</code> <code>&gt;=</code> and predicates <code>zero?</code>,
   <code>positive?</code>, <code>negative?</code>, <code>even?</code>,
@@ -159,12 +158,11 @@
   <h3>Strings &amp; characters</h3>
   <p><code>string</code>, <code>make-string</code>, <code>string-append</code>,
   <code>substring</code>, <code>string-copy</code>,
-  <code>string-length</code>; indexing goes through the generic
-  <code>ref</code> described above.
-  Comparisons come in case-sensitive (<code>string=?</code>,
-  <code>string&lt;?</code>, &hellip;) and case-insensitive
-  (<code>string-ci=?</code>, &hellip;) variants. Beyond comparisons there
-  are <code>string-upcase</code>, <code>string-downcase</code>, and conversions
+  <code>string-length</code>; index with <code>ref</code>.
+  Comparisons are case-sensitive (<code>string=?</code>,
+  <code>string&lt;?</code>, &hellip;) or case-insensitive
+  (<code>string-ci=?</code>, &hellip;). There are also
+  <code>string-upcase</code>, <code>string-downcase</code>, and conversions
   between strings, lists, and vectors (<code>string-&gt;list</code>,
   <code>list-&gt;string</code>, <code>string-&gt;vector</code>,
   <code>vector-&gt;string</code>).</p>
@@ -184,14 +182,15 @@
   <code>vector-length</code>; <code>bytevector</code>, <code>make-bytevector</code>,
   <code>bytevector?</code>, <code>bytevector-length</code>,
   <code>bytevector-copy</code>, <code>bytevector-copy!</code>,
-  <code>bytevector-append</code>. Both are read and written
-  through <code>ref</code> / <code>setf!</code>;
-  <code>vector-ref</code>, <code>vector-set!</code>,
-  <code>bytevector-u8-ref</code>, and <code>bytevector-u8-set!</code> are
-  also available.</p>
+  <code>bytevector-append</code>, plus <code>vector-ref</code>,
+  <code>vector-set!</code>, <code>bytevector-u8-ref</code>, and
+  <code>bytevector-u8-set!</code>. As literals: <code>#(1 2 3)</code> and
+  <code>#u8(1 2 3)</code>.</p>
 
   <h3>Structs</h3>
-  <p><strong><code>struct</code>, <code>isa?</code>.</strong> Each <code>(struct ...)</code> call yields a distinct type, even when invoked twice with the same name and field list.</p>
+  <p><strong><code>struct</code>, <code>isa?</code>.</strong> Every call to
+  <code>struct</code> makes a new type. Two types with the same name and fields are
+  still different.</p>
 <pre><code>(<span class="k">define</span> <span class="b">point</span> (<span class="b">struct</span> '<span class="n">point</span> '(<span class="n">x</span> <span class="n">y</span>)))            <span class="c">; create a fresh type</span>
 (<span class="k">define</span> p (<span class="b">point</span> <span class="n">3</span> <span class="n">4</span>))                           <span class="c">; call the type to construct</span>
 (<span class="b">isa?</span> p <span class="b">point</span>)                                   <span class="c">; =&gt; #t</span>
@@ -199,84 +198,93 @@
 (<span class="k">setf!</span> p '<span class="n">x</span> <span class="n">10</span>)                                  <span class="c">; mutate field</span></code></pre>
 
   <h3>Tuples</h3>
-  <p><strong><code>tuple</code>.</strong> Constructs an immutable, fixed-size tuple. Tuples use value-based
-  <code>equal?</code>, identity-based <code>eq?</code>, and numeric <code>ref</code> access.</p>
+  <p><strong><code>tuple</code>.</strong> Constructs an immutable, fixed-size tuple,
+  indexed with <code>ref</code>. The literal form is <code>#tuple(...)</code>, and its
+  elements are data rather than expressions.</p>
 <pre><code>(<span class="k">define</span> t (<span class="b">tuple</span> '<span class="n">a</span> '<span class="n">b</span> '<span class="n">c</span>))
 (<span class="b">isa?</span> t <span class="b">tuple</span>)                                   <span class="c">; =&gt; #t</span>
-(<span class="b">ref</span> t <span class="n">1</span>)                                        <span class="c">; =&gt; b</span></code></pre>
+(<span class="b">ref</span> t <span class="n">1</span>)                                        <span class="c">; =&gt; b</span>
+(<span class="b">equal?</span> t #<span class="b">tuple</span>(<span class="n">a</span> <span class="n">b</span> <span class="n">c</span>))                         <span class="c">; =&gt; #t   the same tuple</span>
+`#<span class="b">tuple</span>(<span class="n">a</span> ,(+ <span class="n">1</span> <span class="n">1</span>))                              <span class="c">; =&gt; #tuple(a 2)   a template</span></code></pre>
 
   <h3>Equality &amp; symbols</h3>
-  <p><code>eq?</code> compares identity, <code>eqv?</code> identity-or-number,
-  and <code>equal?</code> compares structures recursively. There are also
-  type-specific predicates <code>boolean=?</code>, <code>symbol=?</code>,
-  and <code>string=?</code>. Symbols convert with
-  <code>symbol-&gt;string</code> and <code>string-&gt;symbol</code>;
-  <code>symbol?</code> and <code>procedure?</code> test for symbols and
-  procedures.</p>
+  <p><code>eq?</code> compares identity, <code>eqv?</code> compares identity and
+  numbers by value, and <code>equal?</code> compares structures recursively. There
+  are also the type-specific predicates <code>boolean=?</code>,
+  <code>symbol=?</code>, and <code>string=?</code>. Symbols convert with
+  <code>symbol-&gt;string</code> and <code>string-&gt;symbol</code>, and there are
+  <code>symbol?</code> and <code>procedure?</code>.</p>
 <pre><code>(<span class="b">eq?</span> '<span class="n">a</span> '<span class="n">a</span>)                                      <span class="c">; =&gt; #t   same symbol</span>
 (<span class="b">eq?</span> (<span class="b">string-&gt;symbol</span> <span class="s">"a"</span>) '<span class="n">a</span>)                    <span class="c">; =&gt; #t   same symbol from a string</span>
 (<span class="b">eqv?</span> <span class="n">2</span> <span class="n">2</span>)                                       <span class="c">; =&gt; #t   numbers compare by value</span>
 (<span class="b">equal?</span> '(<span class="n">1</span> <span class="n">2</span>) '(<span class="n">1</span> <span class="n">2</span>))                           <span class="c">; =&gt; #t   same contents</span>
 (<span class="b">eq?</span> '(<span class="n">1</span> <span class="n">2</span>) '(<span class="n">1</span> <span class="n">2</span>))                              <span class="c">; =&gt; #f   different pairs</span></code></pre>
 
-  <h3>Hash tables & Sets</h3>
+  <h3>Hash tables &amp; sets</h3>
   <p><strong><code>hashset</code>, <code>hashmap</code>, <code>hashset?</code>, <code>hashmap?</code>.</strong>
-  Both are read and written through <code>ref</code> / <code>setf!</code>. <code>ref</code> on a hashset answers
-  membership; <code>ref</code> on a hashmap raises an error when the key is absent. A hashset element can only be
-  set to <code>#t</code>.</p>
+  <code>ref</code> on a hashset tells you whether the element is there, and on a hashmap
+  it raises an error when the key is absent. <code>setf!</code> sets a hashmap key to any
+  value, and a hashset element to <code>#t</code>.</p>
+  <p>The literal forms are <code>#hashset(...)</code> and <code>#hashmap(...)</code>.
+  <code>#hashmap</code> takes a key, then its value, and so on.</p>
 <pre><code>(<span class="k">define</span> m (<span class="b">hashmap</span> '<span class="n">a</span> <span class="n">1</span> '<span class="n">b</span> <span class="n">2</span>))
 (<span class="b">ref</span> m '<span class="n">a</span>)                                       <span class="c">; =&gt; 1</span>
 (<span class="k">setf!</span> m '<span class="n">c</span> <span class="n">3</span>)                                   <span class="c">; insert or overwrite</span>
-(<span class="b">ref</span> (<span class="b">hashset</span> '<span class="n">a</span>) '<span class="n">b</span>)                            <span class="c">; =&gt; #f</span></code></pre>
-  <p><strong>Keys are immutable.</strong> Legal keys are numbers, booleans, characters, the empty list, the eof object, symbols, strings, and tuples whose
-  elements are themselves legal keys. Everything mutable or reachable from something mutable — pairs, vectors,
-  bytevectors, structs, procedures, ports, and the tables themselves — is rejected with a runtime error. During construction duplicate keys collapse, and the last value wins.</p>
+(<span class="b">ref</span> (<span class="b">hashset</span> '<span class="n">a</span>) '<span class="n">b</span>)                            <span class="c">; =&gt; #f</span>
+(<span class="b">ref</span> #<span class="b">hashmap</span>(<span class="n">a</span> <span class="n">1</span> <span class="n">b</span> <span class="n">2</span>) '<span class="n">b</span>)                       <span class="c">; =&gt; 2</span>
+(<span class="b">ref</span> #<span class="b">hashset</span>(<span class="n">a</span> <span class="n">b</span>) '<span class="n">a</span>)                           <span class="c">; =&gt; #t</span></code></pre>
+  <p><strong>Keys are immutable.</strong> Legal keys are numbers, booleans, characters,
+  the empty list, the eof object, symbols, strings, and tuples whose elements are
+  themselves legal keys. Anything mutable, or holding something mutable, is rejected
+  with a runtime error: pairs, vectors, bytevectors, structs, procedures, ports, and the
+  tables themselves. Duplicate keys collapse as a table is built, and the last value
+  wins.</p>
 
   <h3>I/O &amp; files</h3>
-  <p><code>display</code> prints human-readable and <code>write</code> prints
-  machine-readable, both to stdout; <code>newline</code> prints a newline,
-  and <code>displayn</code> is <code>display</code> followed by a newline.
-  <code>read</code> parses one datum at a time from an input port:</p>
+  <p><code>display</code> prints a value for a person to read. <code>write</code> prints
+  it in the literal forms above, so <code>read</code> parses that output back into an
+  equal value. Both print to stdout. <code>newline</code> prints a newline, and
+  <code>displayn</code> is <code>display</code> followed by a newline.
+  <code>read</code> takes one datum at a time from an input port:</p>
 <pre><code>(<span class="k">define</span> p (<span class="b">open-input-file</span> <span class="s">"data.ss"</span>))
 (<span class="k">define</span> a (<span class="b">read</span> p))                              <span class="c">; first datum</span>
 (<span class="k">define</span> b (<span class="b">read</span> p))                              <span class="c">; second datum</span>
 (<span class="b">close-input-port</span> p)</code></pre>
-  <p>For character-level file work there are <code>open-input-file</code>,
-  <code>open-output-file</code>, <code>read-char</code>, <code>write-char</code>,
-  <code>close-input-port</code>, <code>close-output-port</code>, plus the
-  predicates <code>input-port?</code>, <code>output-port?</code>, and
+  <p>To read and write a file one character at a time there are
+  <code>open-input-file</code>, <code>open-output-file</code>,
+  <code>read-char</code>, <code>write-char</code>, <code>close-input-port</code>,
+  and <code>close-output-port</code>, plus the predicates
+  <code>input-port?</code>, <code>output-port?</code>, and
   <code>eof-object?</code>.</p>
 
   <h3>Running programs</h3>
   <p><code>argv</code> is a vector of the script's command-line arguments, with
-  the binary and script path already stripped; <code>exit</code> ends the
-  process. The prelude auto-loads from <code>$JET_PRELUDE/lib/prelude.ss</code>
-  — set <code>JET_PRELUDE</code> to use a different one, or pass
+  the binary and script path already stripped. <code>exit</code> ends the process.
+  The prelude loads from <code>lib/prelude.ss</code> beside the binary; set
+  <code>JET_PRELUDE</code> to another prelude file, or pass
   <code>--no-prelude</code> to skip it.</p>
-  <p>Besides <code>jet run</code> (or just <code>jet file.ss</code>) the binary
-  provides <code>jet compile</code> (source → bytecode on stdout),
-  <code>jet exec</code> (run pre-compiled bytecode), and <code>jet
-  disasm</code> (disassemble source or bytecode).
+  <p><code>jet run</code> (or just <code>jet file.ss</code>) compiles and runs a
+  program. <code>jet compile</code> writes bytecode to stdout, <code>jet exec</code>
+  runs it, and <code>jet disasm</code> disassembles either source or bytecode.
   <code>--no-inline</code>, <code>--no-lift-lambdas</code>, and
-  <code>--no-specialize-ops</code> switch off individual optimizations; debug
+  <code>--no-specialize-ops</code> switch off individual optimizations. Debug
   builds add <code>--trace</code> for an opcode-by-opcode execution trace.</p>
-  <p>The compiler also understands <code>($check expr)</code>: if
-  <code>expr</code> is false it reports the source position and fails.
-  <code>$file</code>, <code>$line</code>, and <code>$col</code> expose that
-  position directly.</p>
+  <p><code>($check expr)</code> reports the source position and fails when
+  <code>expr</code> is false. <code>$file</code>, <code>$line</code>, and
+  <code>$col</code> give you that file, line, and column.</p>
 </section>
 
 <section id="optimizations">
   <h2>Impl</h2>
   <p><strong>JetScheme</strong> is built on techniques described in:</p>
   <ul>
-    <li><strong>Tail-threaded dispatch</strong> <a class="cite" href="https://dl.acm.org/doi/10.1145/362248.362270">(Bell, 1973)</a> — each opcode is its own small function; each function ends by tail-calling the next opcode's function directly. There's no central dispatch loop and no callee-save spills between opcodes; hot VM state stays in registers across the whole run.</li>
-    <li><strong>Inline caching</strong> <a class="cite" href="https://dl.acm.org/doi/10.1145/800017.800542">(Deutsch &amp; Schiffman, 1984)</a> — on the first time through a call site, the slow path patches the opcode in place to point at a specialized fast version of itself. Subsequent passes through the same site skip the lookup, key compare, and type check entirely.</li>
-    <li><strong>Flat closures</strong> <a class="cite" href="https://www.cs.unc.edu/xcms/wpfiles/dissertations/dybvig.pdf">(Dybvig, 1987)</a> — captures live in an inline array on the closure; immutable captures by value, mutated <em>and</em> shared ones get a heap indirection.</li>
-    <li><strong>A-normal form</strong> <a class="cite" href="https://dl.acm.org/doi/10.1145/155090.155113">(Flanagan et al., 1993)</a> — every operand is a variable or a literal and every intermediate result gets an explicit name, so the later passes (inlining, register allocation, instruction selection) rewrite one flat shape instead of arbitrary nested trees.</li>
-    <li><strong>NaN-boxing</strong> <a class="cite" href="https://www.cs.arizona.edu/sites/default/files/TR93-27.pdf">(Gudeman, 1993)</a> — every value fits in 8 bytes: numbers are raw doubles; immediates (bool, char, empty list) and tagged heap pointers all hide in the IEEE 754 quiet-NaN payload. Type tests are cheap bit ops and any value passes in a single register.</li>
-    <li><strong>Superinstructions</strong> <a class="cite" href="https://dl.acm.org/doi/10.1145/199448.199526">(Proebsting, 1995)</a> — common back-to-back opcode pairs are emitted as a single fused opcode: one chain step instead of two, and the body can skip the intermediate register move.</li>
-    <li><strong>Opcode replication for ICs</strong> <a class="cite" href="https://dl.acm.org/doi/10.1145/781131.781162">(Ertl &amp; Gregg, 2003)</a> — each cached opcode has several near-identical copies that rotate per call site, so distinct sites land on distinct branch-target-predictor entries instead of all colliding on one.</li>
+    <li><strong>Tail-threaded dispatch</strong> <a class="cite" href="https://dl.acm.org/doi/10.1145/362248.362270">(Bell, 1973)</a> — each opcode is its own small function, and each function ends by tail-calling the next one directly. There is no central dispatch loop and no callee-save spills between opcodes, so hot VM state stays in registers across the whole run.</li>
+    <li><strong>Inline caching</strong> <a class="cite" href="https://dl.acm.org/doi/10.1145/800017.800542">(Deutsch &amp; Schiffman, 1984)</a> — the first time through a call site, the slow path patches the opcode in place to point at a specialized fast version of itself. Later passes through that site skip the lookup, key compare, and type check entirely.</li>
+    <li><strong>Flat closures</strong> <a class="cite" href="https://www.cs.unc.edu/xcms/wpfiles/dissertations/dybvig.pdf">(Dybvig, 1987)</a> — captures live in an inline array on the closure. Immutable ones are copied by value; a capture that is both mutated <em>and</em> shared gets a heap indirection.</li>
+    <li><strong>A-normal form</strong> <a class="cite" href="https://dl.acm.org/doi/10.1145/155090.155113">(Flanagan et al., 1993)</a> — every operand is a variable or a literal, and every intermediate result gets an explicit name. The later passes — inlining, register allocation, instruction selection — then rewrite one flat shape instead of arbitrary nested trees.</li>
+    <li><strong>NaN-boxing</strong> <a class="cite" href="https://www.cs.arizona.edu/sites/default/files/TR93-27.pdf">(Gudeman, 1993)</a> — every value fits in 8 bytes. Numbers are raw doubles, while immediates and tagged heap pointers hide in the IEEE 754 quiet-NaN payload. Type tests are cheap bit ops, and any value passes in a single register.</li>
+    <li><strong>Superinstructions</strong> <a class="cite" href="https://dl.acm.org/doi/10.1145/199448.199526">(Proebsting, 1995)</a> — common back-to-back opcode pairs are emitted as one fused opcode. That is a single chain step instead of two, and the body can skip the intermediate register move.</li>
+    <li><strong>Opcode replication for inline caches</strong> <a class="cite" href="https://dl.acm.org/doi/10.1145/781131.781162">(Ertl &amp; Gregg, 2003)</a> — each cached opcode has several near-identical copies that rotate per call site. Distinct sites then land on distinct branch-target-predictor entries instead of all colliding on one.</li>
   </ul>
 </section>
 
