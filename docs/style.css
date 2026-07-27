@@ -63,7 +63,7 @@
   --fs-lead:   1.25rem;
   --fs-h3:     1rem;
   --fs-h2:     1.2rem;
-  --fs-title:  3.5rem;
+  --fs-title:  clamp(2rem, 8.5vw, 3.5rem);
   --fs-h1-min: 2rem;
   --fs-h1-max: 3rem;
 
@@ -141,6 +141,7 @@ h3 {
 
 .title-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-start;
   gap: var(--sp-3);
   margin: 0 0 var(--sp-4) 0;
@@ -189,7 +190,8 @@ h3 {
 .top-nav a {
   color: var(--fg-muted);
   border-bottom: 0;
-  padding: 0 var(--sp-3);
+  display: inline-block;
+  padding: var(--sp-2) var(--sp-3);
   transition: color 0.15s ease;
 }
 
@@ -290,7 +292,7 @@ pre {
   padding: 0 0 0 var(--sp-4);
   overflow-x: auto;
   margin: 0 0 var(--sp-5) 0;
-  font-size: var(--fs-small);
+  font-size: clamp(0.72rem, 0.55rem + 0.9vw, 0.9rem);
   line-height: 1.65;
 }
 
@@ -420,6 +422,6 @@ footer {
 /* Smaller screens */
 @media (max-width: 560px) {
   main { padding: var(--sp-6) 1.1rem var(--sp-7); }
-  pre { font-size: var(--fs-micro); padding: var(--sp-3); }
+  pre { padding: var(--sp-3); }
   li::before { margin-right: 0.2rem; }
 }
