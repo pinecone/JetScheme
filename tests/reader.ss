@@ -146,6 +146,24 @@
 ;; trailing whitespace and comments still yield atom
 ($check (= 99 (read p)))
 
+;; #tuple(1 two), #hashset(a b), #hashmap(k 5)
+(define rt (read p))
+($check (isa? rt tuple))
+($check (equal? (tuple 1 'two) rt))
+(define rs (read p))
+($check (hashset? rs))
+($check (ref rs 'b))
+($check (not (ref rs 'c)))
+(define rm (read p))
+($check (hashmap? rm))
+($check (= 5 (ref rm 'k)))
+
+;; `#tuple(1 ,y) -> (quasiquote #tuple(1 (unquote y)))
+(define rqt (read p))
+($check (eq? 'quasiquote (car rqt)))
+($check (isa? (car (cdr rqt)) tuple))
+($check (equal? '(unquote y) (ref (car (cdr rqt)) 1)))
+
 ;; eof
 ($check (eof-object? (read p)))
 ($check (eof-object? (read p)))

@@ -95,11 +95,11 @@ static int compile_to_bytecode(const string& source_path, const string& prelude_
 
 static int execute_bytecode(vector<uint8_t>& bytecode, int script_argc, char* script_argv[])
 {
-	VmState vm{};
+	Env primitives_env;
+	VmState vm{.env = primitives_env};
 	Gc gc;
 	g_gc = &gc;
 
-	Env primitives_env;
 	init_primitives(primitives_env);
 	init_cmdline(primitives_env, script_argc, script_argv);
 

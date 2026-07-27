@@ -146,3 +146,15 @@
 (define nesting (hashmap 'inner (hashmap 'leaf 42)))
 ($check (= 42 (ref (ref nesting 'inner) 'leaf)))
 ($check (hashmap? (ref nesting 'inner)))
+
+;; #hashset(...) and #hashmap(...) reader syntax: elements are data.
+($check (equal? (hashset 'a 'b) #hashset(a b)))
+($check (ref #hashset(a b) 'b))
+($check (not (ref #hashset(a b) 'c)))
+($check (equal? (hashmap 'a 1 'b 2) #hashmap(a 1 b 2)))
+($check (= 2 (ref #hashmap(a 1 b 2) 'b)))
+($check (hashset? #hashset()))
+($check (hashmap? #hashmap()))
+(define k 'key)
+($check (= 5 (ref `#hashmap(,k 5) 'key)))
+($check (ref `#hashset(,k) 'key))

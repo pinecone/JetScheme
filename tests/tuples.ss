@@ -57,3 +57,11 @@
 
 (display values)
 (write values)
+
+;; #tuple(...) reader syntax: elements are data, templates unquote and splice.
+($check (equal? (tuple 1 'two "three") #tuple(1 two "three")))
+($check (isa? #tuple() tuple))
+($check (equal? (tuple '(1 2) #(3)) #tuple((1 2) #(3))))
+(define spliced (list 2 3))
+($check (equal? (tuple 1 2 3) `#tuple(1 ,(first spliced) ,(second spliced))))
+($check (equal? (tuple 1 2 3) `#tuple(1 ,@spliced)))

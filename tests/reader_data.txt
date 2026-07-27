@@ -44,3 +44,7 @@ set!
 ``(a ,,b)
 ;; trailing comment then atom
    99
+#tuple(1 two)
+#hashset(a b)
+#hashmap(k 5)
+`#tuple(1 ,y)

@@ -296,6 +296,8 @@ void collect(VmState& s)
 		gc.mark_atom(s.constants[i].bits);
 	}
 
+	s.env.scan([&gc](Atom& value) { gc.mark_atom(value.bits); });
+
 	gc.sweep();
 
 	std::memset(scan_frontier, 0, static_cast<size_t>(s.stack_watermark - scan_frontier) * sizeof(Atom));

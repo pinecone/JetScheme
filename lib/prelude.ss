@@ -271,7 +271,7 @@
 ;;; structs
 (define struct (%prim "struct"))
 (define isa? (%prim "isa?"))
-(define tuple (%prim "make-tuple"))
+(define tuple (%prim "tuple"))
 
 ;;; hash tables
 (define hashset (%prim "hashset"))

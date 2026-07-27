@@ -423,18 +423,19 @@ struct box_unbox_t<Lambda>
 
 struct VmState
 {
-	InternedSymbols symbols;
-	FrameStack frames;
-	Atom* stack_base;
-	Atom* stack_end;
-	Atom* stack_top;
+	Env& env;
+	InternedSymbols symbols{};
+	FrameStack frames{};
+	Atom* stack_base{};
+	Atom* stack_end{};
+	Atom* stack_top{};
 	// High-water mark of stack_top since the last collect. Slots above it hold no
 	// heap atoms; collect() re-zeroes everything between the scanned region and the
 	// watermark so the mark scan never reads an atom whose referent a sweep freed
 	// while the slot sat unscanned.
-	Atom* stack_watermark;
-	Atom* constants;
-	size_t n_constants;
+	Atom* stack_watermark{};
+	Atom* constants{};
+	size_t n_constants{};
 };
 
 #define VM_OP_PARAMS                                                                                         \

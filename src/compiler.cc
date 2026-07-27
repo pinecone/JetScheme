@@ -358,6 +358,47 @@ inline bool is_delimiter(char c)
 	       c == ';' || c == '`' || c == ',';
 }
 
+// A struct form's constructor is also the name its type is bound to in the primitive Env.
+struct HashForm
+{
+	std::string_view prefix;
+	const char* constructor;
+	bool is_struct_type;
+	bool is_key_value;
+};
+
+inline constexpr HashForm HASH_FORMS[] = {
+	{.prefix = "#", .constructor = "vector", .is_struct_type = false, .is_key_value = false},
+	{.prefix = "#u8", .constructor = "bytevector", .is_struct_type = false, .is_key_value = false},
+	{.prefix = "#tuple", .constructor = "tuple", .is_struct_type = true, .is_key_value = false},
+	{.prefix = "#hashset", .constructor = "hashset", .is_struct_type = true, .is_key_value = false},
+	{.prefix = "#hashmap", .constructor = "hashmap", .is_struct_type = true, .is_key_value = true},
+};
+
+inline const HashForm* find_hash_form(std::string_view prefix)
+{
+	for (const HashForm& form : HASH_FORMS)
+	{
+		if (form.prefix == prefix)
+		{
+			return &form;
+		}
+	}
+	return nullptr;
+}
+
+inline bool is_struct_constructor(std::string_view name)
+{
+	for (const HashForm& form : HASH_FORMS)
+	{
+		if (form.is_struct_type && name == form.constructor)
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
 inline char decode_char_literal(std::string_view body, SourceLoc loc)
 {
 	if (body.size() == 1)
@@ -677,19 +718,6 @@ namespace
 
 			switch (peek())
 			{
-				case 't':
-				case 'f':
-					buf += advance();
-					if (is_delimiter(peek()))
-					{
-						emit(TokenKind::Boolean, intern(buf), start);
-					}
-					else
-					{
-						JET_DIE("%d:%d: invalid boolean", line, col);
-					}
-					break;
-
 				case '\\':
 					buf += advance();
 					if (!at_end())
@@ -707,28 +735,29 @@ namespace
 					emit(TokenKind::Character, intern(buf), start);
 					break;
 
-				case 'u':
-					buf += advance();
-					if (peek() != '8')
-					{
-						JET_DIE("%d:%d: invalid # syntax", line, col);
-					}
-					buf += advance();
-					if (peek() != '(')
-					{
-						JET_DIE("%d:%d: invalid # syntax", line, col);
-					}
-					emit(TokenKind::Hash, intern(buf), start);
-					break;
-
 				case '(':
 					// Leave the '(' in the stream; it lexes as LParen next.
 					emit(TokenKind::Hash, intern(buf), start);
 					break;
 
 				default:
-					JET_DIE("%d:%d: invalid # syntax", line, col);
+					finish_hash(buf, start);
 			}
+		}
+
+		void finish_hash(std::string& buf, SourceLoc start)
+		{
+			while (!at_end() && std::isalnum(static_cast<unsigned char>(peek())))
+			{
+				buf += advance();
+			}
+			if ((buf == "#t" || buf == "#f") && is_delimiter(peek()))
+			{
+				emit(TokenKind::Boolean, intern(buf), start);
+				return;
+			}
+			JET_DIE_UNLESS(find_hash_form(buf) && peek() == '(', "%d:%d: invalid # syntax", line, col);
+			emit(TokenKind::Hash, intern(buf), start);
 		}
 
 		void finish_ident(std::string& buf, SourceLoc start)
@@ -1127,11 +1156,7 @@ namespace
 					return parse_quasiquote(1);
 				}
 				case TokenKind::Hash:
-					if (peek().text == "#u8")
-					{
-						return parse_quoted_bytevector();
-					}
-					return parse_quoted_vector();
+					return parse_hash_form(0);
 				case TokenKind::LParen:
 					return parse_paren_form();
 				default:
@@ -1852,11 +1877,7 @@ namespace
 					return parse_quoted_list();
 
 				case TokenKind::Hash:
-					if (peek().text == "#u8")
-					{
-						return parse_quoted_bytevector();
-					}
-					return parse_quoted_vector();
+					return parse_hash_form(0);
 
 				default:
 					JET_DIE_UNLESS(is_symbol_token(tok.kind), "%d:%d: unexpected token in datum",
@@ -2015,24 +2036,33 @@ namespace
 			}
 		}
 
-		// #(...) at depth 0, or a vector template: the parens are already consumed.
-		Expr* parse_vector_body(SourceLoc loc, int depth)
+		Expr* parse_hash_form(int depth)
 		{
+			const HashForm* form = find_hash_form(peek().text);
+			SourceLoc loc = advance().loc;
+			JET_DIE_UNLESS(form, "%d:%d: invalid # syntax", loc.line, loc.col);
+			expect(TokenKind::LParen);
+
 			std::vector<QqItem> items;
 			Expr* tail = nullptr;
 			parse_items(depth, items, tail);
 			expect(TokenKind::RParen);
-			JET_DIE_UNLESS(!tail, "%d:%d: dotted tail in a vector", loc.line, loc.col);
+			JET_DIE_UNLESS(!tail, "%d:%d: dotted tail in a %s literal", loc.line, loc.col, form->constructor);
 
-			if (!has_splice(items))
+			if (has_splice(items))
 			{
-				return make_call(loc, "vector", item_values(items));
+				Expr* e = make_expr(ExprKind::Apply, loc);
+				e->apply.proc = make_expr(ExprKind::VarRef, loc);
+				e->apply.proc->var_ref.name = arena.copy_string(form->constructor);
+				e->apply.args = build_qq_list(loc, items, nullptr);
+				return e;
 			}
-			Expr* e = make_expr(ExprKind::Apply, loc);
-			e->apply.proc = make_expr(ExprKind::VarRef, loc);
-			e->apply.proc->var_ref.name = arena.copy_string("vector");
-			e->apply.args = build_qq_list(loc, items, nullptr);
-			return e;
+			if (form->is_key_value)
+			{
+				JET_DIE_UNLESS(items.size() % 2 == 0, "%d:%d: %s literal needs an even number of elements",
+				               loc.line, loc.col, form->constructor);
+			}
+			return make_call(loc, form->constructor, item_values(items));
 		}
 
 		Expr* parse_quasiquote(int depth)
@@ -2069,13 +2099,7 @@ namespace
 					return parse_qq_after_lparen(loc, depth, nullptr);
 
 				case TokenKind::Hash:
-					if (tok.text == "#u8")
-					{
-						return parse_quoted_bytevector();
-					}
-					advance();
-					expect(TokenKind::LParen);
-					return parse_vector_body(loc, depth);
+					return parse_hash_form(depth);
 
 				default:
 					return parse_datum();
@@ -2095,28 +2119,6 @@ namespace
 			return build_qq_list(loc, items, tail);
 		}
 
-		// #(a b c) → (vector a b c).
-		Expr* parse_quoted_vector()
-		{
-			SourceLoc loc = advance().loc;
-			expect(TokenKind::LParen);
-			return parse_vector_body(loc, 0);
-		}
-
-		// #u8(1 2 3) → (bytevector 1 2 3).
-		Expr* parse_quoted_bytevector()
-		{
-			SourceLoc loc = advance().loc;
-			expect(TokenKind::LParen);
-
-			std::vector<Expr*> elems;
-			while (peek().kind != TokenKind::RParen)
-			{
-				elems.push_back(parse_datum());
-			}
-			expect(TokenKind::RParen);
-			return make_call(loc, "bytevector", elems);
-		}
 	};
 
 } // namespace
@@ -5860,7 +5862,7 @@ Bytecode compile(std::string source, std::string filename, CompileFlags flags)
 namespace
 {
 
-	Atom datum_to_atom(InternedSymbols& symbols, Expr* e)
+	Atom datum_to_atom(InternedSymbols& symbols, Env& env, Expr* e)
 	{
 		switch (e->kind)
 		{
@@ -5887,22 +5889,22 @@ namespace
 					Atom result = box(EmptyList{});
 					for (size_t i = e->call.args.size(); i-- > 0;)
 					{
-						result = cons(datum_to_atom(symbols, e->call.args[i]), result);
+						result = cons(datum_to_atom(symbols, env, e->call.args[i]), result);
 					}
 					return result;
 				}
 				if (name == "cons")
 				{
 					JET_DIE_UNLESS(e->call.args.size() == 2, "datum_to_atom: cons arity");
-					return cons(datum_to_atom(symbols, e->call.args[0]),
-					            datum_to_atom(symbols, e->call.args[1]));
+					return cons(datum_to_atom(symbols, env, e->call.args[0]),
+					            datum_to_atom(symbols, env, e->call.args[1]));
 				}
 				if (name == "vector")
 				{
 					Vec v;
 					for (uint32_t i = 0; i < e->call.args.size(); ++i)
 					{
-						v.push_back(datum_to_atom(symbols, e->call.args[i]));
+						v.push_back(datum_to_atom(symbols, env, e->call.args[i]));
 					}
 					return box(std::move(v));
 				}
@@ -5912,10 +5914,24 @@ namespace
 					bv.reserve(e->call.args.size());
 					for (uint32_t i = 0; i < e->call.args.size(); ++i)
 					{
-						Atom byte_val = datum_to_atom(symbols, e->call.args[i]);
+						Atom byte_val = datum_to_atom(symbols, env, e->call.args[i]);
 						bv.push_back(static_cast<uint8_t>(unbox<Number>(byte_val)));
 					}
 					return box(std::move(bv));
+				}
+				if (is_struct_constructor(name))
+				{
+					Atom* bound_type = env.lookup(name);
+					JET_DIE_UNLESS(bound_type, "read: '%.*s' is unbound", static_cast<int>(name.size()),
+					               name.data());
+					std::vector<Atom> args;
+					args.reserve(e->call.args.size());
+					for (uint32_t i = 0; i < e->call.args.size(); ++i)
+					{
+						args.push_back(datum_to_atom(symbols, env, e->call.args[i]));
+					}
+					return construct_struct(unbox<StructType>(*bound_type), args.data(),
+					                        args.data() + args.size());
 				}
 				JET_DIE("datum_to_atom: unexpected call proc");
 			}
@@ -5946,7 +5962,7 @@ namespace
 			return make_eof();
 		}
 		Expr* datum = parser.parse_datum();
-		return datum_to_atom(vm.symbols, datum);
+		return datum_to_atom(vm.symbols, vm.env, datum);
 	}
 
 } // namespace

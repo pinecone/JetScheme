@@ -453,6 +453,7 @@ Atom display_to(Atom value, std::string& out);
 Atom write_to(Atom value, std::string& out);
 
 void init_structs(Env& e);
+Atom construct_struct(StructType* type, Atom* first, Atom* last);
 
 struct Prim
 {

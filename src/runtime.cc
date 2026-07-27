@@ -1506,28 +1506,31 @@ static bool equal_tuple(EqualContext& context, Struct* first, Struct* second, Eq
 	return true;
 }
 
-template <typename T, Atom (*print)(Atom, std::string&)>
-static void print_struct(Struct* instance, std::string& out)
+template <Atom (*print)(Atom, std::string&)>
+static void print_scheme_struct(Struct* instance, std::string& out)
 {
-	T* value = static_cast<T*>(instance);
+	SchemeStruct* value = static_cast<SchemeStruct*>(instance);
 	out += "#s(";
 	out += symbol_to_string(unbox<Symbol>(value->type->name()));
-	uint32_t size;
-	Atom* elements;
-	if constexpr (std::is_same_v<T, SchemeStruct>)
-	{
-		size = value->n_fields;
-		elements = value->values;
-	}
-	else
-	{
-		size = value->size;
-		elements = value->elements;
-	}
-	for (uint32_t i = 0; i < size; ++i)
+	for (uint32_t i = 0; i < value->n_fields; ++i)
 	{
 		out += ' ';
-		print(elements[i], out);
+		print(value->values[i], out);
+	}
+	out += ')';
+}
+
+template <Atom (*print)(Atom, std::string&)>
+static void print_tuple(Struct* instance, std::string& out)
+{
+	Tuple* tuple = static_cast<Tuple*>(instance);
+	out += "#tuple(";
+	const char* separator = "";
+	for (uint32_t i = 0; i < tuple->size; ++i)
+	{
+		out += separator;
+		separator = " ";
+		print(tuple->elements[i], out);
 	}
 	out += ')';
 }
@@ -1546,8 +1549,8 @@ static const StructOps scheme_struct_ops = {
 	},
 	struct_destructor<SchemeStruct>(),
 	equal_scheme_struct,
-	print_struct<SchemeStruct, display_to>,
-	print_struct<SchemeStruct, write_to>,
+	print_scheme_struct<display_to>,
+	print_scheme_struct<write_to>,
 };
 
 static const StructOps tuple_ops = {
@@ -1564,8 +1567,8 @@ static const StructOps tuple_ops = {
 	},
 	struct_destructor<Tuple>(),
 	equal_tuple,
-	print_struct<Tuple, display_to>,
-	print_struct<Tuple, write_to>,
+	print_tuple<display_to>,
+	print_tuple<write_to>,
 };
 
 static Atom slow_ref_field(Atom obj, Atom key)
@@ -1885,14 +1888,36 @@ static bool equal_hashmap(EqualContext& context, Struct* first, Struct* second, 
 	return true;
 }
 
-static void print_hashset(Struct*, std::string& out)
+template <Atom (*print)(Atom, std::string&)>
+static void print_hashset(Struct* instance, std::string& out)
 {
-	out += "#<hashset>";
+	HashSet* set = static_cast<HashSet*>(instance);
+	out += "#hashset(";
+	const char* separator = "";
+	for (const TableKey& item : set->items)
+	{
+		out += separator;
+		separator = " ";
+		print(item.atom, out);
+	}
+	out += ')';
 }
 
-static void print_hashmap(Struct*, std::string& out)
+template <Atom (*print)(Atom, std::string&)>
+static void print_hashmap(Struct* instance, std::string& out)
 {
-	out += "#<hashmap>";
+	HashMap* map = static_cast<HashMap*>(instance);
+	out += "#hashmap(";
+	const char* separator = "";
+	for (const std::pair<const TableKey, Atom>& entry : map->entries)
+	{
+		out += separator;
+		separator = " ";
+		print(entry.first.atom, out);
+		out += ' ';
+		print(entry.second, out);
+	}
+	out += ')';
 }
 
 static const StructOps hashset_ops = {
@@ -1909,8 +1934,8 @@ static const StructOps hashset_ops = {
 	},
 	struct_destructor<HashSet>(),
 	equal_hashset,
-	print_hashset,
-	print_hashset,
+	print_hashset<display_to>,
+	print_hashset<write_to>,
 };
 
 static const StructOps hashmap_ops = {
@@ -1927,9 +1952,31 @@ static const StructOps hashmap_ops = {
 	},
 	struct_destructor<HashMap>(),
 	equal_hashmap,
-	print_hashmap,
-	print_hashmap,
+	print_hashmap<display_to>,
+	print_hashmap<write_to>,
 };
+
+Atom construct_struct(StructType* type, Atom* first, Atom* last)
+{
+	check_arity(type->arity(), static_cast<size_t>(last - first));
+	Struct* instance = nullptr;
+	switch (type->kind())
+	{
+		case StructKind::Scheme:
+			instance = construct_scheme_struct(type, first, last);
+			break;
+		case StructKind::Tuple:
+			instance = construct_tuple(type, first, last);
+			break;
+		case StructKind::HashSet:
+			instance = construct_hashset(type, first, last);
+			break;
+		case StructKind::HashMap:
+			instance = construct_hashmap(type, first, last);
+			break;
+	}
+	return Atom::make_tagged(jet_tag::struct_, instance);
+}
 
 template <StructKind kind>
 static Atom is_kind(Atom value)
@@ -1943,7 +1990,7 @@ void init_structs(Env& e)
 	static const std::string hashset_name = "hashset";
 	static const std::string hashmap_name = "hashmap";
 	Atom name = box(static_cast<Symbol>(&tuple_name));
-	e.bind("make-tuple", box<StructType>(name, std::vector<Atom>{}, n_ary(), tuple_ops));
+	e.bind("tuple", box<StructType>(name, std::vector<Atom>{}, n_ary(), tuple_ops));
 	e.bind("hashset", box<StructType>(box(static_cast<Symbol>(&hashset_name)), std::vector<Atom>{},
 	                                  n_ary(), hashset_ops));
 	e.bind("hashmap", box<StructType>(box(static_cast<Symbol>(&hashmap_name)), std::vector<Atom>{},
