@@ -21,6 +21,10 @@ CXX				 := clang++
 UNCRUSTIFY := uncrustify
 ASAN_RTDIR := $(shell $(CXX) -print-runtime-dir 2>/dev/null)
 
+# Parallel build by default; override with `make JOBS=1` or `make -j1`.
+JOBS ?= $(shell nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 8)
+MAKEFLAGS += -j$(JOBS)
+
 VARIANT ?= release
 
 SRC			 := src
