@@ -144,9 +144,8 @@
   <code>exp</code>, <code>log</code>, <code>sin</code>, <code>cos</code>,
   <code>tan</code>, <code>asin</code>, <code>acos</code>, <code>atan</code>,
   <code>floor</code>, <code>ceiling</code>, <code>truncate</code>,
-  <code>round</code>, <code>min</code>, <code>max</code>, and
-  <code>random</code>, which takes no arguments. <code>random-seed</code> reseeds
-  it from the OS.</p>
+  <code>round</code>, <code>min</code>, <code>max</code>,
+  <code>random</code>, and <code>random-seed</code>.</p>
   <p>Comparisons <code>=</code> <code>&lt;</code> <code>&lt;=</code>
   <code>&gt;</code> <code>&gt;=</code> and predicates <code>zero?</code>,
   <code>positive?</code>, <code>negative?</code>, <code>even?</code>,
@@ -221,8 +220,7 @@
 
   <h3>Tuples</h3>
   <p><strong><code>tuple</code>.</strong> Constructs an immutable, fixed-size tuple,
-  indexed with <code>ref</code>. The literal form is <code>#tuple(...)</code>, and its
-  elements are data rather than expressions.</p>
+  indexed with <code>ref</code>. The literal form is <code>#tuple(...)</code>.</p>
 <pre><code>(<span class="k">define</span> t (<span class="b">tuple</span> '<span class="n">a</span> '<span class="n">b</span> '<span class="n">c</span>))
 (<span class="b">isa?</span> t <span class="b">tuple</span>)                                   <span class="c">; =&gt; #t</span>
 (<span class="b">ref</span> t <span class="n">1</span>)                                        <span class="c">; =&gt; b</span>
@@ -257,21 +255,13 @@
 (<span class="b">ref</span> #<span class="b">hashset</span>(<span class="n">a</span> <span class="n">b</span>) '<span class="n">a</span>)                           <span class="c">; =&gt; #t</span></code></pre>
   <p><strong>Keys are immutable.</strong> Legal keys are numbers, booleans, characters,
   the empty list, the eof object, symbols, strings, and tuples whose elements are
-  themselves legal keys. Anything mutable, or holding something mutable, is rejected
-  with a runtime error: pairs, vectors, bytevectors, structs, procedures, ports, and the
-  tables themselves. Duplicate keys collapse as a table is built, and the last value
+  themselves legal keys. Duplicate keys collapse as a table is built, and the last value
   wins.</p>
 
   <h3>I/O &amp; files</h3>
-  <p><code>display</code> prints a value for a person to read. <code>write</code> prints
-  it in the literal forms above, so <code>read</code> parses that output back into an
-  equal value. Both print to stdout. <code>newline</code> prints a newline, and
+  <p><code>display</code> prints values in human-readable form. <code>write</code> prints them in code-form, which <code>read</code> can parse back. <code>newline</code> prints a newline, and
   <code>displayn</code> is <code>display</code> followed by a newline.
-  <code>read</code> takes one datum at a time from an input port:</p>
-<pre><code>(<span class="k">define</span> p (<span class="b">open-input-file</span> <span class="s">"data.ss"</span>))
-(<span class="k">define</span> a (<span class="b">read</span> p))                              <span class="c">; first datum</span>
-(<span class="k">define</span> b (<span class="b">read</span> p))                              <span class="c">; second datum</span>
-(<span class="b">close-input-port</span> p)</code></pre>
+
   <p>To read and write a file one character at a time there are
   <code>open-input-file</code>, <code>open-output-file</code>,
   <code>read-char</code>, <code>write-char</code>, <code>close-input-port</code>,
