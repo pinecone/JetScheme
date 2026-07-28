@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Head-to-head jet benchmark vs lua, python, and jsc for a single git ref.
+"""Head-to-head jet benchmark vs lua, python, jsc, and jsc+jit for a single git ref.
 
 Builds the jet ref in a temp worktree, then for each bench runs jet against
-every available comparand (lua, python, jsc), interleaving the
+every available comparand (lua, python, jsc, jscjit), interleaving the
 runs per iteration. Reports per-bench median time, ratio, and jet's
 wins/ties/losses with a one-sided binomial p-value, plus an overall geomean
 ratio per comparand. A bench whose comparand source is missing is skipped for
@@ -11,8 +11,13 @@ that comparand only; missing .ss is fatal.
 Usage:
     ./ab-cross [<ref>] [-n RUNS] [-b BENCH ...] [--keep]
 
-Set LUA, PYTHON, or JSC to an empty string to disable that comparand. Set
-JSC_VERSION when JSC does not point into Apple's JavaScriptCore framework.
+Comparands resolve automatically: lua and python from PATH, jsc from the
+macOS system JavaScriptCore helper. A comparand that cannot be found is a
+fatal error; set its env var (LUA, PYTHON, JSC, JSCJIT) to the binary's path,
+or to an empty string to skip that comparand. jsc runs with the JIT off
+(LLInt); jscjit is the same binary with the JIT on, and JSCJIT overrides
+which binary that is. Set JSC_VERSION when JSC or JSCJIT does not point into
+Apple's JavaScriptCore framework.
 
 Examples:
     ./ab-cross                       # use HEAD
@@ -133,7 +138,7 @@ def fmt_p(p):
 
 def main():
     ap = argparse.ArgumentParser(
-        description="Head-to-head jet benchmark vs lua and python for a single git ref.",
+        description="Head-to-head jet benchmark vs lua, python, jsc, and jsc+jit for a single git ref.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__)
     ap.add_argument("ref", nargs="?", default="HEAD",
@@ -148,22 +153,23 @@ def main():
 
     benches = args.bench or DEFAULT_BENCHES
 
-    if "LUA" in os.environ:
-        lua = os.environ["LUA"] or None
-    else:
-        lua = shutil.which("lua")
-    if "PYTHON" in os.environ:
-        py = os.environ["PYTHON"] or None
-    else:
-        py = shutil.which("python3") or shutil.which("python")
-    if "JSC" in os.environ:
-        jsc = os.environ["JSC"] or None
-    else:
-        jsc = shutil.which("jsc")
-        if jsc is None and SYSTEM_JSC.exists():
-            jsc = str(SYSTEM_JSC)
-    if lua is None and py is None and jsc is None:
-        die("no comparand found (or enabled with LUA/PYTHON/JSC env)")
+    def resolve(env_var, found, looked_in):
+        if env_var in os.environ:
+            return os.environ[env_var] or None
+        if found is None:
+            die(f"{env_var.lower()} not found in {looked_in}; "
+                f"set {env_var}=/path/to/binary to point at it, or {env_var}= (empty) to skip it")
+        return found
+
+    lua = resolve("LUA", shutil.which("lua"), "PATH")
+    py = resolve("PYTHON", shutil.which("python3") or shutil.which("python"), "PATH")
+    # assumes macOS: jsc lives inside the system JavaScriptCore framework
+    jsc = resolve("JSC", str(SYSTEM_JSC) if SYSTEM_JSC.exists() else None,
+                  f"{SYSTEM_JSC} (a macOS path)")
+    jscjit = os.environ["JSCJIT"] if "JSCJIT" in os.environ else jsc
+    jscjit = jscjit or None
+    if lua is None and py is None and jsc is None and jscjit is None:
+        die("all comparands disabled (LUA/PYTHON/JSC/JSCJIT all empty)")
 
     r = subprocess.run(["git", "rev-parse", "--verify", f"{args.ref}^{{commit}}"],
                        cwd=REPO, capture_output=True)
@@ -182,6 +188,8 @@ def main():
         print(f"  python: {py}  ({python_version(py)})")
     if jsc:
         print(f"  jsc:    {jsc}  ({jsc_version(jsc)})")
+    if jscjit:
+        print(f"  jscjit: {jscjit}  ({jsc_version(jscjit)})")
     print(f"  runs:   {args.runs} per interpreter per bench, interleaved")
     print()
 
@@ -197,6 +205,8 @@ def main():
             sources["python"] = HERE / f"{b}.py"
         if jsc and (HERE / f"{b}.js").exists():
             sources["jsc"] = HERE / f"{b}.js"
+        if jscjit and (HERE / f"{b}.js").exists():
+            sources["jscjit"] = HERE / f"{b}.js"
         sources_by_bench[b] = (ss_src, sources)
 
     name_w = max(len(b) for b in benches)
@@ -205,12 +215,14 @@ def main():
     print(header)
     print("  " + "-" * (len(header) - 2))
 
-    ratios_by_lang = {"lua": [], "python": [], "jsc": []}
+    ratios_by_lang = {"lua": [], "python": [], "jsc": [], "jscjit": []}
     cmd_for = {
         "lua": lambda src: [lua, str(src)],
         "python": lambda src: [py, str(src)],
         "jsc": lambda src: [jsc, "--useJIT=false", str(HERE / "run-jsc-benchmark.js"),
                             "--", str(HERE / "js"), str(src), src.stem],
+        "jscjit": lambda src: [jscjit, str(HERE / "run-jsc-benchmark.js"),
+                               "--", str(HERE / "js"), str(src), src.stem],
     }
 
     for b in benches:
