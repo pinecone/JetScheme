@@ -51,21 +51,18 @@
   --h2: #bb9af7;
   --h3: var(--cyan-pale);
 
-  --font-sans:    "IBM Plex Sans", "Manrope", -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro", system-ui, ui-sans-serif, "Segoe UI", sans-serif;
-  --font-display: "Poiret One", ui-sans-serif, system-ui, sans-serif;
+  --font-sans:    "Source Sans 3", -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro", system-ui, ui-sans-serif, "Segoe UI", sans-serif;
   --font-heading: "Manrope", ui-sans-serif, system-ui, sans-serif;
+  --font-mark:    "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-mono:    "0xProto", ui-monospace, "SFMono-Regular", "Menlo", "Consolas", monospace;
 
   /* Type scale: 1.25 (major third) */
-  --fs-micro:  0.8rem;
-  --fs-small:  0.9rem;
+  --fs-micro:  0.64rem;
+  --fs-small:  0.8rem;
   --fs-base:   1rem;
-  --fs-lead:   1.25rem;
   --fs-h3:     1rem;
-  --fs-h2:     1.2rem;
-  --fs-title:  clamp(2rem, 8.5vw, 3.5rem);
-  --fs-h1-min: 2rem;
-  --fs-h1-max: 3rem;
+  --fs-h2:     1.25rem;
+  --fs-title:  1.953rem;
 
   /* Spacing scale (rem), powers of ~1.5 */
   --sp-1: 0.25rem;
@@ -92,6 +89,7 @@ html, body {
   background: var(--bg);
   color: var(--fg);
   font-family: var(--font-sans);
+  font-optical-sizing: auto;
   line-height: 1.65;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -103,7 +101,7 @@ body {
 }
 
 main {
-  max-width: 51rem; /* the 48rem benchmark table plus side padding */
+  max-width: 51rem; /* the 38rem benchmark table plus side padding */
   margin: 0 auto;
   padding: var(--sp-6) var(--sp-5) var(--sp-8);
 }
@@ -139,30 +137,22 @@ h3 {
   margin: var(--sp-6) 0 var(--sp-3) 0;
 }
 
-.title-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  gap: var(--sp-3);
-  margin: 0 0 var(--sp-4) 0;
-}
-
-.title-row h2 {
-  margin: 0;
-  font-family: var(--font-display);
+/* Masthead, not a logo: no retail typeface is drawn to be a logotype, so
+   the name is not blown up into a fake one. It parts from the section
+   heads on every axis at once -- own face, mixed case, white instead of
+   magenta, a step up in size -- which is what makes it read as the title
+   of the page rather than one more section of it. Mixed case wants the
+   tracking closed up, not opened out. */
+#usage h2 {
+  margin: 0 0 var(--sp-6) 0;
+  font-family: var(--font-mark);
+  font-optical-sizing: auto;
   font-size: var(--fs-title);
-  color: #ffe1f2; /* lit neon core */
+  font-weight: 500;
+  color: var(--fg);
   text-transform: none;
-  letter-spacing: 0.02em;
-  font-weight: 400;
-  text-shadow:
-    0 0 6px  color-mix(in srgb, var(--magenta-hot) 85%, transparent),
-    0 0 18px color-mix(in srgb, var(--magenta-hot) 50%, transparent),
-    0 0 48px color-mix(in srgb, var(--magenta-hot) 35%, transparent);
-}
-
-#benchmarks h2 {
-  margin-top: var(--sp-7);
+  letter-spacing: -0.015em;
+  text-shadow: none;
 }
 
 #usage pre {
@@ -171,33 +161,10 @@ h3 {
 
 .tagline {
   color: var(--fg-dark);
-  font-size: var(--fs-lead);
+  font-size: var(--fs-base);
   line-height: 1.55;
   margin: 0;
 }
-
-.top-nav {
-  margin-left: auto;
-  font-family: var(--font-heading);
-  font-size: var(--fs-small);
-  letter-spacing: 0.04em;
-}
-
-.top-nav a:last-child {
-  padding-right: 0;
-}
-
-.top-nav a {
-  color: var(--fg-muted);
-  border-bottom: 0;
-  display: inline-block;
-  padding: var(--sp-2) var(--sp-3);
-  transition: color 0.15s ease;
-}
-
-.top-nav a:hover { color: var(--fg); border-bottom: 0; }
-
-.top-nav .sep { color: var(--fg-gutter); }
 
 .tagline strong {
   color: var(--cyan-pale);
@@ -292,7 +259,7 @@ pre {
   padding: 0 0 0 var(--sp-4);
   overflow-x: auto;
   margin: 0 0 var(--sp-5) 0;
-  font-size: clamp(0.72rem, 0.55rem + 0.9vw, 0.9rem);
+  font-size: clamp(0.64rem, 0.49rem + 0.8vw, 0.8rem);
   line-height: 1.65;
 }
 
@@ -311,6 +278,18 @@ pre code .s   { color: var(--green); }
 pre code .ch  { color: var(--green); }
 pre code .cmd { color: var(--blue); }
 
+/* a link inside a terminal block keeps the block's own colour, and says
+   it is a link with the underline alone */
+pre code a {
+  color: inherit;
+  border-bottom: 1px dotted var(--fg-gutter);
+}
+
+pre code a:hover {
+  color: var(--cyan);
+  border-bottom-color: var(--cyan);
+}
+
 pre code a.commit { border-bottom: 0; }
 
 pre code a.commit .ext {
@@ -321,23 +300,92 @@ pre code a.commit .ext {
 }
 
 /* Tables */
+/* No heading over the table: the space above it, and the legend and
+   scale below, are what set it apart from the quickstart block. */
 .table-wrap {
   overflow-x: auto;
-  margin: 0 0 var(--sp-5) 0;
+  margin: var(--sp-6) 0 0;
 }
 
 table {
   border-collapse: collapse;
   width: 100%;
-  min-width: 48rem;
+  min-width: 38rem;
   font-size: var(--fs-small);
+  /* closing rule: the speed scale below reads as the table's summary,
+     so the two are bound into one block by this line plus proximity */
+  border-bottom: 1px solid var(--bg-highlight);
 }
 
-table caption {
+/* Table legend
+   ------------------------------------------------------------------
+   Set to the table's own measure, the way a magazine sets a table
+   footnote: the left edge lines up with the first column's text and the
+   right edge with the last cell's inner edge (both are one --sp-2 cell
+   pad in from the table box), so the closing rule is bracketed by two
+   flush verticals. It sits exactly one cell-pad below that rule, which
+   makes it read as the table's last row rather than a floating note,
+   and it is set at --fs-micro, the smallest size already in the table
+   (the machine glyph row), so it joins the existing type scale instead
+   of adding a step to it. */
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--sp-1) var(--sp-4);
+  margin: var(--sp-2) 0 0;
+  padding: 0 var(--sp-2);
+  font-size: var(--fs-micro);
+  line-height: 1.5;
   color: var(--fg-muted);
   text-align: left;
-  padding: 0 var(--sp-2) var(--sp-2);
-  font-size: var(--fs-small);
+  hyphens: none;
+}
+
+.legend-keys {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+/* typographic separators, not flex gaps: the interval between keys is
+   set in ems of the legend's own type, so it holds at any size */
+.legend-keys > span + span::before {
+  content: "\00b7";
+  color: var(--fg-gutter);
+  margin: 0 0.7em;
+}
+
+.legend-glyph {
+  margin-right: 0.4em;
+}
+
+/* the credit, dimmer than the key it trails */
+.legend-credit {
+  margin-left: auto;
+  color: var(--comment);
+}
+
+.legend code {
+  color: var(--fg-dark);
+  font-size: 1em;
+}
+
+.legend a.commit {
+  color: var(--fg-dark);
+  font-family: var(--font-mono);
+  border-bottom: 1px dotted var(--fg-gutter);
+}
+
+.legend a.commit:hover {
+  color: var(--fg);
+  border-bottom-color: var(--fg-muted);
+}
+
+.legend a.commit .ext {
+  margin-left: 0.15em;
+  font-size: 0.85em;
+  color: var(--fg-muted);
 }
 
 thead th {
@@ -346,7 +394,6 @@ thead th {
   text-align: left;
   padding: var(--sp-2);
   border-bottom: 1px solid var(--bg-highlight);
-  font-size: var(--fs-small);
   letter-spacing: 0.02em;
 }
 
@@ -355,11 +402,17 @@ thead th.hint {
   font-weight: 400;
 }
 
-thead tr:first-child th:not(.hint) { text-align: center; }
+thead tr:first-child th:not(.hint) {
+  text-align: center;
+  font-family: var(--font-mono);
+  color: var(--cyan-pale);
+}
 
 thead tr:nth-child(2) th {
-  width: 12%;
-  text-align: center;
+  text-align: left;
+  color: var(--fg-muted);
+  font-weight: 400;
+  font-size: 0.8em;
 }
 
 tbody td {
@@ -375,16 +428,164 @@ tbody td:first-child {
 tbody td:nth-child(n+2) {
   font-family: var(--font-mono);
   color: var(--green);
-  text-align: center;
+  text-align: left;
 }
 
-th.sep, td.sep { border-left: 1px solid var(--bg-highlight); }
+thead tr:nth-child(2) th.m5, tbody td.m5, tfoot td.m5 { text-align: right; }
 
-p.caption {
-  font-size: var(--fs-small);
+/* Machine banding: one hue, two values. The 🍎 column of each pair keeps
+   the full --green; the 🎮 column is the same green stepped down toward
+   the background. Reading across, the bright figures form one band and
+   the dim ones another, so either machine can be followed through all
+   five engines. Value, not hue: a second colour would say "different
+   kind of number" when it is the same measurement on another box. */
+tbody td:nth-child(n+2):not(.m5),
+tfoot td:not(.m5) {
+  color: color-mix(in srgb, var(--green) 72%, var(--bg));
+}
+
+/* Relative-speed scale
+   ------------------------------------------------------------------
+   One hairline axis, jet pinned at the centre. Each engine is a single
+   positioned column -- name / dot / ratio -- so the three labels can
+   never drift apart. Position is linear in the ratio, with the domain
+   running to 3.4x so the outermost labels keep clear of the end caps:
+     x = 50% ± 50% * (ratio - 1) / 2.4
+   The axis carries no tick scale of its own: every point states its own
+   number, so gridline labels would only be a second, competing set of
+   multipliers. */
+.scale {
+  margin: calc(var(--sp-7) + var(--sp-2)) 0 var(--sp-8);
+  padding: 0;
+}
+
+/* Figure title: the page's heading idiom (uppercase, tracked out) two
+   steps down in size and dropped to a muted grey, so it titles the
+   figure without competing with the section headings. line-height:1 so
+   the space below is the margin and nothing else -- roughly a third of
+   the space above it, which is what binds it to the track rather than
+   to the table. */
+.scale figcaption {
+  margin-bottom: var(--sp-3);
+  line-height: 1;
+  font-family: var(--font-heading);
+  font-size: var(--fs-micro);
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  text-align: center;
   color: var(--fg-muted);
-  text-align: left;
-  margin-top: calc(-1 * var(--sp-3));
+}
+
+.scale-track {
+  position: relative;
+  width: 88%;
+  margin: 0 auto;
+  /* headroom for a two-line name above the axis */
+  --names: 2.95rem;
+  height: calc(var(--names) + 2.5rem);
+}
+
+.scale-axis {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: var(--names);
+  height: 1px;
+  background: linear-gradient(
+    to right,
+    transparent,
+    var(--fg-gutter) 4%,
+    var(--fg-gutter) 96%,
+    transparent);
+}
+
+.scale-mark {
+  position: absolute;
+  top: 0;
+  left: var(--x);
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+/* names sit on a shared baseline just above the axis */
+.scale-name {
+  height: var(--names);
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  line-height: 1.35;
+  text-align: center;
+  white-space: nowrap;
+  color: var(--fg-dark);
+  padding-bottom: 0.8rem;
+}
+
+/* zero-height box, so the dot centres on the axis without
+   shifting anything below it */
+.scale-dot {
+  width: 7px;
+  height: 7px;
+  margin: -3.5px 0;
+  border-radius: 50%;
+  background: var(--fg-muted);
+}
+
+.scale-mult {
+  margin-top: 0.75rem;
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* the reference: the only colour on the axis */
+.scale-mark.self .scale-name,
+.scale-mark.self .scale-mult {
+  color: var(--green);
+}
+
+.scale-mark.self .scale-dot {
+  width: 2px;
+  height: 15px;
+  margin: -7.5px 0;
+  border-radius: 1px;
+  background: var(--green);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--green) 55%, transparent);
+}
+
+/* Direction cues as end caps: centred on the axis, in the empty span
+   beyond the outermost points, with the rule knocked out behind them so
+   the words terminate the line instead of floating under it. */
+.scale-ends {
+  display: contents;
+  font-family: var(--font-heading);
+  font-size: var(--fs-micro);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--comment);
+}
+
+.scale-ends span {
+  position: absolute;
+  top: var(--names);
+  transform: translateY(-50%);
+  line-height: 1;
+  background: var(--bg);
+}
+
+.scale-ends span:first-child { left: 0; padding-right: 0.5rem; }
+
+/* trailing negative margin cancels the last letter-space, so the word
+   optically aligns with the right edge of the axis */
+.scale-ends span:last-child {
+  right: 0;
+  padding-left: 0.5rem;
+  margin-right: -0.14em;
 }
 
 tbody tr:hover td { background: rgba(122,162,247,0.04); }
@@ -392,7 +593,6 @@ tbody tr:hover td { background: rgba(122,162,247,0.04); }
 tfoot th, tfoot td {
   padding: var(--sp-2);
   border-top: 1px solid var(--bg-highlight);
-  font-size: var(--fs-small);
 }
 
 tfoot td span { font-family: var(--font-mono); }
@@ -406,7 +606,7 @@ tfoot th {
 
 tfoot td {
   color: var(--green);
-  text-align: center;
+  text-align: left;
 }
 
 /* Footer */
@@ -424,4 +624,43 @@ footer {
   main { padding: var(--sp-6) 1.1rem var(--sp-7); }
   pre { padding: var(--sp-3); }
   li::before { margin-right: 0.2rem; }
+
+  /* no room for the flush-right credit: it drops under the keys,
+     still flush with the table's left edge */
+  .legend { justify-content: flex-start; padding: 0 2px; }
+  .legend-credit { margin-left: 0; }
+
+  /* The table is the widest thing on the page. Rather than scroll it, it
+     goes fluid: the fixed 38rem floor is dropped, the type rides the
+     viewport between two rungs of the scale, and the cell padding falls
+     to a hairline -- ten numeric columns need width, not air. Every cell
+     size is relative, so one declaration moves the whole table. */
+  table {
+    min-width: 0;
+    font-size: clamp(0.6rem, 2.9vw, var(--fs-small));
+  }
+
+  thead th, tbody td, tfoot th, tfoot td { padding: var(--sp-1) 2px; }
+
+  /* the engine names span two columns each and are the widest thing in
+     the header, so they give up a step before the numbers do */
+  thead tr:first-child th { font-size: 0.85em; }
+
+  /* every pixel of width buys separation between the two slow points */
+  .scale-track {
+    width: 100%;
+    --names: 2.7rem;
+    height: calc(var(--names) + 4rem);
+  }
+
+  /* too narrow for end caps on the axis -- the left one would reach the
+     python dot -- so they drop to their own row underneath */
+  .scale-ends { letter-spacing: 0.1em; }
+  .scale-ends span {
+    top: auto;
+    bottom: 0;
+    transform: none;
+    background: none;
+    padding: 0;
+  }
 }
