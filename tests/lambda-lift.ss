@@ -63,6 +63,8 @@
                  (if (< i lim) (+ add-on (go (+ i 1))) 0))))
     (go 0)))
 ($check (= 50 (sum-to 5 10)))
+;; A second invocation executes the same cds site with a new self closure.
+($check (= 21 (sum-to 3 7)))
 
 ;; binding reassigned after init
 (define (twice off)

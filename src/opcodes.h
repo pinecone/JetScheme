@@ -213,8 +213,6 @@ struct OP_cds
 {
 	uint16_t w;
 	uint16_t nargs;
-	uint64_t ic_atom;
-	uint64_t ic_stub;
 };
 struct OP_ldf
 {

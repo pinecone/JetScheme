@@ -1453,8 +1453,7 @@ JET_PRESERVE_NONE static void op_cs_impl(VM_OP_PARAMS)
 enum class CdKind
 {
 	Local,
-	Upvalue,
-	Self
+	Upvalue
 };
 
 template <bool is_tail, CdKind kind>
@@ -1464,37 +1463,25 @@ static constexpr Opcode cd_base_opcode()
 	{
 		return is_tail ? Opcode::cdlt_0 : Opcode::cdl_0;
 	}
-	else if constexpr (kind == CdKind::Upvalue)
+	else
 	{
 		return is_tail ? Opcode::cdut_0 : Opcode::cdu_0;
 	}
-	else
-	{
-		static_assert(!is_tail, "self tail calls lower to recur");
-		return Opcode::cds_0;
-	}
 }
-
-template <CdKind kind>
-using OP_cd_of = std::conditional_t<kind == CdKind::Self, OP_cds, OP_cd>;
 
 template <int N, bool is_tail, CdKind kind>
 JET_NOINLINE JET_PRESERVE_NONE static void op_cd_miss(VM_OP_PARAMS)
 {
 	JET_PROFILE_IC_MISS(static_cast<uint8_t>(cd_base_opcode<is_tail, kind>()) + N);
-	OP_cd_of<kind>* op = reinterpret_cast<OP_cd_of<kind>*>(pc);
+	OP_cd* op = reinterpret_cast<OP_cd*>(pc);
 	pc += sizeof(*op);
 	if constexpr (kind == CdKind::Local)
 	{
 		callee = frame_regs[op->idx];
 	}
-	else if constexpr (kind == CdKind::Upvalue)
-	{
-		callee = frame->closure->captures[op->idx];
-	}
 	else
 	{
-		callee = Atom::make_tagged(jet_tag::procedure, frame->closure);
+		callee = frame->closure->captures[op->idx];
 	}
 	VmOp stub = resolve_call_stub(callee, op->nargs, is_tail);
 	op->ic_atom = callee.bits;
@@ -1508,19 +1495,15 @@ template <int N, bool is_tail, CdKind kind>
 JET_PRESERVE_NONE static void op_cd_impl(VM_OP_PARAMS)
 {
 	JET_GC_CHECK();
-	OP_cd_of<kind>* op = reinterpret_cast<OP_cd_of<kind>*>(pc);
+	OP_cd* op = reinterpret_cast<OP_cd*>(pc);
 	Atom current{};
 	if constexpr (kind == CdKind::Local)
 	{
 		current = frame_regs[op->idx];
 	}
-	else if constexpr (kind == CdKind::Upvalue)
-	{
-		current = frame->closure->captures[op->idx];
-	}
 	else
 	{
-		current = Atom::make_tagged(jet_tag::procedure, frame->closure);
+		current = frame->closure->captures[op->idx];
 	}
 	if (op->ic_atom != current.bits) [[unlikely]]
 	{
@@ -1531,6 +1514,31 @@ JET_PRESERVE_NONE static void op_cd_impl(VM_OP_PARAMS)
 	VmOp stub = reinterpret_cast<VmOp>(op->ic_stub);
 	JET_CALL_WINDOW(op->w, op->nargs);
 	JET_MUSTTAIL return stub(VM_OP_ARGS);
+}
+
+JET_PRESERVE_NONE static void op_cds_hit(VM_OP_PARAMS)
+{
+	JET_GC_CHECK();
+	OP_cds* op = reinterpret_cast<OP_cds*>(pc);
+	pc += sizeof(*op);
+	callee = Atom::make_tagged(jet_tag::procedure, frame->closure);
+	JET_CALL_WINDOW(op->w, op->nargs);
+	JET_MUSTTAIL return fast_call_lambda_notail(VM_OP_ARGS);
+}
+
+template <int N>
+JET_NOINLINE JET_PRESERVE_NONE static void op_cds_install(VM_OP_PARAMS)
+{
+	JET_GC_CHECK();
+	JET_PROFILE_IC_MISS(static_cast<uint8_t>(Opcode::cds_0) + N);
+	OP_cds* op = reinterpret_cast<OP_cds*>(pc);
+	check_arity(frame->closure->arity, op->nargs);
+	VmOp hit = op_cds_hit;
+	std::memcpy(pc - OPCODE_SIZE, &hit, sizeof(hit));
+	pc += sizeof(*op);
+	callee = Atom::make_tagged(jet_tag::procedure, frame->closure);
+	JET_CALL_WINDOW(op->w, op->nargs);
+	JET_MUSTTAIL return fast_call_lambda_notail(VM_OP_ARGS);
 }
 
 static constexpr auto& op_cs_0 = op_cs_impl<0, false>;
@@ -1587,14 +1595,14 @@ static constexpr auto& op_cdut_5 = op_cd_impl<5, true, CdKind::Upvalue>;
 static constexpr auto& op_cdut_6 = op_cd_impl<6, true, CdKind::Upvalue>;
 static constexpr auto& op_cdut_7 = op_cd_impl<7, true, CdKind::Upvalue>;
 
-static constexpr auto& op_cds_0 = op_cd_impl<0, false, CdKind::Self>;
-static constexpr auto& op_cds_1 = op_cd_impl<1, false, CdKind::Self>;
-static constexpr auto& op_cds_2 = op_cd_impl<2, false, CdKind::Self>;
-static constexpr auto& op_cds_3 = op_cd_impl<3, false, CdKind::Self>;
-static constexpr auto& op_cds_4 = op_cd_impl<4, false, CdKind::Self>;
-static constexpr auto& op_cds_5 = op_cd_impl<5, false, CdKind::Self>;
-static constexpr auto& op_cds_6 = op_cd_impl<6, false, CdKind::Self>;
-static constexpr auto& op_cds_7 = op_cd_impl<7, false, CdKind::Self>;
+static constexpr auto& op_cds_0 = op_cds_install<0>;
+static constexpr auto& op_cds_1 = op_cds_install<1>;
+static constexpr auto& op_cds_2 = op_cds_install<2>;
+static constexpr auto& op_cds_3 = op_cds_install<3>;
+static constexpr auto& op_cds_4 = op_cds_install<4>;
+static constexpr auto& op_cds_5 = op_cds_install<5>;
+static constexpr auto& op_cds_6 = op_cds_install<6>;
+static constexpr auto& op_cds_7 = op_cds_install<7>;
 
 void eval(VmState& vm, Frame& init_frame, Atom* constants, size_t n_constants, size_t initial_stack_size)
 {
