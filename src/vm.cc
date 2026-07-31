@@ -449,10 +449,10 @@ JET_NOINLINE JET_PRESERVE_NONE static void slow_call_lambda(VM_OP_PARAMS)
 		switch (n_copy)
 		{
 			case 0: break;
-			case 1: __builtin_memmove(dst, call_args, sizeof(Atom)); break;
-			case 2: __builtin_memmove(dst, call_args, 2 * sizeof(Atom)); break;
-			case 3: __builtin_memmove(dst, call_args, 3 * sizeof(Atom)); break;
-			case 4: __builtin_memmove(dst, call_args, 4 * sizeof(Atom)); break;
+			case 1: std::memmove(dst, call_args, sizeof(Atom)); break;
+			case 2: std::memmove(dst, call_args, 2 * sizeof(Atom)); break;
+			case 3: std::memmove(dst, call_args, 3 * sizeof(Atom)); break;
+			case 4: std::memmove(dst, call_args, 4 * sizeof(Atom)); break;
 			default: std::memmove(dst, call_args, n_copy * sizeof(Atom)); break;
 		}
 		if (nary) [[unlikely]]
@@ -507,7 +507,7 @@ JET_PRESERVE_NONE static void fast_call_lambda(VM_OP_PARAMS)
 	JET_PROFILE_LAMBDA;
 	Lambda& la = *unbox<Lambda>(callee);
 	size_t nargs = static_cast<size_t>(stack_top - args);
-	if (is_nary(la.arity) || (is_tail && nargs > 4)) [[unlikely]]
+	if (is_nary(la.arity) || (is_tail && nargs > 16)) [[unlikely]]
 	{
 		JET_MUSTTAIL return slow_call_lambda<is_tail>(VM_OP_ARGS);
 	}
@@ -523,10 +523,22 @@ JET_PRESERVE_NONE static void fast_call_lambda(VM_OP_PARAMS)
 		switch (nargs)
 		{
 			case 0: break;
-			case 1: __builtin_memmove(dst, args, 1 * sizeof(Atom)); break;
-			case 2: __builtin_memmove(dst, args, 2 * sizeof(Atom)); break;
-			case 3: __builtin_memmove(dst, args, 3 * sizeof(Atom)); break;
-			case 4: __builtin_memmove(dst, args, 4 * sizeof(Atom)); break;
+			case 1: std::memmove(dst, args, 1 * sizeof(Atom)); break;
+			case 2: std::memmove(dst, args, 2 * sizeof(Atom)); break;
+			case 3: std::memmove(dst, args, 3 * sizeof(Atom)); break;
+			case 4: std::memmove(dst, args, 4 * sizeof(Atom)); break;
+			case 5: std::memmove(dst, args, 5 * sizeof(Atom)); break;
+			case 6: std::memmove(dst, args, 6 * sizeof(Atom)); break;
+			case 7: std::memmove(dst, args, 7 * sizeof(Atom)); break;
+			case 8: std::memmove(dst, args, 8 * sizeof(Atom)); break;
+			case 9: std::memmove(dst, args, 9 * sizeof(Atom)); break;
+			case 10: std::memmove(dst, args, 10 * sizeof(Atom)); break;
+			case 11: std::memmove(dst, args, 11 * sizeof(Atom)); break;
+			case 12: std::memmove(dst, args, 12 * sizeof(Atom)); break;
+			case 13: std::memmove(dst, args, 13 * sizeof(Atom)); break;
+			case 14: std::memmove(dst, args, 14 * sizeof(Atom)); break;
+			case 15: std::memmove(dst, args, 15 * sizeof(Atom)); break;
+			case 16: std::memmove(dst, args, 16 * sizeof(Atom)); break;
 		}
 		frame->code = la.code;
 		frame->closure = &la;
@@ -1374,10 +1386,10 @@ JET_NOINLINE JET_PRESERVE_NONE static void slow_recur(VM_OP_PARAMS)
 	switch (nargs)
 	{
 		case 0: break;
-		case 1: __builtin_memmove(dst, src, 1 * sizeof(Atom)); break;
-		case 2: __builtin_memmove(dst, src, 2 * sizeof(Atom)); break;
-		case 3: __builtin_memmove(dst, src, 3 * sizeof(Atom)); break;
-		case 4: __builtin_memmove(dst, src, 4 * sizeof(Atom)); break;
+		case 1: std::memmove(dst, src, 1 * sizeof(Atom)); break;
+		case 2: std::memmove(dst, src, 2 * sizeof(Atom)); break;
+		case 3: std::memmove(dst, src, 3 * sizeof(Atom)); break;
+		case 4: std::memmove(dst, src, 4 * sizeof(Atom)); break;
 		default: std::memmove(dst, src, nargs * sizeof(Atom)); break;
 	}
 	pc = la.code;
