@@ -27,6 +27,18 @@
 (define scope-cursor (%iter (vector 'inner)))
 ($check (eq? 'inner (%iter-next! scope-cursor (outer) outer)))
 ($check (eq? 'outer outer))
+($check (eq? 'outer (%iter-next! (%iter (vector)) (outer) outer outer)))
+
+(define (capture-values values)
+  (let ((cursor (%iter values)))
+    (let loop ((result '()))
+      (%iter-next! cursor (value)
+        (loop (cons (lambda () value) result))
+        result))))
+(define captured-values (capture-values (vector 1 2 3)))
+($check (= 3 ((first captured-values))))
+($check (= 2 ((second captured-values))))
+($check (= 1 ((third captured-values))))
 
 (define capture-cursor (%iter (vector 40 50)))
 (define captured (%iter-next! capture-cursor (value) (lambda () value)))
