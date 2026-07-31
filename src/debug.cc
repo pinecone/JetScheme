@@ -458,6 +458,19 @@ void decode_args(FILE* out, uint8_t op, Code* p)
 		case Opcode::apply:
 			std::fprintf(out, " w=%u", reinterpret_cast<OP_apply*>(p)->w);
 			break;
+		case Opcode::iter_next1:
+		{
+			OP_iter_next1* o = reinterpret_cast<OP_iter_next1*>(p);
+			std::fprintf(out, " cursor=%u dst=%u size=%u", o->cursor, o->dst, o->size);
+			break;
+		}
+		case Opcode::iter_next2:
+		{
+			OP_iter_next2* o = reinterpret_cast<OP_iter_next2*>(p);
+			std::fprintf(out, " cursor=%u dst0=%u dst1=%u size=%u", o->cursor, o->dst0, o->dst1,
+			             o->size);
+			break;
+		}
 		case Opcode::ldf:
 		{
 			OP_ldf* o = reinterpret_cast<OP_ldf*>(p);

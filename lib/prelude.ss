@@ -190,6 +190,7 @@
 (define eof-object? (%prim "eof-object?"))
 
 ;;; vectors
+(define %iter (%prim "%iter"))
 (define vector (%prim "vector"))
 (define make-vector (%prim "make-vector"))
 (define (vector-ref v i) (ref v i))

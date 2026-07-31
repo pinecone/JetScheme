@@ -89,6 +89,7 @@ enum class StructKind : uint8_t
 	Tuple,
 	HashSet,
 	HashMap,
+	Cursor,
 };
 
 struct StructOps
@@ -151,6 +152,31 @@ struct Struct
 
 	Struct(const Struct&) = delete;
 	Struct& operator=(const Struct&) = delete;
+};
+
+struct CursorOps
+{
+	VmOp next1;
+	VmOp next2;
+};
+
+struct Cursor : Struct
+{
+	Atom target;
+	const CursorOps* ops;
+
+	Cursor(StructType* type, Atom target_, const CursorOps* ops_) : Struct{type}, target{target_},
+	ops{ops_} {}
+
+	void trace(Gc& gc) { gc.mark_atom(target.bits); }
+};
+
+struct VectorCursor : Cursor
+{
+	inline static Atom type_atom{};
+	size_t index;
+
+	VectorCursor(StructType* type, Atom target, const CursorOps* ops) : Cursor{type, target, ops}, index{0} {}
 };
 
 struct SchemeStruct : Struct
@@ -306,12 +332,16 @@ struct box_unbox_t<Struct>
 
 inline const ObjShape* shape_of(Atom object)
 {
+	if (!object.is_heap())
+	{
+		return nullptr;
+	}
 	if (object.tag() == jet_tag::struct_)
 	{
 		return &unbox<Struct>(object)->type->ops().shape;
 	}
 	const ObjShape* shape = &g_shape_by_tag[object.tag()];
-	return shape->ldf_handler ? shape : nullptr;
+	return shape->ldf_handler || shape->iter ? shape : nullptr;
 }
 
 template <auto Construct>

@@ -59,6 +59,8 @@
 	X(tcall,               "tcall")                                                                          \
 	X(recur,              "recur")                                                                          \
 	X(apply,              "apply")                                                                          \
+	X(iter_next1,          "iter1")                                                                          \
+	X(iter_next2,          "iter2")                                                                          \
 	JET_REPLICATE(X, cs,  "cs")                                                                              \
 	JET_REPLICATE(X, cst, "cst")                                                                             \
 	JET_REPLICATE(X, cdl,  "cdl")                                                                            \
@@ -173,6 +175,21 @@ struct OP_recur
 struct OP_apply
 {
 	uint16_t w;
+};
+struct OP_iter_next1
+{
+	uint16_t cursor;
+	uint16_t dst;
+	uint32_t size;
+	FieldIc ic;
+};
+struct OP_iter_next2
+{
+	uint16_t cursor;
+	uint16_t dst0;
+	uint16_t dst1;
+	uint32_t size;
+	FieldIc ic;
 };
 struct OP_cs
 {
@@ -302,6 +319,10 @@ inline size_t opcode_step(uint8_t op, const uint8_t* operands)
 			return OPCODE_SIZE + sizeof(OP_recur);
 		case Opcode::apply:
 			return OPCODE_SIZE + sizeof(OP_apply);
+		case Opcode::iter_next1:
+			return OPCODE_SIZE + sizeof(OP_iter_next1);
+		case Opcode::iter_next2:
+			return OPCODE_SIZE + sizeof(OP_iter_next2);
 #define X(name, disp) case Opcode::name:
 			JET_REPLICATE(X, cs, "cs")
 			JET_REPLICATE(X, cst, "cst")

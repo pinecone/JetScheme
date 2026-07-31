@@ -212,6 +212,7 @@ enum class ExprKind : uint8_t
 	PrimRef,
 	SetBang,
 	SetRef,
+	IterNext,
 	If,
 	Let,
 	Letrec,
@@ -301,6 +302,15 @@ struct Expr
 			Expr* key;
 			Expr* value;
 		} set_ref;
+		struct
+		{
+			Expr* cursor;
+			Slice<std::string_view> names;
+			Expr* consequent;
+			Expr* alternate;
+			uint32_t slot_base;
+			Expr* owner;
+		} iter_next;
 		struct
 		{
 			Expr* test;
@@ -1192,6 +1202,10 @@ namespace
 				{
 					return parse_dollar_check(loc);
 				}
+				if (head.text == "%iter-next!")
+				{
+					return parse_iter_next(loc);
+				}
 				if (head.text == "quasiquote")
 				{
 					advance();
@@ -1396,6 +1410,35 @@ namespace
 			e->set_ref.obj = obj;
 			e->set_ref.key = key;
 			e->set_ref.value = value;
+			return e;
+		}
+
+		Expr* parse_iter_next(SourceLoc loc)
+		{
+			advance();
+			Expr* cursor = parse_expr();
+			expect(TokenKind::LParen);
+			std::vector<std::string_view> names;
+			while (peek().kind == TokenKind::Variable)
+			{
+				names.push_back(advance().text);
+			}
+			expect(TokenKind::RParen);
+			JET_DIE_UNLESS(names.size() == 1 || names.size() == 2,
+			               "%d:%d: %%iter-next! expects one or two output names", loc.line, loc.col);
+			Expr* consequent = parse_expr();
+			Expr* alternate = nullptr;
+			if (peek().kind != TokenKind::RParen)
+			{
+				alternate = parse_expr();
+			}
+			expect(TokenKind::RParen);
+
+			Expr* e = make_expr(ExprKind::IterNext, loc);
+			e->iter_next.cursor = cursor;
+			e->iter_next.names = make_string_slice(names);
+			e->iter_next.consequent = consequent;
+			e->iter_next.alternate = alternate;
 			return e;
 		}
 
@@ -2285,6 +2328,15 @@ static void walk_children(Expr* expr, F&& f)
 			f(expr->set_ref.value);
 			break;
 
+		case ExprKind::IterNext:
+			f(expr->iter_next.cursor);
+			f(expr->iter_next.consequent);
+			if (expr->iter_next.alternate)
+			{
+				f(expr->iter_next.alternate);
+			}
+			break;
+
 		case ExprKind::If:
 			f(expr->if_.test);
 			f(expr->if_.consequent);
@@ -2421,6 +2473,7 @@ Expr* Compiler::expand(Expr* expr)
 		case ExprKind::Apply:
 		case ExprKind::SetBang:
 		case ExprKind::SetRef:
+		case ExprKind::IterNext:
 		case ExprKind::If:
 			walk_children(expr, [&](Expr*& c) { c = expand(c); });
 			return expr;
@@ -2701,6 +2754,18 @@ Expr* Compiler::compute_anf(Expr* expr)
 			return anf_wrap(bindings, expr);
 		}
 
+		case ExprKind::IterNext:
+		{
+			AnfBindings bindings;
+			expr->iter_next.cursor = anf_atomize(expr->iter_next.cursor, bindings);
+			expr->iter_next.consequent = compute_anf(expr->iter_next.consequent);
+			if (expr->iter_next.alternate)
+			{
+				expr->iter_next.alternate = compute_anf(expr->iter_next.alternate);
+			}
+			return anf_wrap(bindings, expr);
+		}
+
 		default:
 			JET_DIE("%d:%d: anf: unhandled ExprKind %d (surface form not expanded?)",
 			        expr->loc.line, expr->loc.col, static_cast<int>(expr->kind));
@@ -2749,6 +2814,15 @@ void Compiler::verify_anf(Expr* expr)
 			if (expr->if_.alternate)
 			{
 				verify_anf(expr->if_.alternate);
+			}
+			break;
+
+		case ExprKind::IterNext:
+			check_atom(expr->iter_next.cursor);
+			verify_anf(expr->iter_next.consequent);
+			if (expr->iter_next.alternate)
+			{
+				verify_anf(expr->iter_next.alternate);
 			}
 			break;
 
@@ -3046,6 +3120,46 @@ void Compiler::compute_binding_addresses_in(Expr* expr)
 			break;
 		}
 
+		case ExprKind::IterNext:
+		{
+			compute_binding_addresses_in(expr->iter_next.cursor);
+			std::vector<std::pair<std::string_view, std::optional<size_t>>> shadowed;
+			{
+				std::vector<std::string_view>& frame = frame_names_.back();
+				std::unordered_map<std::string_view, size_t>& idx = lambda_name_index_.back();
+				expr->iter_next.slot_base = static_cast<uint32_t>(frame.size());
+				expr->iter_next.owner = lambdas_.back();
+				for (std::string_view name : expr->iter_next.names)
+				{
+					size_t breadth = frame.size();
+					frame.push_back(name);
+					auto it = idx.find(name);
+					shadowed.push_back({name, it == idx.end()
+					                    ? std::nullopt
+					                    : std::optional<size_t>(it->second)});
+					idx[name] = breadth;
+				}
+			}
+			compute_binding_addresses_in(expr->iter_next.consequent);
+			std::unordered_map<std::string_view, size_t>& idx = lambda_name_index_.back();
+			for (auto it = shadowed.rbegin(); it != shadowed.rend(); ++it)
+			{
+				if (it->second)
+				{
+					idx[it->first] = *it->second;
+				}
+				else
+				{
+					idx.erase(it->first);
+				}
+			}
+			if (expr->iter_next.alternate)
+			{
+				compute_binding_addresses_in(expr->iter_next.alternate);
+			}
+			break;
+		}
+
 		case ExprKind::SetBang:
 		{
 			compute_binding_addresses_in(expr->set_bang.value);
@@ -3145,6 +3259,15 @@ void Compiler::collect_tail_calls(Expr* expr, bool in_tail)
 			{
 				bool is_last = (i == expr->let.body.size() - 1);
 				collect_tail_calls(expr->let.body[i], is_last && in_tail);
+			}
+			break;
+
+		case ExprKind::IterNext:
+			collect_tail_calls(expr->iter_next.cursor, false);
+			collect_tail_calls(expr->iter_next.consequent, in_tail);
+			if (expr->iter_next.alternate)
+			{
+				collect_tail_calls(expr->iter_next.alternate, in_tail);
 			}
 			break;
 
@@ -3308,6 +3431,14 @@ void Compiler::select_ops_in(Expr* expr, Expr* current)
 			walk_children(expr, [&](Expr* e) { select_ops_in(e, current); });
 			select_field_op(expr, current, expr->set_ref.obj, expr->set_ref.key, true);
 			break;
+
+		case ExprKind::IterNext:
+		{
+			walk_children(expr, [&](Expr* e) { select_ops_in(e, current); });
+			OpSelection& sel = selected_ops_[expr->id].emplace();
+			sel.op = expr->iter_next.names.size() == 1 ? Opcode::iter_next1 : Opcode::iter_next2;
+			break;
+		}
 
 		default:
 			walk_children(expr, [&](Expr* e) { select_ops_in(e, current); });
@@ -3685,6 +3816,11 @@ namespace
 				n += count_exprs(e->set_ref.key);
 				n += count_exprs(e->set_ref.value);
 				break;
+			case ExprKind::IterNext:
+				n += count_exprs(e->iter_next.cursor);
+				n += count_exprs(e->iter_next.consequent);
+				n += count_exprs(e->iter_next.alternate);
+				break;
 			case ExprKind::Let:
 				n += count_exprs_slice(e->let.vals);
 				n += count_exprs_slice(e->let.body);
@@ -3831,6 +3967,34 @@ namespace
 					e->set_ref.key = clone(orig->set_ref.key, ctx);
 					e->set_ref.value = clone(orig->set_ref.value, ctx);
 					break;
+				case ExprKind::IterNext:
+					e->iter_next.cursor = clone(orig->iter_next.cursor, ctx);
+					e->iter_next.names = orig->iter_next.names;
+					e->iter_next.consequent = clone(orig->iter_next.consequent, ctx);
+					e->iter_next.alternate = orig->iter_next.alternate
+					                         ? clone(orig->iter_next.alternate, ctx)
+					                         : nullptr;
+					if (orig->iter_next.owner == ctx.callee)
+					{
+						e->iter_next.owner = ctx.host;
+						e->iter_next.slot_base = ctx.base + orig->iter_next.slot_base;
+					}
+					else
+					{
+						Expr* owner = nullptr;
+						for (auto it = ctx.lambda_stack.rbegin(); it != ctx.lambda_stack.rend(); ++it)
+						{
+							if (it->first == orig->iter_next.owner)
+							{
+								owner = it->second;
+								break;
+							}
+						}
+						JET_DIE_UNLESS(owner, "anf-inline: cloned iteration owned outside the clone");
+						e->iter_next.owner = owner;
+						e->iter_next.slot_base = orig->iter_next.slot_base;
+					}
+					break;
 				case ExprKind::If:
 					e->if_.test = clone(orig->if_.test, ctx);
 					e->if_.consequent = clone(orig->if_.consequent, ctx);
@@ -3965,6 +4129,7 @@ namespace
 				case ExprKind::Apply:
 				case ExprKind::SetBang:
 				case ExprKind::SetRef:
+				case ExprKind::IterNext:
 				case ExprKind::If:
 					walk_children(expr, [&](Expr*& c) { c = walk(c); });
 					return expr;
@@ -4186,6 +4351,11 @@ namespace
 					       && self_calls_all_tail(expr->if_.consequent, name, in_tail)
 					       && (!expr->if_.alternate
 					           || self_calls_all_tail(expr->if_.alternate, name, in_tail));
+				case ExprKind::IterNext:
+					return self_calls_all_tail(expr->iter_next.cursor, name, false)
+					       && self_calls_all_tail(expr->iter_next.consequent, name, in_tail)
+					       && (!expr->iter_next.alternate
+					           || self_calls_all_tail(expr->iter_next.alternate, name, in_tail));
 				case ExprKind::Let:
 				{
 					for (Expr* val : expr->let.vals)
@@ -4486,6 +4656,7 @@ namespace
 			struct { uint16_t dst; uint16_t pool_idx; uint16_t first_capture; uint16_t n_captures; } closure;
 			struct { uint16_t dst; uint16_t a; uint16_t b; } arith;  // rr; rk holds the pool idx in b
 			struct { uint16_t dst; uint16_t obj; uint16_t key; uint16_t val; } field;  // ldf stf; *k holds the pool idx in key
+			struct { uint32_t id; uint16_t cursor; uint16_t dst0; uint16_t dst1; } iter;
 		} u;
 	};
 
@@ -5173,6 +5344,42 @@ namespace
 			return w;
 		}
 
+		void emit_iter_next(Expr* expr, uint16_t dst)
+		{
+			Compiler::OpSelection sel = selection(expr, "IterNext");
+			uint32_t l_alt = prog.next_label++;
+			uint32_t l_end = prog.next_label++;
+			LirInst i = inst(sel.op);
+			i.u.iter.id = l_alt;
+			i.u.iter.cursor = emit_to_any_reg(expr->iter_next.cursor);
+			i.u.iter.dst0 = narrow_or_die<uint16_t>(expr->iter_next.slot_base);
+			if (expr->iter_next.names.size() == 2)
+			{
+				i.u.iter.dst1 = narrow_or_die<uint16_t>(expr->iter_next.slot_base + 1);
+			}
+			emit(i);
+			for (uint32_t n = 0; n < expr->iter_next.names.size(); ++n)
+			{
+				uint32_t reg = expr->iter_next.slot_base + n;
+				if (needs_slot(expr->iter_next.owner, reg))
+				{
+					emit_box(narrow_or_die<uint16_t>(reg));
+				}
+			}
+			emit_to_reg(expr->iter_next.consequent, dst);
+			emit_label(Opcode::skip, l_end);
+			emit_label(Opcode::label, l_alt);
+			if (expr->iter_next.alternate)
+			{
+				emit_to_reg(expr->iter_next.alternate, dst);
+			}
+			else
+			{
+				emit_ldk(dst, intern_empty(ConstTag::Unknown));
+			}
+			emit_label(Opcode::label, l_end);
+		}
+
 		void emit_program(Program& program)
 		{
 			prog.lambdas.emplace_back();
@@ -5381,6 +5588,10 @@ namespace
 
 				case ExprKind::SetRef:
 					emit_mov(dst, emit_set_ref(expr));
+					break;
+
+				case ExprKind::IterNext:
+					emit_iter_next(expr, dst);
 					break;
 
 				case ExprKind::Let:
@@ -5713,6 +5924,31 @@ namespace
 					emit_opcode(bc, Opcode::apply);
 					OP_apply op{};
 					op.w = i.u.call.w;
+					emit_operand(bc, op);
+					break;
+				}
+
+				case Opcode::iter_next1:
+				{
+					emit_opcode(bc, i.op);
+					OP_iter_next1 op{};
+					op.cursor = i.u.iter.cursor;
+					op.dst = i.u.iter.dst0;
+					op.size = static_cast<uint32_t>(
+						label_target(label_pos, i.u.iter.id) - (bc.size() + sizeof(OP_iter_next1)));
+					emit_operand(bc, op);
+					break;
+				}
+
+				case Opcode::iter_next2:
+				{
+					emit_opcode(bc, i.op);
+					OP_iter_next2 op{};
+					op.cursor = i.u.iter.cursor;
+					op.dst0 = i.u.iter.dst0;
+					op.dst1 = i.u.iter.dst1;
+					op.size = static_cast<uint32_t>(
+						label_target(label_pos, i.u.iter.id) - (bc.size() + sizeof(OP_iter_next2)));
 					emit_operand(bc, op);
 					break;
 				}

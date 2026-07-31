@@ -346,8 +346,42 @@ static Atom vector_pop_first(Atom v)
 	return first;
 }
 
+JET_PRESERVE_NONE static void private_cursor_constructor(VM_OP_PARAMS)
+{
+	StructType* type = unbox<StructType>(callee);
+	const std::string& name = *unbox<Symbol>(type->name());
+	JET_DIE("cursor type '%s' cannot be constructed directly", name.c_str());
+}
+
+static bool equal_vector_cursor(EqualContext&, Struct* first, Struct* second, EqualRecur)
+{
+	VectorCursor* a = static_cast<VectorCursor*>(first);
+	VectorCursor* b = static_cast<VectorCursor*>(second);
+	return a->index == b->index && is_eq(a->target, b->target);
+}
+
+static void print_cursor(Struct*, std::string& out)
+{
+	out += "#<cursor>";
+}
+
+static const StructOps vector_cursor_struct_ops = {
+	StructKind::Cursor,
+	private_cursor_constructor,
+	{},
+	nullptr,
+	equal_vector_cursor,
+	print_cursor,
+	print_cursor,
+};
+
 void init_vecs(Env& e)
 {
+	static const std::string vector_cursor_name = "%vector-cursor";
+	Atom vector_cursor_type = box<StructType>(box(&vector_cursor_name), std::vector<Atom>{}, exactly(0),
+	                                          vector_cursor_struct_ops);
+	e.bind("%vector-cursor", vector_cursor_type);
+	VectorCursor::type_atom = vector_cursor_type;
 	e.bind("vector?", make_prim<is_type<jet::Type::Vector>>());
 	e.bind("vector-push!", make_prim<vector_push>());
 	e.bind("vector-pop!", make_prim<vector_pop>());
@@ -1546,6 +1580,7 @@ static const StructOps scheme_struct_ops = {
 		struct_resolved_ldfk_handler<load_scheme_field>,
 		struct_resolved_stfk_handler<store_scheme_field>,
 		struct_ref<resolve_scheme_field, load_scheme_field>,
+		nullptr,
 	},
 	struct_destructor<SchemeStruct>(),
 	equal_scheme_struct,
@@ -1564,6 +1599,7 @@ static const StructOps tuple_ops = {
 		struct_resolved_ldfk_handler<load_tuple_field>,
 		immutable_tuple_set,
 		struct_ref<resolve_tuple_ref, load_tuple_field>,
+		nullptr,
 	},
 	struct_destructor<Tuple>(),
 	equal_tuple,
@@ -1574,8 +1610,19 @@ static const StructOps tuple_ops = {
 static Atom slow_ref_field(Atom obj, Atom key)
 {
 	const ObjShape* sh = shape_of(obj);
-	JET_DIE_UNLESS(sh, "ref: unsupported receiver type");
+	JET_DIE_UNLESS(sh && sh->slow_ref, "ref: unsupported receiver type");
 	return sh->slow_ref(obj, key);
+}
+
+static Atom make_cursor(Atom target)
+{
+	const ObjShape* shape = shape_of(target);
+	if (!shape || !shape->iter) [[unlikely]]
+	{
+		std::string_view name = type_name(target.type());
+		JET_DIE("%%iter: cannot iterate <%.*s>", static_cast<int>(name.size()), name.data());
+	}
+	return Atom::make_tagged(jet_tag::struct_, shape->iter(target));
 }
 
 static Atom struct_ctor(Atom name, Atom names_list)
@@ -1931,6 +1978,7 @@ static const StructOps hashset_ops = {
 		table_resolved_ldfk_handler<hashset_lookup>,
 		table_resolved_stfk_handler<hashset_insert>,
 		table_ref<hashset_lookup>,
+		nullptr,
 	},
 	struct_destructor<HashSet>(),
 	equal_hashset,
@@ -1949,6 +1997,7 @@ static const StructOps hashmap_ops = {
 		table_resolved_ldfk_handler<hashmap_lookup>,
 		table_resolved_stfk_handler<hashmap_insert>,
 		table_ref<hashmap_lookup>,
+		nullptr,
 	},
 	struct_destructor<HashMap>(),
 	equal_hashmap,
@@ -1974,6 +2023,11 @@ Atom construct_struct(StructType* type, Atom* first, Atom* last)
 		case StructKind::HashMap:
 			instance = construct_hashmap(type, first, last);
 			break;
+		default:
+		{
+			Symbol name = unbox<Symbol>(type->name());
+			JET_DIE("struct type '%s' has no direct constructor", name->c_str());
+		}
 	}
 	return Atom::make_tagged(jet_tag::struct_, instance);
 }
@@ -2036,6 +2090,7 @@ void init_primitives(Env& e)
 	init_chars(e);
 	init_structs(e);
 	e.bind("ref", make_prim<slow_ref_field>());
+	e.bind("%iter", make_prim<make_cursor>());
 	e.bind("boolean?", make_prim<is_type<jet::Type::Boolean>>());
 	e.bind("string?", make_prim<is_type<jet::Type::String>>());
 	e.bind("char?", make_prim<is_type<jet::Type::Character>>());

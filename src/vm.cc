@@ -216,6 +216,9 @@ void Gc::mark_object(void* ptr, int tag)
 				case StructKind::HashMap:
 					static_cast<HashMap*>(s)->trace(*this);
 					break;
+				case StructKind::Cursor:
+					static_cast<Cursor*>(s)->trace(*this);
+					break;
 			}
 			break;
 		}
@@ -797,6 +800,42 @@ JET_PRESERVE_NONE static void fast_stfk(VM_OP_PARAMS)
 
 ObjShape g_shape_by_tag[jet_tag::HEAP_END] = {};
 
+JET_PRESERVE_NONE static void vector_cursor_next1(VM_OP_PARAMS)
+{
+	OP_iter_next1* op = reinterpret_cast<OP_iter_next1*>(pc - sizeof(OP_iter_next1));
+	VectorCursor* cursor = static_cast<VectorCursor*>(unbox<Struct>(callee));
+	Vec& vector = *unbox<Vec>(cursor->target);
+	size_t index = cursor->index;
+	size_t size = vector.size();
+	if (index < size) [[likely]]
+	{
+		Atom* data = vector.data();
+		cursor->index = index + 1;
+		frame_regs[op->dst] = data[index];
+		DISPATCH();
+	}
+	if (index == size)
+	{
+		pc += op->size;
+		DISPATCH();
+	}
+	JET_DIE("%%iter-next!: vector cursor index %zu exceeds size %zu", index, size);
+}
+
+static const CursorOps vector_cursor_ops = {
+	vector_cursor_next1,
+	nullptr,
+};
+
+static Cursor* vector_cursor_make(Atom target)
+{
+	JET_DIE_UNLESS(is_type<jet::Type::StructType>(VectorCursor::type_atom),
+	               "vector cursor type is not initialized");
+	StructType* type = unbox<StructType>(VectorCursor::type_atom);
+	void* mem = g_gc->alloc(sizeof(VectorCursor), jet_tag::struct_, type->destructor_id());
+	return new (mem) VectorCursor{type, target, &vector_cursor_ops};
+}
+
 namespace
 {
 	struct shape_table_init_t
@@ -811,6 +850,7 @@ namespace
 				nullptr,
 				nullptr,
 				vector_ref,
+				vector_cursor_make,
 			};
 			g_shape_by_tag[jet_tag::string] = {
 				fast_ldf<String>,
@@ -820,6 +860,7 @@ namespace
 				nullptr,
 				nullptr,
 				string_ref,
+				nullptr,
 			};
 			g_shape_by_tag[jet_tag::bytevector] = {
 				fast_ldf<ByteVector>,
@@ -829,6 +870,7 @@ namespace
 				nullptr,
 				nullptr,
 				bytevector_u8_ref,
+				nullptr,
 			};
 		}
 	} shape_table_init;
@@ -849,7 +891,7 @@ static FieldReceiver profile_field_receiver(Atom object)
 static VmOp field_install_ldf(FieldIc* ic, Atom obj)
 {
 	const ObjShape* shape = shape_of(obj);
-	JET_DIE_UNLESS(shape, "ref: unsupported receiver type");
+	JET_DIE_UNLESS(shape && shape->ldf_handler, "ref: unsupported receiver type");
 	ic->ic_handler = reinterpret_cast<uint64_t>(shape->ldf_handler);
 	ic->ic_extra1 = ~static_cast<uint64_t>(0);
 	ic->ic_extra2 = ~static_cast<uint64_t>(0);
@@ -859,7 +901,7 @@ static VmOp field_install_ldf(FieldIc* ic, Atom obj)
 static VmOp field_install_stf(FieldIc* ic, Atom obj)
 {
 	const ObjShape* shape = shape_of(obj);
-	JET_DIE_UNLESS(shape, "set!: unsupported receiver type");
+	JET_DIE_UNLESS(shape && shape->stf_handler, "set!: unsupported receiver type");
 	ic->ic_handler = reinterpret_cast<uint64_t>(shape->stf_handler);
 	ic->ic_extra1 = ~static_cast<uint64_t>(0);
 	ic->ic_extra2 = ~static_cast<uint64_t>(0);
@@ -869,7 +911,7 @@ static VmOp field_install_stf(FieldIc* ic, Atom obj)
 static VmOp field_install_ldfk(FieldIc* ic, Atom obj)
 {
 	const ObjShape* shape = shape_of(obj);
-	JET_DIE_UNLESS(shape, "ref: unsupported receiver type");
+	JET_DIE_UNLESS(shape && shape->ldfk_handler, "ref: unsupported receiver type");
 	ic->ic_handler = reinterpret_cast<uint64_t>(shape->ldfk_handler);
 	ic->ic_extra1 = ~static_cast<uint64_t>(0);
 	return shape->ldfk_handler;
@@ -878,7 +920,7 @@ static VmOp field_install_ldfk(FieldIc* ic, Atom obj)
 static VmOp field_install_stfk(FieldIc* ic, Atom obj)
 {
 	const ObjShape* shape = shape_of(obj);
-	JET_DIE_UNLESS(shape, "set!: unsupported receiver type");
+	JET_DIE_UNLESS(shape && shape->stfk_handler, "set!: unsupported receiver type");
 	ic->ic_handler = reinterpret_cast<uint64_t>(shape->stfk_handler);
 	ic->ic_extra1 = ~static_cast<uint64_t>(0);
 	return shape->stfk_handler;
@@ -951,6 +993,68 @@ JET_PRESERVE_NONE void field_stfk_miss(VM_OP_PARAMS)
 
 static constexpr auto& op_ldfk = field_ldfk_miss;
 static constexpr auto& op_stfk = field_stfk_miss;
+
+JET_NOINLINE JET_PRESERVE_NONE static void die_iter_expected_cursor(VM_OP_PARAMS)
+{
+	JET_DIE("%%iter-next!: expected a cursor");
+}
+
+template <int outputs>
+JET_NOINLINE JET_PRESERVE_NONE static void die_iter_bad_outputs(VM_OP_PARAMS)
+{
+	JET_DIE("%%iter-next!: cursor does not supply %d outputs", outputs);
+}
+
+enum class IterDispatchKind
+{
+	Install,
+	Cursor,
+};
+
+template <typename Op, int outputs, IterDispatchKind kind>
+JET_PRESERVE_NONE static void op_iter_next(VM_OP_PARAMS)
+{
+	Op* op = reinterpret_cast<Op*>(pc);
+	Atom value = frame_regs[op->cursor];
+	if constexpr (kind == IterDispatchKind::Cursor)
+	{
+		if (value.tag_is<jet_tag::struct_>()
+		    && op->ic.ic_dispatch_key == reinterpret_cast<uint64_t>(unbox<Struct>(value)->type)) [[likely]]
+		{
+			VmOp handler = reinterpret_cast<VmOp>(op->ic.ic_handler);
+			pc += sizeof(*op);
+			callee = value;
+			JET_MUSTTAIL return handler(VM_OP_ARGS);
+		}
+	}
+
+	if (!value.tag_is<jet_tag::struct_>()) [[unlikely]]
+	{
+		JET_MUSTTAIL return die_iter_expected_cursor(VM_OP_ARGS);
+	}
+	Struct* instance = unbox<Struct>(value);
+	if (instance->type->kind() != StructKind::Cursor) [[unlikely]]
+	{
+		JET_MUSTTAIL return die_iter_expected_cursor(VM_OP_ARGS);
+	}
+	Cursor* cursor = static_cast<Cursor*>(instance);
+	JET_PROFILE_IC_MISS(outputs == 1 ? Opcode::iter_next1 : Opcode::iter_next2);
+	VmOp handler = outputs == 1 ? cursor->ops->next1 : cursor->ops->next2;
+	if (!handler) [[unlikely]]
+	{
+		JET_MUSTTAIL return die_iter_bad_outputs<outputs>(VM_OP_ARGS);
+	}
+	op->ic.ic_dispatch_key = reinterpret_cast<uint64_t>(instance->type);
+	op->ic.ic_handler = reinterpret_cast<uint64_t>(handler);
+	VmOp dispatch = op_iter_next<Op, outputs, IterDispatchKind::Cursor>;
+	std::memcpy(pc - OPCODE_SIZE, &dispatch, sizeof(dispatch));
+	pc += sizeof(*op);
+	callee = value;
+	JET_MUSTTAIL return handler(VM_OP_ARGS);
+}
+
+static constexpr auto& op_iter_next1 = op_iter_next<OP_iter_next1, 1, IterDispatchKind::Install>;
+static constexpr auto& op_iter_next2 = op_iter_next<OP_iter_next2, 2, IterDispatchKind::Install>;
 
 JET_ALWAYS_INLINE static Atom sub_op(Atom a, Atom b)
 {

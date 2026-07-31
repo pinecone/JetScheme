@@ -73,6 +73,7 @@ constexpr bool is_nary(Arity& a)
 }
 
 struct Struct;
+struct Cursor;
 using StructDestructor = void (*)(Struct*);
 
 inline void set_bit(uint64_t* bits, size_t i)
@@ -460,6 +461,7 @@ struct ObjShape
 	VmOp resolved_ldfk_handler;
 	VmOp resolved_stfk_handler;
 	Atom (*slow_ref)(Atom, Atom);
+	Cursor* (*iter)(Atom);
 };
 
 extern ObjShape g_shape_by_tag[jet_tag::HEAP_END];
