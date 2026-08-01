@@ -71,6 +71,9 @@ switch (benchmarkName) {
   case 'bench-json':
     runJson();
     break;
+  case 'bench-havlak':
+    load(benchmarkFile);
+    break;
   case 'bench-nbody':
     runAwfy(250000);
     break;
