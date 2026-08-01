@@ -1225,6 +1225,11 @@ JET_NOINLINE static VmOp resolve_call_stub(Atom callee, size_t nargs, bool tail)
 	return p->stub;
 }
 
+static bool is_fixed_arity_lambda(Atom callee)
+{
+	return is_type<jet::Type::Procedure>(callee) && !is_nary(unbox<Lambda>(callee)->arity);
+}
+
 JET_PRESERVE_NONE static void op_mov(VM_OP_PARAMS)
 {
 	OP_mov* op = reinterpret_cast<OP_mov*>(pc);
@@ -1526,12 +1531,14 @@ JET_PRESERVE_NONE static void op_apply(VM_OP_PARAMS)
 	JET_MUSTTAIL return slow_call_notail(VM_OP_ARGS);
 }
 
+template <int N, bool is_tail, bool check_gc = true>
+JET_PRESERVE_NONE static void op_cs_impl(VM_OP_PARAMS);
+
 template <int N, bool is_tail>
 JET_NOINLINE JET_PRESERVE_NONE static void op_cs_miss(VM_OP_PARAMS)
 {
 	JET_PROFILE_IC_MISS(static_cast<uint8_t>(is_tail ? Opcode::cst_0 : Opcode::cs_0) + N);
 	OP_cs* op = reinterpret_cast<OP_cs*>(pc);
-	pc += sizeof(*op);
 	Slot* sl = unbox<Slot>(frame->closure->captures[op->upvalue_idx]);
 	callee = sl->value;
 	VmOp stub = resolve_call_stub(callee, op->nargs, is_tail);
@@ -1539,15 +1546,19 @@ JET_NOINLINE JET_PRESERVE_NONE static void op_cs_miss(VM_OP_PARAMS)
 	op->ic_atom = callee.bits;
 	op->ic_stub = reinterpret_cast<uint64_t>(stub);
 	op->ic_version = sl->version;
-
-	JET_CALL_WINDOW(op->w, op->nargs);
-	JET_MUSTTAIL return stub(VM_OP_ARGS);
+	VmOp hit = is_fixed_arity_lambda(callee) ? op_cs_impl<N, is_tail, false>
+	           : op_cs_impl<N, is_tail, true>;
+	std::memcpy(reinterpret_cast<Code*>(op) - OPCODE_SIZE, &hit, sizeof(hit));
+	JET_MUSTTAIL return hit(VM_OP_ARGS);
 }
 
-template <int N, bool is_tail>
+template <int N, bool is_tail, bool check_gc>
 JET_PRESERVE_NONE static void op_cs_impl(VM_OP_PARAMS)
 {
-	JET_GC_CHECK();
+	if constexpr (check_gc)
+	{
+		JET_GC_CHECK();
+	}
 	OP_cs* op = reinterpret_cast<OP_cs*>(pc);
 	if (Slot* sl = unbox<Slot>(frame->closure->captures[op->upvalue_idx]);
 	    op->ic_slot != reinterpret_cast<uint64_t>(sl) || op->ic_version != sl->version) [[unlikely]]
@@ -1580,12 +1591,14 @@ static constexpr Opcode cd_base_opcode()
 	}
 }
 
+template <int N, bool is_tail, CdKind kind, bool check_gc = true>
+JET_PRESERVE_NONE static void op_cd_impl(VM_OP_PARAMS);
+
 template <int N, bool is_tail, CdKind kind>
 JET_NOINLINE JET_PRESERVE_NONE static void op_cd_miss(VM_OP_PARAMS)
 {
 	JET_PROFILE_IC_MISS(static_cast<uint8_t>(cd_base_opcode<is_tail, kind>()) + N);
 	OP_cd* op = reinterpret_cast<OP_cd*>(pc);
-	pc += sizeof(*op);
 	if constexpr (kind == CdKind::Local)
 	{
 		callee = frame_regs[op->idx];
@@ -1597,15 +1610,19 @@ JET_NOINLINE JET_PRESERVE_NONE static void op_cd_miss(VM_OP_PARAMS)
 	VmOp stub = resolve_call_stub(callee, op->nargs, is_tail);
 	op->ic_atom = callee.bits;
 	op->ic_stub = reinterpret_cast<uint64_t>(stub);
-
-	JET_CALL_WINDOW(op->w, op->nargs);
-	JET_MUSTTAIL return stub(VM_OP_ARGS);
+	VmOp hit = is_fixed_arity_lambda(callee) ? op_cd_impl<N, is_tail, kind, false>
+	           : op_cd_impl<N, is_tail, kind, true>;
+	std::memcpy(reinterpret_cast<Code*>(op) - OPCODE_SIZE, &hit, sizeof(hit));
+	JET_MUSTTAIL return hit(VM_OP_ARGS);
 }
 
-template <int N, bool is_tail, CdKind kind>
+template <int N, bool is_tail, CdKind kind, bool check_gc>
 JET_PRESERVE_NONE static void op_cd_impl(VM_OP_PARAMS)
 {
-	JET_GC_CHECK();
+	if constexpr (check_gc)
+	{
+		JET_GC_CHECK();
+	}
 	OP_cd* op = reinterpret_cast<OP_cd*>(pc);
 	Atom current{};
 	if constexpr (kind == CdKind::Local)
