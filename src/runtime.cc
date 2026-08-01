@@ -393,6 +393,33 @@ static const StructOps vector_cursor_struct_ops = {
 	print_cursor,
 };
 
+static bool equal_hashmap_cursor(EqualContext&, Struct* first, Struct* second, EqualRecur)
+{
+	HashMapCursor* a = static_cast<HashMapCursor*>(first);
+	HashMapCursor* b = static_cast<HashMapCursor*>(second);
+	if (!is_eq(a->target, b->target))
+	{
+		return false;
+	}
+	if (!a->map || !b->map)
+	{
+		return a->map == b->map;
+	}
+	size_t a_position = std::clamp(a->map->cursor_positions[a->slot], a->map->first, a->map->last);
+	size_t b_position = std::clamp(b->map->cursor_positions[b->slot], b->map->first, b->map->last);
+	return a_position == b_position;
+}
+
+static const StructOps hashmap_cursor_struct_ops = {
+	StructKind::Cursor,
+	private_cursor_constructor,
+	{},
+	struct_destructor<HashMapCursor>(),
+	equal_hashmap_cursor,
+	print_cursor,
+	print_cursor,
+};
+
 void init_vecs(Env& e)
 {
 	static const std::string vector_cursor_name = "%vector-cursor";
@@ -928,7 +955,7 @@ Atom display(Atom a)
 	return Atom{};
 }
 
-static Atom write(Atom a)
+static Atom write_atom(Atom a)
 {
 	std::string buf;
 	write_to(a, buf);
@@ -940,7 +967,7 @@ static Atom write(Atom a)
 void init_display_primitives(Env& e)
 {
 	e.bind("display", make_prim<display>());
-	e.bind("write", make_prim<write>());
+	e.bind("write", make_prim<write_atom>());
 }
 
 static Atom string_append(Atom* first, Atom* last)
@@ -1802,9 +1829,9 @@ static Atom hashset_lookup(Struct* instance, Atom key)
 static Atom hashmap_lookup(Struct* instance, Atom key)
 {
 	HashMap* map = static_cast<HashMap*>(instance);
-	auto it = map->entries.find(make_key(key));
-	JET_DIE_WHEN(it == map->entries.end(), "ref: key not found in hashmap");
-	return it->second;
+	auto it = map->index.find(make_key(key));
+	JET_DIE_WHEN(it == map->index.end(), "ref: key not found in hashmap");
+	return map->entry(it->second).value;
 }
 
 static void hashset_insert(Struct* instance, Atom key, Atom value)
@@ -1815,7 +1842,81 @@ static void hashset_insert(Struct* instance, Atom key, Atom value)
 
 static void hashmap_insert(Struct* instance, Atom key, Atom value)
 {
-	static_cast<HashMap*>(instance)->entries.insert_or_assign(make_key(key), value);
+	HashMap* map = static_cast<HashMap*>(instance);
+	TableKey table_key = make_key(key);
+	size_t position = map->last;
+	auto [it, inserted] = map->index.try_emplace(table_key, position);
+	if (!inserted)
+	{
+		map->entry(it->second).value = value;
+		return;
+	}
+
+	size_t word = position / 64;
+	if (word == map->first / 64 + map->live_words.size())
+	{
+		map->live_words.push_back(0);
+	}
+	map->entries.push_back({table_key, value});
+	set_bit(&map->live_words[word - map->first / 64], position % 64);
+	++map->last;
+}
+
+static void hashmap_trim(HashMap& map)
+{
+	size_t old_last = map.last;
+	while (map.first < map.last && !map.is_live(map.first))
+	{
+		map.entries.pop_front();
+		++map.first;
+		if (map.first % 64 == 0)
+		{
+			map.live_words.pop_front();
+		}
+	}
+	while (map.first < map.last && !map.is_live(map.last - 1))
+	{
+		map.entries.pop_back();
+		--map.last;
+	}
+	if (map.first == map.last)
+	{
+		map.live_words.clear();
+	}
+	else
+	{
+		size_t final_word = (map.last - 1) / 64;
+		while (map.first / 64 + map.live_words.size() - 1 > final_word)
+		{
+			map.live_words.pop_back();
+		}
+	}
+	if (map.last < old_last)
+	{
+		for (size_t& position : map.cursor_positions)
+		{
+			position = std::min(position, map.last);
+		}
+	}
+}
+
+static Atom hashmap_unset(Atom object, Atom key)
+{
+	Struct* instance = slow_unbox<Struct>(object);
+	JET_DIE_UNLESS(instance->type->kind() == StructKind::HashMap,
+	               "hashmap-unset!: expected a hashmap");
+	HashMap& map = *static_cast<HashMap*>(instance);
+	auto it = map.index.find(make_key(key));
+	if (it == map.index.end())
+	{
+		return {};
+	}
+	size_t position = it->second;
+	map.index.erase(it);
+	clear_bit(&map.live_words[position / 64 - map.first / 64], position % 64);
+	map.entry(position) = {};
+	hashmap_trim(map);
+	return {};
 }
 
 template <auto Lookup>
@@ -1911,7 +2012,7 @@ static Struct* construct_hashmap(StructType* type, Atom* first, Atom* last)
 	HashMap* map = HashMap::alloc(type);
 	for (Atom* it = first; it != last; it += 2)
 	{
-		map->entries.insert_or_assign(make_key(it[0]), it[1]);
+		hashmap_insert(map, it[0], it[1]);
 	}
 	return map;
 }
@@ -1938,14 +2039,15 @@ static bool equal_hashmap(EqualContext& context, Struct* first, Struct* second, 
 {
 	HashMap* a = static_cast<HashMap*>(first);
 	HashMap* b = static_cast<HashMap*>(second);
-	if (a->entries.size() != b->entries.size())
+	if (a->index.size() != b->index.size())
 	{
 		return false;
 	}
-	for (const std::pair<const TableKey, Atom>& entry : a->entries)
+	for (const std::pair<TableKey, size_t>& item : a->index)
 	{
-		auto it = b->entries.find(entry.first);
-		if (it == b->entries.end() || !recur(context, entry.second, it->second))
+		auto it = b->index.find(item.first);
+		if (it == b->index.end() ||
+		    !recur(context, a->entry(item.second).value, b->entry(it->second).value))
 		{
 			return false;
 		}
@@ -1974,13 +2076,15 @@ static void print_hashmap(Struct* instance, std::string& out)
 	HashMap* map = static_cast<HashMap*>(instance);
 	out += "#hashmap(";
 	const char* separator = "";
-	for (const std::pair<const TableKey, Atom>& entry : map->entries)
+	for (size_t position = map->next_live(map->first); position < map->last;
+	     position = map->next_live(position + 1))
 	{
+		const HashMapEntry& entry = map->entry(position);
 		out += separator;
 		separator = " ";
-		print(entry.first.atom, out);
+		print(entry.key.atom, out);
 		out += ' ';
-		print(entry.second, out);
+		print(entry.value, out);
 	}
 	out += ')';
 }
@@ -2015,7 +2119,7 @@ static const StructOps hashmap_ops = {
 		table_resolved_ldfk_handler<hashmap_lookup>,
 		table_resolved_stfk_handler<hashmap_insert>,
 		table_ref<hashmap_lookup>,
-		nullptr,
+		hashmap_cursor_make,
 	},
 	struct_destructor<HashMap>(),
 	equal_hashmap,
@@ -2061,14 +2165,21 @@ void init_structs(Env& e)
 	static const std::string tuple_name = "tuple";
 	static const std::string hashset_name = "hashset";
 	static const std::string hashmap_name = "hashmap";
+	static const std::string hashmap_cursor_name = "%hashmap-cursor";
 	Atom name = box(static_cast<Symbol>(&tuple_name));
 	e.bind("tuple", box<StructType>(name, std::vector<Atom>{}, n_ary(), tuple_ops));
 	e.bind("hashset", box<StructType>(box(static_cast<Symbol>(&hashset_name)), std::vector<Atom>{},
 	                                  n_ary(), hashset_ops));
 	e.bind("hashmap", box<StructType>(box(static_cast<Symbol>(&hashmap_name)), std::vector<Atom>{},
 	                                  n_ary(), hashmap_ops));
+	Atom hashmap_cursor_type =
+		box<StructType>(box(&hashmap_cursor_name), std::vector<Atom>{}, exactly(0),
+		                hashmap_cursor_struct_ops);
+	e.bind("%hashmap-cursor", hashmap_cursor_type);
+	HashMapCursor::type_atom = hashmap_cursor_type;
 	e.bind("hashset?", make_prim<is_kind<StructKind::HashSet>>());
 	e.bind("hashmap?", make_prim<is_kind<StructKind::HashMap>>());
+	e.bind("hashmap-unset!", make_prim<hashmap_unset>());
 	e.bind("struct", make_prim<struct_ctor>());
 	e.bind("isa?", make_prim<isa>());
 }

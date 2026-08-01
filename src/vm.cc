@@ -812,11 +812,19 @@ JET_PRESERVE_NONE static void fast_stfk(VM_OP_PARAMS)
 
 ObjShape g_shape_by_tag[jet_tag::HEAP_END] = {};
 
+JET_NOINLINE JET_PRESERVE_NONE static void die_iter_exhausted(VM_OP_PARAMS)
+{
+	JET_DIE("%%iter-next!: cursor is exhausted");
+}
+
 JET_PRESERVE_NONE static void vector_cursor_next1(VM_OP_PARAMS)
 {
 	OP_iter_next1* op = reinterpret_cast<OP_iter_next1*>(pc - sizeof(OP_iter_next1));
 	VectorCursor* cursor = static_cast<VectorCursor*>(unbox<Struct>(callee));
-	JET_DIE_UNLESS(cursor->vector, "%%iter-next!: cursor is exhausted");
+	if (!cursor->vector) [[unlikely]]
+	{
+		JET_MUSTTAIL return die_iter_exhausted(VM_OP_ARGS);
+	}
 	Vec& vector = *cursor->vector;
 	size_t& cursor_index = vector.cursor_indices[cursor->slot];
 	size_t index = cursor_index;
@@ -849,6 +857,46 @@ static Cursor* vector_cursor_make(Atom target)
 	StructType* type = unbox<StructType>(VectorCursor::type_atom);
 	void* mem = g_gc->alloc(sizeof(VectorCursor), jet_tag::struct_, type->destructor_id());
 	return new (mem) VectorCursor{type, target, &vector_cursor_ops};
+}
+
+JET_PRESERVE_NONE static void hashmap_cursor_next2(VM_OP_PARAMS)
+{
+	OP_iter_next2* op = reinterpret_cast<OP_iter_next2*>(pc - sizeof(OP_iter_next2));
+	HashMapCursor* cursor = static_cast<HashMapCursor*>(unbox<Struct>(callee));
+	if (!cursor->map) [[unlikely]]
+	{
+		JET_MUSTTAIL return die_iter_exhausted(VM_OP_ARGS);
+	}
+	HashMap& map = *cursor->map;
+	size_t first = map.first;
+	size_t last = map.last;
+	size_t& cursor_position = map.cursor_positions[cursor->slot];
+	size_t position = map.next_live(cursor_position);
+	if (position < last)
+	{
+		const HashMapEntry& entry = map.entries[position - first];
+		cursor_position = position + 1;
+		frame_regs[op->dst0] = entry.key.atom;
+		frame_regs[op->dst1] = entry.value;
+		DISPATCH();
+	}
+	cursor->detach();
+	pc += op->size;
+	DISPATCH();
+}
+
+static const CursorOps hashmap_cursor_ops = {
+	nullptr,
+	hashmap_cursor_next2,
+};
+
+Cursor* hashmap_cursor_make(Atom target)
+{
+	JET_DIE_UNLESS(is_type<jet::Type::StructType>(HashMapCursor::type_atom),
+	               "hashmap cursor type is not initialized");
+	StructType* type = unbox<StructType>(HashMapCursor::type_atom);
+	void* mem = g_gc->alloc(sizeof(HashMapCursor), jet_tag::struct_, type->destructor_id());
+	return new (mem) HashMapCursor{type, target, &hashmap_cursor_ops};
 }
 
 namespace

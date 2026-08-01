@@ -7,8 +7,12 @@
 #include "atom.h"
 #include "error.h"
 #include "vm.h"
+#include <algorithm>
+#include <ankerl/unordered_dense.h>
+#include <bit>
 #include <cmath>
 #include <cstdio>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -290,6 +294,7 @@ struct TableKey
 
 struct KeyHash
 {
+	using is_avalanching = void;
 	size_t operator()(const TableKey& key) const { return key.hash; }
 };
 
@@ -322,11 +327,87 @@ struct HashSet : Struct
 	HashSet& operator=(const HashSet&) = delete;
 };
 
+template <typename T>
+class Ring
+{
+static_assert(std::is_trivially_copyable_v<T>);
+
+public:
+	bool empty() const { return count_ == 0; }
+	size_t size() const { return count_; }
+	T& operator[](size_t index) { return values_[physical(index)]; }
+	const T& operator[](size_t index) const { return values_[physical(index)]; }
+
+	void push_back(T value)
+	{
+		if (!values_ || count_ > mask_)
+		{
+			grow();
+		}
+		values_[physical(count_)] = std::move(value);
+		++count_;
+	}
+
+	void pop_front()
+	{
+		head_ = (head_ + 1) & mask_;
+		--count_;
+	}
+
+	void pop_back()
+	{
+		--count_;
+	}
+
+	void clear()
+	{
+		head_ = 0;
+		count_ = 0;
+	}
+
+private:
+	static constexpr size_t initial_capacity = 4;
+	std::unique_ptr<T[]> values_;
+	size_t mask_{};
+	size_t head_{};
+	size_t count_{};
+
+	size_t physical(size_t index) const { return (head_ + index) & mask_; }
+
+	void grow()
+	{
+		size_t capacity = values_ ? (mask_ + 1) * 2 : initial_capacity;
+		std::unique_ptr<T[]> values = std::make_unique<T[]>(capacity);
+		for (size_t i = 0; i < count_; ++i)
+		{
+			values[i] = std::move((*this)[i]);
+		}
+		values_ = std::move(values);
+		mask_ = capacity - 1;
+		head_ = 0;
+	}
+};
+
+struct HashMapEntry
+{
+	TableKey key;
+	Atom value;
+};
+
+struct HashMapCursor;
+
 struct HashMap : Struct
 {
-	std::unordered_map<TableKey, Atom, KeyHash, KeyEqual> entries;
+	ankerl::unordered_dense::map<TableKey, size_t, KeyHash, KeyEqual> index;
+	Ring<HashMapEntry> entries;
+	Ring<uint64_t> live_words;
+	std::vector<HashMapCursor*> cursors;
+	std::vector<size_t> cursor_positions;
+	size_t first{};
+	size_t last{};
 
 	explicit HashMap(StructType* type) : Struct{type} {}
+	~HashMap();
 
 	static HashMap* alloc(StructType* type)
 	{
@@ -334,18 +415,100 @@ struct HashMap : Struct
 		return new (mem) HashMap{type};
 	}
 
+	HashMapEntry& entry(size_t position) { return entries[position - first]; }
+	const HashMapEntry& entry(size_t position) const { return entries[position - first]; }
+	bool is_live(size_t position) const
+	{
+		size_t word = position / 64;
+		return test_bit(&live_words[word - first / 64], position % 64);
+	}
+
+	size_t next_live(size_t position) const
+	{
+		position = std::max(position, first);
+		if (position >= last)
+		{
+			return last;
+		}
+		size_t word = position / 64;
+		size_t final_word = (last - 1) / 64;
+		uint64_t bits = live_words[word - first / 64] & (~uint64_t{0} << (position % 64));
+		while (true)
+		{
+			if (bits != 0)
+			{
+				return word * 64 + std::countr_zero(bits);
+			}
+			if (word == final_word)
+			{
+				return last;
+			}
+			++word;
+			bits = live_words[word - first / 64];
+		}
+	}
+
 	void trace(Gc& gc)
 	{
-		for (const std::pair<const TableKey, Atom>& entry : entries)
+		for (size_t position = next_live(first); position < last; position = next_live(position + 1))
 		{
-			gc.mark_atom(entry.first.atom.bits);
-			gc.mark_atom(entry.second.bits);
+			const HashMapEntry& item = entry(position);
+			gc.mark_atom(item.key.atom.bits);
+			gc.mark_atom(item.value.bits);
 		}
 	}
 
 	HashMap(const HashMap&) = delete;
 	HashMap& operator=(const HashMap&) = delete;
 };
+
+struct HashMapCursor : Cursor
+{
+	inline static Atom type_atom{};
+	HashMap* map;
+	size_t slot;
+
+	HashMapCursor(StructType* type, Atom target, const CursorOps* ops);
+	~HashMapCursor();
+	void detach();
+};
+
+inline HashMapCursor::HashMapCursor(StructType* type, Atom target, const CursorOps* ops)
+	: Cursor{type, target, ops}, map{static_cast<HashMap*>(target.as_ptr())}, slot{map->cursors.size()}
+{
+	map->cursors.push_back(this);
+	map->cursor_positions.push_back(map->first);
+}
+
+inline HashMapCursor::~HashMapCursor()
+{
+	detach();
+}
+
+inline void HashMapCursor::detach()
+{
+	if (!map)
+	{
+		return;
+	}
+	HashMapCursor* moved = map->cursors.back();
+	map->cursors[slot] = moved;
+	map->cursor_positions[slot] = map->cursor_positions.back();
+	moved->slot = slot;
+	map->cursors.pop_back();
+	map->cursor_positions.pop_back();
+	map = nullptr;
+}
+
+inline HashMap::~HashMap()
+{
+	for (HashMapCursor* cursor : cursors)
+	{
+		cursor->map = nullptr;
+	}
+}
+
+Cursor* hashmap_cursor_make(Atom target);
 
 inline bool operator==(Struct& a, Struct& b)
 {

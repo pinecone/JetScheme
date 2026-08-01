@@ -86,7 +86,7 @@ inline void clear_bit(uint64_t* bits, size_t i)
 	bits[i / 64] &= ~(1ULL << (i % 64));
 }
 
-inline bool test_bit(uint64_t* bits, size_t i)
+inline bool test_bit(const uint64_t* bits, size_t i)
 {
 	return (bits[i / 64] >> (i % 64)) & 1ULL;
 }
