@@ -37,6 +37,17 @@
 (setf! seen 'x #t)
 ($check (ref seen 'x))
 
+;; Removal ignores absent elements and permits later reinsertion.
+(define removable-set (hashset 'kept 'removed))
+(hashset-unset! removable-set 'missing)
+($check (ref removable-set 'kept))
+($check (ref removable-set 'removed))
+(hashset-unset! removable-set 'removed)
+($check (ref removable-set 'kept))
+($check (not (ref removable-set 'removed)))
+(setf! removable-set 'removed #t)
+($check (ref removable-set 'removed))
+
 ;; #f is a storable value, distinct from absence.
 (define flags (hashmap 'off #f))
 ($check (eq? #f (ref flags 'off)))

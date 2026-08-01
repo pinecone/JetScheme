@@ -393,6 +393,33 @@ static const StructOps vector_cursor_struct_ops = {
 	print_cursor,
 };
 
+static bool equal_hashset_cursor(EqualContext&, Struct* first, Struct* second, EqualRecur)
+{
+	HashSetCursor* a = static_cast<HashSetCursor*>(first);
+	HashSetCursor* b = static_cast<HashSetCursor*>(second);
+	if (!is_eq(a->target, b->target))
+	{
+		return false;
+	}
+	if (!a->set || !b->set)
+	{
+		return a->set == b->set;
+	}
+	size_t a_position = std::clamp(a->set->cursor_positions[a->slot], a->set->first, a->set->last);
+	size_t b_position = std::clamp(b->set->cursor_positions[b->slot], b->set->first, b->set->last);
+	return a_position == b_position;
+}
+
+static const StructOps hashset_cursor_struct_ops = {
+	StructKind::Cursor,
+	private_cursor_constructor,
+	{},
+	struct_destructor<HashSetCursor>(),
+	equal_hashset_cursor,
+	print_cursor,
+	print_cursor,
+};
+
 static bool equal_hashmap_cursor(EqualContext&, Struct* first, Struct* second, EqualRecur)
 {
 	HashMapCursor* a = static_cast<HashMapCursor*>(first);
@@ -1820,12 +1847,6 @@ static TableKey make_key(Atom key)
 	return {key, hash};
 }
 
-static Atom hashset_lookup(Struct* instance, Atom key)
-{
-	HashSet* set = static_cast<HashSet*>(instance);
-	return box(set->items.find(make_key(key)) != set->items.end());
-}
-
 JET_ALWAYS_INLINE static bool make_fast_key(Atom atom, bool& needs_slow, FastKey& key)
 {
 	FastKeyKind kind;
@@ -1874,6 +1895,24 @@ JET_ALWAYS_INLINE static bool make_fast_key(Atom atom, bool& needs_slow, FastKey
 	return true;
 }
 
+JET_ALWAYS_INLINE static bool hashset_find_fast(HashSet* set, Atom key)
+{
+	bool needs_slow = false;
+	FastKey fast_key;
+	if (!make_fast_key(key, needs_slow, fast_key)) [[unlikely]]
+	{
+		return false;
+	}
+	auto it = set->index.find(fast_key);
+	return it != set->index.end() && !needs_slow;
+}
+
+static Atom hashset_lookup(Struct* instance, Atom key)
+{
+	HashSet* set = static_cast<HashSet*>(instance);
+	return box(set->index.find(make_key(key)) != set->index.end());
+}
+
 JET_ALWAYS_INLINE static bool hashmap_find_fast(HashMap* map, Atom key, size_t& position)
 {
 	bool needs_slow = false;
@@ -1902,7 +1941,23 @@ static Atom hashmap_lookup(Struct* instance, Atom key)
 static void hashset_insert(Struct* instance, Atom key, Atom value)
 {
 	JET_DIE_UNLESS(value.bits == box(true).bits, "setf!: a hashset element can only be set to #t");
-	static_cast<HashSet*>(instance)->items.insert(make_key(key));
+	HashSet* set = static_cast<HashSet*>(instance);
+	TableKey table_key = make_key(key);
+	size_t position = set->last;
+	auto [it, inserted] = set->index.try_emplace(table_key, position);
+	if (!inserted)
+	{
+		return;
+	}
+
+	size_t word = position / 64;
+	if (word == set->first / 64 + set->live_words.size())
+	{
+		set->live_words.push_back(0);
+	}
+	set->entries.push_back(table_key);
+	set_bit(&set->live_words[word - set->first / 64], position % 64);
+	++set->last;
 }
 
 static void hashmap_insert(Struct* instance, Atom key, Atom value)
@@ -1925,6 +1980,63 @@ static void hashmap_insert(Struct* instance, Atom key, Atom value)
 	map->entries.push_back({table_key, value});
 	set_bit(&map->live_words[word - map->first / 64], position % 64);
 	++map->last;
+}
+
+static void hashset_trim(HashSet& set)
+{
+	size_t old_last = set.last;
+	while (set.first < set.last && !set.is_live(set.first))
+	{
+		set.entries.pop_front();
+		++set.first;
+		if (set.first % 64 == 0)
+		{
+			set.live_words.pop_front();
+		}
+	}
+	while (set.first < set.last && !set.is_live(set.last - 1))
+	{
+		set.entries.pop_back();
+		--set.last;
+	}
+	if (set.first == set.last)
+	{
+		set.live_words.clear();
+	}
+	else
+	{
+		size_t final_word = (set.last - 1) / 64;
+		while (set.first / 64 + set.live_words.size() - 1 > final_word)
+		{
+			set.live_words.pop_back();
+		}
+	}
+	if (set.last < old_last)
+	{
+		for (size_t& position : set.cursor_positions)
+		{
+			position = std::min(position, set.last);
+		}
+	}
+}
+
+static Atom hashset_unset(Atom object, Atom key)
+{
+	Struct* instance = slow_unbox<Struct>(object);
+	JET_DIE_UNLESS(instance->type->kind() == StructKind::HashSet,
+	               "hashset-unset!: expected a hashset");
+	HashSet& set = *static_cast<HashSet*>(instance);
+	auto it = set.index.find(make_key(key));
+	if (it == set.index.end())
+	{
+		return {};
+	}
+	size_t position = it->second;
+	set.index.erase(it);
+	clear_bit(&set.live_words[position / 64 - set.first / 64], position % 64);
+	set.entry(position) = {};
+	hashset_trim(set);
+	return {};
 }
 
 static void hashmap_trim(HashMap& map)
@@ -2060,6 +2172,106 @@ JET_PRESERVE_NONE static void table_stfk_handler(VM_OP_PARAMS)
 	DISPATCH();
 }
 
+JET_NOINLINE JET_PRESERVE_NONE static void hashset_ldf_slow(VM_OP_PARAMS)
+{
+	JET_MUSTTAIL return table_ldf_handler<hashset_lookup>(VM_OP_ARGS);
+}
+
+JET_NOINLINE JET_PRESERVE_NONE static void hashset_stf_slow(VM_OP_PARAMS)
+{
+	JET_MUSTTAIL return table_stf_handler<hashset_insert>(VM_OP_ARGS);
+}
+
+JET_NOINLINE JET_PRESERVE_NONE static void hashset_resolved_ldfk_slow(VM_OP_PARAMS)
+{
+	JET_MUSTTAIL return table_resolved_ldfk_handler<hashset_lookup>(VM_OP_ARGS);
+}
+
+JET_NOINLINE JET_PRESERVE_NONE static void hashset_resolved_stfk_slow(VM_OP_PARAMS)
+{
+	JET_MUSTTAIL return table_resolved_stfk_handler<hashset_insert>(VM_OP_ARGS);
+}
+
+JET_PRESERVE_NONE static void hashset_ldf_handler(VM_OP_PARAMS)
+{
+	OP_ldf* op = reinterpret_cast<OP_ldf*>(pc - sizeof(OP_ldf));
+	HashSet* set = static_cast<HashSet*>(unbox<Struct>(callee));
+	if (!hashset_find_fast(set, frame_regs[op->key])) [[unlikely]]
+	{
+		JET_MUSTTAIL return hashset_ldf_slow(VM_OP_ARGS);
+	}
+	frame_regs[op->dst] = box(true);
+	DISPATCH();
+}
+
+JET_NOINLINE JET_PRESERVE_NONE static void hashset_stf_bad_value(VM_OP_PARAMS)
+{
+	JET_DIE("setf!: a hashset element can only be set to #t");
+}
+
+JET_PRESERVE_NONE static void hashset_stf_handler(VM_OP_PARAMS)
+{
+	OP_stf* op = reinterpret_cast<OP_stf*>(pc - sizeof(OP_stf));
+	if (frame_regs[op->val].bits != box(true).bits) [[unlikely]]
+	{
+		JET_MUSTTAIL return hashset_stf_bad_value(VM_OP_ARGS);
+	}
+	HashSet* set = static_cast<HashSet*>(unbox<Struct>(callee));
+	if (!hashset_find_fast(set, frame_regs[op->key])) [[unlikely]]
+	{
+		JET_MUSTTAIL return hashset_stf_slow(VM_OP_ARGS);
+	}
+	DISPATCH();
+}
+
+JET_PRESERVE_NONE static void hashset_resolved_ldfk_handler(VM_OP_PARAMS)
+{
+	OP_ldfk* op = reinterpret_cast<OP_ldfk*>(pc);
+	Atom object = frame_regs[op->obj];
+	if (!object.tag_is<jet_tag::struct_>() ||
+	    op->ic.ic_dispatch_key != reinterpret_cast<uint64_t>(unbox<Struct>(object)->type)) [[unlikely]]
+	{
+		JET_MUSTTAIL return field_ldfk_miss(VM_OP_ARGS);
+	}
+	HashSet* set = static_cast<HashSet*>(unbox<Struct>(object));
+	if (!hashset_find_fast(set, s.constants[op->key_idx])) [[unlikely]]
+	{
+		JET_MUSTTAIL return hashset_resolved_ldfk_slow(VM_OP_ARGS);
+	}
+	frame_regs[op->dst] = box(true);
+	pc += sizeof(*op);
+	JET_PROFILE_FIELD_DISPATCH(Opcode::ldfk, FieldReceiver::Struct, true);
+	DISPATCH();
+}
+
+JET_NOINLINE JET_PRESERVE_NONE static void hashset_resolved_stfk_bad_value(VM_OP_PARAMS)
+{
+	JET_DIE("setf!: a hashset element can only be set to #t");
+}
+
+JET_PRESERVE_NONE static void hashset_resolved_stfk_handler(VM_OP_PARAMS)
+{
+	OP_stfk* op = reinterpret_cast<OP_stfk*>(pc);
+	Atom object = frame_regs[op->obj];
+	if (!object.tag_is<jet_tag::struct_>() ||
+	    op->ic.ic_dispatch_key != reinterpret_cast<uint64_t>(unbox<Struct>(object)->type)) [[unlikely]]
+	{
+		JET_MUSTTAIL return field_stfk_miss(VM_OP_ARGS);
+	}
+	if (frame_regs[op->val].bits != box(true).bits) [[unlikely]]
+	{
+		JET_MUSTTAIL return hashset_resolved_stfk_bad_value(VM_OP_ARGS);
+	}
+	HashSet* set = static_cast<HashSet*>(unbox<Struct>(object));
+	if (!hashset_find_fast(set, s.constants[op->key_idx])) [[unlikely]]
+	{
+		JET_MUSTTAIL return hashset_resolved_stfk_slow(VM_OP_ARGS);
+	}
+	pc += sizeof(*op);
+	JET_PROFILE_FIELD_DISPATCH(Opcode::stfk, FieldReceiver::Struct, true);
+	DISPATCH();
+}
+
 JET_NOINLINE JET_PRESERVE_NONE static void hashmap_ldf_slow(VM_OP_PARAMS)
 {
 	JET_MUSTTAIL return table_ldf_handler<hashmap_lookup>(VM_OP_ARGS);
@@ -2153,7 +2365,7 @@ static Struct* construct_hashset(StructType* type, Atom* first, Atom* last)
 	HashSet* set = HashSet::alloc(type);
 	for (Atom* it = first; it != last; ++it)
 	{
-		set->items.insert(make_key(*it));
+		hashset_insert(set, *it, box(true));
 	}
 	return set;
 }
@@ -2174,13 +2386,13 @@ static bool equal_hashset(EqualContext&, Struct* first, Struct* second, EqualRec
 {
 	HashSet* a = static_cast<HashSet*>(first);
 	HashSet* b = static_cast<HashSet*>(second);
-	if (a->items.size() != b->items.size())
+	if (a->index.size() != b->index.size())
 	{
 		return false;
 	}
-	for (const TableKey& item : a->items)
+	for (const std::pair<TableKey, size_t>& item : a->index)
 	{
-		if (b->items.find(item) == b->items.end())
+		if (b->index.find(item.first) == b->index.end())
 		{
 			return false;
 		}
@@ -2214,11 +2426,12 @@ static void print_hashset(Struct* instance, std::string& out)
 	HashSet* set = static_cast<HashSet*>(instance);
 	out += "#hashset(";
 	const char* separator = "";
-	for (const TableKey& item : set->items)
+	for (size_t position = set->next_live(set->first); position < set->last;
+	     position = set->next_live(position + 1))
 	{
 		out += separator;
 		separator = " ";
-		print(item.atom, out);
+		print(set->entry(position).atom, out);
 	}
 	out += ')';
 }
@@ -2246,14 +2459,14 @@ static const StructOps hashset_ops = {
 	StructKind::HashSet,
 	struct_constructor_handler<construct_hashset>,
 	{
-		table_ldf_handler<hashset_lookup>,
-		table_stf_handler<hashset_insert>,
+		hashset_ldf_handler,
+		hashset_stf_handler,
 		table_ldfk_handler<hashset_lookup>,
 		table_stfk_handler<hashset_insert>,
-		table_resolved_ldfk_handler<hashset_lookup>,
-		table_resolved_stfk_handler<hashset_insert>,
+		hashset_resolved_ldfk_handler,
+		hashset_resolved_stfk_handler,
 		table_ref<hashset_lookup>,
-		nullptr,
+		hashset_cursor_make,
 	},
 	struct_destructor<HashSet>(),
 	equal_hashset,
@@ -2318,6 +2531,7 @@ void init_structs(Env& e)
 	static const std::string tuple_name = "tuple";
 	static const std::string hashset_name = "hashset";
 	static const std::string hashmap_name = "hashmap";
+	static const std::string hashset_cursor_name = "%hashset-cursor";
 	static const std::string hashmap_cursor_name = "%hashmap-cursor";
 	Atom name = box(static_cast<Symbol>(&tuple_name));
 	e.bind("tuple", box<StructType>(name, std::vector<Atom>{}, n_ary(), tuple_ops));
@@ -2325,6 +2539,11 @@ void init_structs(Env& e)
 	                                  n_ary(), hashset_ops));
 	e.bind("hashmap", box<StructType>(box(static_cast<Symbol>(&hashmap_name)), std::vector<Atom>{},
 	                                  n_ary(), hashmap_ops));
+	Atom hashset_cursor_type =
+		box<StructType>(box(&hashset_cursor_name), std::vector<Atom>{}, exactly(0),
+		                hashset_cursor_struct_ops);
+	e.bind("%hashset-cursor", hashset_cursor_type);
+	HashSetCursor::type_atom = hashset_cursor_type;
 	Atom hashmap_cursor_type =
 		box<StructType>(box(&hashmap_cursor_name), std::vector<Atom>{}, exactly(0),
 		                hashmap_cursor_struct_ops);
@@ -2332,6 +2551,7 @@ void init_structs(Env& e)
 	HashMapCursor::type_atom = hashmap_cursor_type;
 	e.bind("hashset?", make_prim<is_kind<StructKind::HashSet>>());
 	e.bind("hashmap?", make_prim<is_kind<StructKind::HashMap>>());
+	e.bind("hashset-unset!", make_prim<hashset_unset>());
 	e.bind("hashmap-unset!", make_prim<hashmap_unset>());
 	e.bind("struct", make_prim<struct_ctor>());
 	e.bind("isa?", make_prim<isa>());

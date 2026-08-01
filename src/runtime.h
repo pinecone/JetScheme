@@ -342,30 +342,6 @@ struct KeyEqual
 	}
 };
 
-struct HashSet : Struct
-{
-	std::unordered_set<TableKey, KeyHash, KeyEqual> items;
-
-	explicit HashSet(StructType* type) : Struct{type} {}
-
-	static HashSet* alloc(StructType* type)
-	{
-		void* mem = g_gc->alloc(sizeof(HashSet), jet_tag::struct_, type->destructor_id());
-		return new (mem) HashSet{type};
-	}
-
-	void trace(Gc& gc)
-	{
-		for (const TableKey& item : items)
-		{
-			gc.mark_atom(item.atom.bits);
-		}
-	}
-
-	HashSet(const HashSet&) = delete;
-	HashSet& operator=(const HashSet&) = delete;
-};
-
 template <typename T>
 class Ring
 {
@@ -426,6 +402,118 @@ private:
 		head_ = 0;
 	}
 };
+
+struct HashSetCursor;
+
+struct HashSet : Struct
+{
+	ankerl::unordered_dense::map<TableKey, size_t, KeyHash, KeyEqual> index;
+	Ring<TableKey> entries;
+	Ring<uint64_t> live_words;
+	std::vector<HashSetCursor*> cursors;
+	std::vector<size_t> cursor_positions;
+	size_t first{};
+	size_t last{};
+
+	explicit HashSet(StructType* type) : Struct{type} {}
+	~HashSet();
+
+	static HashSet* alloc(StructType* type)
+	{
+		void* mem = g_gc->alloc(sizeof(HashSet), jet_tag::struct_, type->destructor_id());
+		return new (mem) HashSet{type};
+	}
+
+	TableKey& entry(size_t position) { return entries[position - first]; }
+	const TableKey& entry(size_t position) const { return entries[position - first]; }
+	bool is_live(size_t position) const
+	{
+		size_t word = position / 64;
+		return test_bit(&live_words[word - first / 64], position % 64);
+	}
+
+	size_t next_live(size_t position) const
+	{
+		position = std::max(position, first);
+		if (position >= last)
+		{
+			return last;
+		}
+		size_t word = position / 64;
+		size_t final_word = (last - 1) / 64;
+		uint64_t bits = live_words[word - first / 64] & (~uint64_t{0} << (position % 64));
+		while (true)
+		{
+			if (bits != 0)
+			{
+				return word * 64 + std::countr_zero(bits);
+			}
+			if (word == final_word)
+			{
+				return last;
+			}
+			++word;
+			bits = live_words[word - first / 64];
+		}
+	}
+
+	void trace(Gc& gc)
+	{
+		for (size_t position = next_live(first); position < last; position = next_live(position + 1))
+		{
+			gc.mark_atom(entry(position).atom.bits);
+		}
+	}
+
+	HashSet(const HashSet&) = delete;
+	HashSet& operator=(const HashSet&) = delete;
+};
+
+struct HashSetCursor : Cursor
+{
+	inline static Atom type_atom{};
+	HashSet* set;
+	size_t slot;
+
+	HashSetCursor(StructType* type, Atom target, const CursorOps* ops);
+	~HashSetCursor();
+	void detach();
+};
+
+inline HashSetCursor::HashSetCursor(StructType* type, Atom target, const CursorOps* ops)
+	: Cursor{type, target, ops}, set{static_cast<HashSet*>(target.as_ptr())}, slot{set->cursors.size()}
+{
+	set->cursors.push_back(this);
+	set->cursor_positions.push_back(set->first);
+}
+
+inline HashSetCursor::~HashSetCursor()
+{
+	detach();
+}
+
+inline void HashSetCursor::detach()
+{
+	if (!set)
+	{
+		return;
+	}
+	HashSetCursor* moved = set->cursors.back();
+	set->cursors[slot] = moved;
+	set->cursor_positions[slot] = set->cursor_positions.back();
+	moved->slot = slot;
+	set->cursors.pop_back();
+	set->cursor_positions.pop_back();
+	set = nullptr;
+}
+
+inline HashSet::~HashSet()
+{
+	for (HashSetCursor* cursor : cursors)
+	{
+		cursor->set = nullptr;
+	}
+}
 
 struct HashMapEntry
 {
@@ -547,6 +635,7 @@ inline HashMap::~HashMap()
 	}
 }
 
+Cursor* hashset_cursor_make(Atom target);
 Cursor* hashmap_cursor_make(Atom target);
 
 inline bool operator==(Struct& a, Struct& b)

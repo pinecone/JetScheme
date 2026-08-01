@@ -859,6 +859,45 @@ static Cursor* vector_cursor_make(Atom target)
 	return new (mem) VectorCursor{type, target, &vector_cursor_ops};
 }
 
+JET_PRESERVE_NONE static void hashset_cursor_next1(VM_OP_PARAMS)
+{
+	OP_iter_next1* op = reinterpret_cast<OP_iter_next1*>(pc - sizeof(OP_iter_next1));
+	HashSetCursor* cursor = static_cast<HashSetCursor*>(unbox<Struct>(callee));
+	if (!cursor->set) [[unlikely]]
+	{
+		JET_MUSTTAIL return die_iter_exhausted(VM_OP_ARGS);
+	}
+	HashSet& set = *cursor->set;
+	size_t first = set.first;
+	size_t last = set.last;
+	size_t& cursor_position = set.cursor_positions[cursor->slot];
+	size_t position = set.next_live(cursor_position);
+	if (position < last)
+	{
+		const TableKey& entry = set.entries[position - first];
+		cursor_position = position + 1;
+		frame_regs[op->dst] = entry.atom;
+		DISPATCH();
+	}
+	cursor->detach();
+	pc += op->size;
+	DISPATCH();
+}
+
+static const CursorOps hashset_cursor_ops = {
+	hashset_cursor_next1,
+	nullptr,
+};
+
+Cursor* hashset_cursor_make(Atom target)
+{
+	JET_DIE_UNLESS(is_type<jet::Type::StructType>(HashSetCursor::type_atom),
+	               "hashset cursor type is not initialized");
+	StructType* type = unbox<StructType>(HashSetCursor::type_atom);
+	void* mem = g_gc->alloc(sizeof(HashSetCursor), jet_tag::struct_, type->destructor_id());
+	return new (mem) HashSetCursor{type, target, &hashset_cursor_ops};
+}
+
 JET_PRESERVE_NONE static void hashmap_cursor_next2(VM_OP_PARAMS)
 {
 	OP_iter_next2* op = reinterpret_cast<OP_iter_next2*>(pc - sizeof(OP_iter_next2));
