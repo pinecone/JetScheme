@@ -357,6 +357,13 @@ void decode_args(FILE* out, uint8_t op, Code* p)
 			std::fprintf(out, " dst=%u src=%u", o->dst, o->src);
 			break;
 		}
+		case Opcode::mov2:
+		{
+			OP_mov2* o = reinterpret_cast<OP_mov2*>(p);
+			std::fprintf(out, " dst0=%u src0=%u dst1=%u src1=%u", o->first.dst, o->first.src,
+			             o->second.dst, o->second.src);
+			break;
+		}
 		case Opcode::ldk:
 		{
 			OP_ldk* o = reinterpret_cast<OP_ldk*>(p);

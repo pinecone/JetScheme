@@ -19,6 +19,7 @@
 	X(skip,                "b")                                                                              \
 	X(label,               "label")                                                                          \
 	X(mov,                 "mov")                                                                            \
+	X(mov2,                "mov2")                                                                           \
 	X(ldk,                 "ldk")                                                                            \
 	X(ldu,                 "ldu")                                                                            \
 	X(ldus,                "ldus")                                                                           \
@@ -112,6 +113,11 @@ struct OP_mov
 {
 	uint16_t dst;
 	uint16_t src;
+};
+struct OP_mov2
+{
+	OP_mov first;
+	OP_mov second;
 };
 struct OP_ldk
 {
@@ -262,6 +268,8 @@ inline size_t opcode_step(uint8_t op, const uint8_t* operands)
 			return OPCODE_SIZE + sizeof(OP_skip);
 		case Opcode::mov:
 			return OPCODE_SIZE + sizeof(OP_mov);
+		case Opcode::mov2:
+			return OPCODE_SIZE + sizeof(OP_mov2);
 		case Opcode::ldk:
 		case Opcode::ldu:
 		case Opcode::ldus:

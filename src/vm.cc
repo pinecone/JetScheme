@@ -1233,6 +1233,15 @@ JET_PRESERVE_NONE static void op_mov(VM_OP_PARAMS)
 	DISPATCH();
 }
 
+JET_PRESERVE_NONE static void op_mov2(VM_OP_PARAMS)
+{
+	OP_mov2* op = reinterpret_cast<OP_mov2*>(pc);
+	pc += sizeof(*op);
+	frame_regs[op->first.dst] = frame_regs[op->first.src];
+	frame_regs[op->second.dst] = frame_regs[op->second.src];
+	DISPATCH();
+}
+
 JET_PRESERVE_NONE static void op_ldk(VM_OP_PARAMS)
 {
 	OP_ldk* op = reinterpret_cast<OP_ldk*>(pc);

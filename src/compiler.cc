@@ -4652,6 +4652,7 @@ namespace
 		union
 		{
 			struct { uint16_t dst; uint16_t src; } mov;              // mov
+			struct { uint16_t dst0; uint16_t src0; uint16_t dst1; uint16_t src1; } mov2;
 			struct { uint16_t dst; uint16_t idx; } load;             // ldk ldu ldus ldd
 			struct { uint16_t idx; uint16_t src; } store;            // stu std
 			struct { uint16_t reg; } box;                            // box
@@ -5741,6 +5742,28 @@ namespace
 
 		Bytecode emit_code(LirLambda& L)
 		{
+			size_t write = 0;
+			for (size_t read = 0; read < L.code.size(); ++read)
+			{
+				if (read + 1 < L.code.size() && L.code[read].op == Opcode::mov
+				    && L.code[read + 1].op == Opcode::mov)
+				{
+					LirInst fused{};
+					fused.op = Opcode::mov2;
+					fused.u.mov2.dst0 = L.code[read].u.mov.dst;
+					fused.u.mov2.src0 = L.code[read].u.mov.src;
+					fused.u.mov2.dst1 = L.code[read + 1].u.mov.dst;
+					fused.u.mov2.src1 = L.code[read + 1].u.mov.src;
+					L.code[write++] = fused;
+					++read;
+				}
+				else
+				{
+					L.code[write++] = L.code[read];
+				}
+			}
+			L.code.resize(write);
+
 			std::unordered_map<uint32_t, size_t> label_pos;
 			size_t off = 0;
 			for (LirInst& i : L.code)
@@ -5777,6 +5800,18 @@ namespace
 					OP_mov op{};
 					op.dst = i.u.mov.dst;
 					op.src = i.u.mov.src;
+					emit_operand(bc, op);
+					break;
+				}
+
+				case Opcode::mov2:
+				{
+					emit_opcode(bc, Opcode::mov2);
+					OP_mov2 op{};
+					op.first.dst = i.u.mov2.dst0;
+					op.first.src = i.u.mov2.src0;
+					op.second.dst = i.u.mov2.dst1;
+					op.second.src = i.u.mov2.src1;
 					emit_operand(bc, op);
 					break;
 				}
