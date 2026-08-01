@@ -174,10 +174,41 @@ struct Cursor : Struct
 struct VectorCursor : Cursor
 {
 	inline static Atom type_atom{};
+	Vec* vector;
+	size_t slot;
 	size_t index;
 
-	VectorCursor(StructType* type, Atom target, const CursorOps* ops) : Cursor{type, target, ops}, index{0} {}
+	VectorCursor(StructType* type, Atom target, const CursorOps* ops)
+		: Cursor{type, target, ops}, vector{unbox<Vec>(target)}, slot{vector->cursors.size()}, index{}
+	{
+		vector->cursors.push_back(this);
+	}
+
+	~VectorCursor() {
+		detach();
+	}
+
+	void detach()
+	{
+		if (!vector)
+		{
+			return;
+		}
+		VectorCursor* moved = vector->cursors.back();
+		vector->cursors[slot] = moved;
+		moved->slot = slot;
+		vector->cursors.pop_back();
+		vector = nullptr;
+	}
 };
+
+inline Vec::~Vec()
+{
+	for (VectorCursor* cursor : cursors)
+	{
+		cursor->vector = nullptr;
+	}
+}
 
 struct SchemeStruct : Struct
 {

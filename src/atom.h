@@ -15,6 +15,7 @@
 #include <string>
 #include <string_view>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 #define JET_IMM_TYPES(X)                  \
@@ -197,7 +198,37 @@ bool is_type(Atom x)
 	return type == x.type();
 }
 
-using Vec = std::vector<Atom>;
+struct VectorCursor;
+
+struct Vec
+{
+	std::vector<Atom> values;
+	std::vector<VectorCursor*> cursors;
+
+	Vec() = default;
+	template <typename It>
+	Vec(It first, It last) : values{first, last} {}
+	Vec(size_t size, Atom fill) : values(size, fill) {
+	}
+	Vec(const Vec& other) : values{other.values} {}
+	Vec(Vec&& other) noexcept : values{std::move(other.values)} {}
+	~Vec();
+
+	using iterator = std::vector<Atom>::iterator;
+
+	bool empty() const { return values.empty(); }
+	size_t size() const { return values.size(); }
+	Atom* data() { return values.data(); }
+	Atom& front() { return values.front(); }
+	Atom& back() { return values.back(); }
+	Atom& operator[](size_t index) { return values[index]; }
+	iterator begin() { return values.begin(); }
+	iterator end() { return values.end(); }
+	void reserve(size_t capacity) { values.reserve(capacity); }
+	void push_back(Atom value) { values.push_back(value); }
+	void pop_back() { values.pop_back(); }
+	iterator erase(iterator position) { return values.erase(position); }
+};
 
 struct EmptyList
 {

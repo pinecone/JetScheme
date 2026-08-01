@@ -328,11 +328,23 @@ static Atom vector_push(Atom v, Atom val)
 	return val;
 }
 
+static void vector_remove_at(Vec& vector, size_t index)
+{
+	for (VectorCursor* cursor : vector.cursors)
+	{
+		if (index < cursor->index)
+		{
+			--cursor->index;
+		}
+	}
+}
+
 static Atom vector_pop(Atom v)
 {
 	Vec& mv = *slow_unbox<Vec>(v);
 	JET_DIE_WHEN(mv.empty(), "vector-pop!: vector is empty");
 	Atom last = mv.back();
+	vector_remove_at(mv, mv.size() - 1);
 	mv.pop_back();
 	return last;
 }
@@ -342,6 +354,7 @@ static Atom vector_pop_first(Atom v)
 	Vec& mv = *slow_unbox<Vec>(v);
 	JET_DIE_WHEN(mv.empty(), "vector-pop-first!: vector is empty");
 	Atom first = mv.front();
+	vector_remove_at(mv, 0);
 	mv.erase(mv.begin());
 	return first;
 }
@@ -369,7 +382,7 @@ static const StructOps vector_cursor_struct_ops = {
 	StructKind::Cursor,
 	private_cursor_constructor,
 	{},
-	nullptr,
+	struct_destructor<VectorCursor>(),
 	equal_vector_cursor,
 	print_cursor,
 	print_cursor,

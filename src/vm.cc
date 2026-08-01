@@ -816,7 +816,8 @@ JET_PRESERVE_NONE static void vector_cursor_next1(VM_OP_PARAMS)
 {
 	OP_iter_next1* op = reinterpret_cast<OP_iter_next1*>(pc - sizeof(OP_iter_next1));
 	VectorCursor* cursor = static_cast<VectorCursor*>(unbox<Struct>(callee));
-	Vec& vector = *unbox<Vec>(cursor->target);
+	JET_DIE_WHEN(cursor->index == SIZE_MAX, "%%iter-next!: cursor is exhausted");
+	Vec& vector = *cursor->vector;
 	size_t index = cursor->index;
 	size_t size = vector.size();
 	if (index < size) [[likely]]
@@ -828,6 +829,8 @@ JET_PRESERVE_NONE static void vector_cursor_next1(VM_OP_PARAMS)
 	}
 	if (index == size)
 	{
+		cursor->index = SIZE_MAX;
+		cursor->detach();
 		pc += op->size;
 		DISPATCH();
 	}
