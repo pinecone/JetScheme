@@ -67,6 +67,13 @@
 ($check (not (equal? equal-cursor-a equal-cursor-b)))
 (%iter-next! equal-cursor-b (value) value)
 ($check (equal? equal-cursor-a equal-cursor-b))
+(%iter-next! equal-cursor-a (value) value)
+(%iter-next! equal-cursor-b (value) value)
+($check (equal? equal-cursor-a equal-cursor-b))
+($check (eq? 'done (%iter-next! equal-cursor-a (value) value 'done)))
+($check (not (equal? equal-cursor-a equal-cursor-b)))
+($check (eq? 'done (%iter-next! equal-cursor-b (value) value 'done)))
+($check (equal? equal-cursor-a equal-cursor-b))
 
 (define outer 'outer)
 (define scope-cursor (%iter (vector 'inner)))
