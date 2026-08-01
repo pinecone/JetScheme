@@ -1,0 +1,160 @@
+{
+  "name": "justif",
+  "version": "0.5.1",
+  "description": "Publication-grade text justification for the web",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lyallcooper/justif.git"
+  },
+  "homepage": "https://github.com/lyallcooper/justif#readme",
+  "bugs": "https://github.com/lyallcooper/justif/issues",
+  "type": "module",
+  "sideEffects": false,
+  "license": "MIT",
+  "author": "Lyall Cooper",
+  "files": [
+    "dist",
+    "LICENSE"
+  ],
+  "exports": {
+    "./auto": {
+      "types": "./dist/auto.d.ts",
+      "import": "./dist/auto.js"
+    },
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./core": {
+      "types": "./dist/core.d.ts",
+      "import": "./dist/core.js"
+    },
+    "./hyphenate/en-us": {
+      "types": "./dist/hyphenate/en-us.d.ts",
+      "import": "./dist/hyphenate/en-us.js"
+    },
+    "./hyphenate/liang": {
+      "types": "./dist/hyphenate/liang.d.ts",
+      "import": "./dist/hyphenate/liang.js"
+    },
+    "./hyphenate/ca": {
+      "types": "./dist/hyphenate/ca.d.ts",
+      "import": "./dist/hyphenate/ca.js"
+    },
+    "./hyphenate/da": {
+      "types": "./dist/hyphenate/da.d.ts",
+      "import": "./dist/hyphenate/da.js"
+    },
+    "./hyphenate/de": {
+      "types": "./dist/hyphenate/de.d.ts",
+      "import": "./dist/hyphenate/de.js"
+    },
+    "./hyphenate/el": {
+      "types": "./dist/hyphenate/el.d.ts",
+      "import": "./dist/hyphenate/el.js"
+    },
+    "./hyphenate/en-gb": {
+      "types": "./dist/hyphenate/en-gb.d.ts",
+      "import": "./dist/hyphenate/en-gb.js"
+    },
+    "./hyphenate/es": {
+      "types": "./dist/hyphenate/es.d.ts",
+      "import": "./dist/hyphenate/es.js"
+    },
+    "./hyphenate/fi": {
+      "types": "./dist/hyphenate/fi.d.ts",
+      "import": "./dist/hyphenate/fi.js"
+    },
+    "./hyphenate/fr": {
+      "types": "./dist/hyphenate/fr.d.ts",
+      "import": "./dist/hyphenate/fr.js"
+    },
+    "./hyphenate/hr": {
+      "types": "./dist/hyphenate/hr.d.ts",
+      "import": "./dist/hyphenate/hr.js"
+    },
+    "./hyphenate/hu": {
+      "types": "./dist/hyphenate/hu.d.ts",
+      "import": "./dist/hyphenate/hu.js"
+    },
+    "./hyphenate/it": {
+      "types": "./dist/hyphenate/it.d.ts",
+      "import": "./dist/hyphenate/it.js"
+    },
+    "./hyphenate/nb": {
+      "types": "./dist/hyphenate/nb.d.ts",
+      "import": "./dist/hyphenate/nb.js"
+    },
+    "./hyphenate/nl": {
+      "types": "./dist/hyphenate/nl.d.ts",
+      "import": "./dist/hyphenate/nl.js"
+    },
+    "./hyphenate/nn": {
+      "types": "./dist/hyphenate/nn.d.ts",
+      "import": "./dist/hyphenate/nn.js"
+    },
+    "./hyphenate/pl": {
+      "types": "./dist/hyphenate/pl.d.ts",
+      "import": "./dist/hyphenate/pl.js"
+    },
+    "./hyphenate/pt": {
+      "types": "./dist/hyphenate/pt.d.ts",
+      "import": "./dist/hyphenate/pt.js"
+    },
+    "./hyphenate/ru": {
+      "types": "./dist/hyphenate/ru.d.ts",
+      "import": "./dist/hyphenate/ru.js"
+    },
+    "./hyphenate/sk": {
+      "types": "./dist/hyphenate/sk.d.ts",
+      "import": "./dist/hyphenate/sk.js"
+    },
+    "./hyphenate/sl": {
+      "types": "./dist/hyphenate/sl.d.ts",
+      "import": "./dist/hyphenate/sl.js"
+    },
+    "./hyphenate/sv": {
+      "types": "./dist/hyphenate/sv.d.ts",
+      "import": "./dist/hyphenate/sv.js"
+    },
+    "./hyphenate/tr": {
+      "types": "./dist/hyphenate/tr.d.ts",
+      "import": "./dist/hyphenate/tr.js"
+    },
+    "./hyphenate/uk": {
+      "types": "./dist/hyphenate/uk.d.ts",
+      "import": "./dist/hyphenate/uk.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup && node tools/lower-dist.mjs",
+    "build:demo": "npm run build && node tools/build-demo.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.core.json --noEmit",
+    "compare:tex": "node tools/tex-compare.mjs",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build",
+    "version": "npm run build && node tools/sync-version.mjs && git add README.md"
+  },
+  "keywords": [
+    "typography",
+    "justification",
+    "knuth-plass",
+    "microtype",
+    "line-breaking",
+    "hyphenation"
+  ],
+  "devDependencies": {
+    "@babel/core": "^8.0.1",
+    "@babel/plugin-transform-destructuring": "^8.0.1",
+    "@babel/plugin-transform-parameters": "^8.0.1",
+    "@playwright/test": "^1.61.1",
+    "pdfjs-dist": "^6.1.200",
+    "tsup": "^8.0.0",
+    "typescript": "^5.5.0",
+    "vitest": "^3.0.0"
+  },
+  "unpkg": "./dist/auto.js",
+  "jsdelivr": "./dist/auto.js"
+}

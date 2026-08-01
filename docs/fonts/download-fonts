@@ -1,0 +1,14 @@
+#!/bin/sh
+set -eu
+
+fetch() {
+  curl --fail --location --retry 3 --output "$1" "$2"
+}
+
+fetch Inter.woff2 https://fonts.gstatic.com/s/inter/v20/UcCo3FwrK3iLTcviYwY.woff2
+fetch Inter-OFL.txt https://raw.githubusercontent.com/google/fonts/main/ofl/inter/OFL.txt
+fetch Manrope.woff2 https://fonts.gstatic.com/s/manrope/v20/xn7gYHE41ni1AdIRggexSg.woff2
+fetch Manrope-OFL.txt https://raw.githubusercontent.com/google/fonts/main/ofl/manrope/OFL.txt
+fetch SourceSans3.woff2 https://fonts.gstatic.com/s/sourcesans3/v19/nwpStKy2OAdR1K-IwhWudF-R3w8aZQ.woff2
+fetch SourceSans3-Italic.woff2 https://fonts.gstatic.com/s/sourcesans3/v19/nwpMtKy2OAdR1K-IwhWudF-R3woqZ-LY.woff2
+fetch SourceSans3-OFL.txt https://raw.githubusercontent.com/google/fonts/main/ofl/sourcesans3/OFL.txt

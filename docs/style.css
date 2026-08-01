@@ -1,4 +1,32 @@
-/* 0xProto -- self-hosted, not on Google Fonts */
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("fonts/Inter.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Manrope";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("fonts/Manrope.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Source Sans 3";
+  font-style: normal;
+  font-weight: 200 900;
+  font-display: swap;
+  src: url("fonts/SourceSans3.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Source Sans 3";
+  font-style: italic;
+  font-weight: 200 900;
+  font-display: swap;
+  src: url("fonts/SourceSans3-Italic.woff2") format("woff2");
+}
+
 @font-face {
   font-family: "0xProto";
   font-style: normal;
@@ -38,7 +66,7 @@
   --fg-muted:       #9aa5ce;
   --fg-gutter:      #3b4261;
 
-  --comment:        #565f89;
+  --comment:        #6f79a8;
 
   --orange:         #ff9e64;
   --green:          #9ece6a;
@@ -64,7 +92,7 @@
   --fs-h2:     1.25rem;
   --fs-title:  1.953rem;
 
-  /* Spacing scale (rem), powers of ~1.5 */
+  /* Quarter-rem spacing scale: 1, 2, 3, 4, 6, 8, 12, 16 */
   --sp-1: 0.25rem;
   --sp-2: 0.5rem;
   --sp-3: 0.75rem;
@@ -90,7 +118,7 @@ html, body {
   color: var(--fg);
   font-family: var(--font-sans);
   font-optical-sizing: auto;
-  line-height: 1.65;
+  line-height: var(--sp-5);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
@@ -101,7 +129,7 @@ body {
 }
 
 main {
-  max-width: 51rem; /* the 38rem benchmark table plus side padding */
+  max-width: 51rem;
   margin: 0 auto;
   padding: var(--sp-6) var(--sp-5) var(--sp-8);
 }
@@ -115,13 +143,13 @@ main {
 h1, h2, h3 {
   margin: 0;
   font-weight: 700;
-  line-height: 1.2;
 }
 
 h2 {
   font-family: var(--font-heading);
   color: var(--h2);
   font-size: var(--fs-h2);
+  line-height: var(--sp-5);
   text-transform: uppercase;
   letter-spacing: 0.10em;
   margin: var(--sp-7) 0 var(--sp-4) 0;
@@ -132,9 +160,10 @@ h3 {
   font-family: var(--font-heading);
   color: var(--h3);
   font-size: var(--fs-h3);
+  line-height: calc(var(--sp-4) + var(--sp-1));
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  margin: var(--sp-6) 0 var(--sp-3) 0;
+  margin: var(--sp-5) 0 var(--sp-3) 0;
 }
 
 /* Masthead, not a logo: no retail typeface is drawn to be a logotype, so
@@ -143,11 +172,12 @@ h3 {
    magenta, a step up in size -- which is what makes it read as the title
    of the page rather than one more section of it. Mixed case wants the
    tracking closed up, not opened out. */
-#usage h2 {
-  margin: 0 0 var(--sp-6) 0;
+#usage h1 {
+  margin: 0 0 var(--sp-4) 0;
   font-family: var(--font-mark);
   font-optical-sizing: auto;
   font-size: var(--fs-title);
+  line-height: calc(var(--sp-6) + var(--sp-2));
   font-weight: 500;
   color: var(--fg);
   text-transform: none;
@@ -155,20 +185,42 @@ h3 {
   text-shadow: none;
 }
 
-#usage pre {
-  margin-top: var(--sp-5);
+.quickstart-intro {
+  margin-bottom: var(--sp-2);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .tagline {
   color: var(--fg-dark);
   font-size: var(--fs-base);
-  line-height: 1.55;
+  line-height: var(--sp-5);
   margin: 0;
 }
 
 .tagline strong {
   color: var(--cyan-pale);
   font-weight: 600;
+}
+
+.perf-details {
+  color: inherit;
+  border-bottom: 1px dotted var(--fg-gutter);
+}
+
+.perf-details:hover {
+  color: var(--fg);
+  border-bottom-color: var(--fg-muted);
 }
 
 /* Body text */
@@ -207,6 +259,14 @@ li {
   margin: 0 0 var(--sp-2) 0;
 }
 
+#optimizations li {
+  margin-bottom: var(--sp-3);
+}
+
+li:last-child {
+  margin-bottom: 0;
+}
+
 /* Markers hang in the gutter so the text's left edge stays flush.
    Anchored with right:100% + margin-right so the gap to the text is
    constant regardless of how wide the marker glyph is (emoji widths
@@ -217,7 +277,7 @@ li::before {
   position: absolute;
   right: 100%;
   top: 0;
-  margin-right: 0.5rem;
+  margin-right: var(--sp-2);
 }
 
 #optimizations li::before {
@@ -241,6 +301,12 @@ a:hover {
   border-bottom-color: var(--cyan-pale);
 }
 
+a:focus-visible,
+.table-wrap:focus-visible {
+  outline: 2px solid var(--cyan-pale);
+  outline-offset: 3px;
+}
+
 /* Inline code */
 code {
   font-family: var(--font-mono);
@@ -255,12 +321,12 @@ p code, li code, td code {
 /* Code blocks */
 pre {
   font-family: var(--font-mono);
-  border-left: 2px solid var(--bg-highlight);
-  padding: 0 0 0 var(--sp-4);
+  padding: var(--sp-2) var(--sp-2) var(--sp-2) var(--sp-3);
   overflow-x: auto;
   margin: 0 0 var(--sp-5) 0;
-  font-size: clamp(0.64rem, 0.49rem + 0.8vw, 0.8rem);
-  line-height: 1.65;
+  border-left: 1px dotted var(--fg-gutter);
+  font-size: var(--fs-small);
+  line-height: calc(var(--sp-4) + var(--sp-1));
 }
 
 pre code {
@@ -300,11 +366,9 @@ pre code a.commit .ext {
 }
 
 /* Tables */
-/* No heading over the table: the space above it, and the legend and
-   scale below, are what set it apart from the quickstart block. */
 .table-wrap {
   overflow-x: auto;
-  margin: var(--sp-6) 0 0;
+  margin: var(--sp-4) 0 0;
 }
 
 table {
@@ -312,8 +376,7 @@ table {
   width: 100%;
   min-width: 38rem;
   font-size: var(--fs-small);
-  /* closing rule: the speed scale below reads as the table's summary,
-     so the two are bound into one block by this line plus proximity */
+  line-height: var(--sp-4);
   border-bottom: 1px solid var(--bg-highlight);
 }
 
@@ -337,7 +400,7 @@ table {
   margin: var(--sp-2) 0 0;
   padding: 0 var(--sp-2);
   font-size: var(--fs-micro);
-  line-height: 1.5;
+  line-height: var(--sp-4);
   color: var(--fg-muted);
   text-align: left;
   hyphens: none;
@@ -415,13 +478,16 @@ thead tr:nth-child(2) th {
   font-size: 0.8em;
 }
 
+tbody th,
 tbody td {
   padding: var(--sp-2);
   color: var(--fg-dark);
 }
 
-tbody td:first-child {
+tbody th {
   font-family: var(--font-mono);
+  font-weight: 400;
+  text-align: left;
   color: var(--magenta);
 }
 
@@ -446,44 +512,25 @@ tfoot td:not(.m5) {
 
 /* Relative-speed scale
    ------------------------------------------------------------------
-   One hairline axis, jet pinned at the centre. Each engine is a single
-   positioned column -- name / dot / ratio -- so the three labels can
-   never drift apart. Position is linear in the ratio, with the domain
+   One hairline axis, jet pinned at the centre. Each engine groups its
+   name, dot, and ratio; narrow screens offset adjacent labels to prevent
+   collisions. Position is linear in the ratio, with the domain
    running to 3.4x so the outermost labels keep clear of the end caps:
      x = 50% ± 50% * (ratio - 1) / 2.4
    The axis carries no tick scale of its own: every point states its own
    number, so gridline labels would only be a second, competing set of
    multipliers. */
 .scale {
-  margin: calc(var(--sp-7) + var(--sp-2)) 0 var(--sp-8);
+  margin: var(--sp-5) 0 var(--sp-6);
   padding: 0;
-}
-
-/* Figure title: the page's heading idiom (uppercase, tracked out) two
-   steps down in size and dropped to a muted grey, so it titles the
-   figure without competing with the section headings. line-height:1 so
-   the space below is the margin and nothing else -- roughly a third of
-   the space above it, which is what binds it to the track rather than
-   to the table. */
-.scale figcaption {
-  margin-bottom: var(--sp-3);
-  line-height: 1;
-  font-family: var(--font-heading);
-  font-size: var(--fs-micro);
-  font-weight: 700;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  text-align: center;
-  color: var(--fg-muted);
 }
 
 .scale-track {
   position: relative;
   width: 88%;
   margin: 0 auto;
-  /* headroom for a two-line name above the axis */
-  --names: 2.95rem;
-  height: calc(var(--names) + 2.5rem);
+  --names: var(--sp-6);
+  height: calc(var(--names) + var(--sp-6));
 }
 
 .scale-axis {
@@ -492,12 +539,12 @@ tfoot td:not(.m5) {
   right: 0;
   top: var(--names);
   height: 1px;
-  background: linear-gradient(
+  background: repeating-linear-gradient(
     to right,
-    transparent,
-    var(--fg-gutter) 4%,
-    var(--fg-gutter) 96%,
-    transparent);
+    var(--fg-gutter) 0 1px,
+    transparent 1px 5px);
+  -webkit-mask-image: linear-gradient(to right, transparent, black 4%, black 96%, transparent);
+  mask-image: linear-gradient(to right, transparent, black 4%, black 96%, transparent);
 }
 
 .scale-mark {
@@ -518,11 +565,11 @@ tfoot td:not(.m5) {
   justify-content: flex-end;
   font-family: var(--font-mono);
   font-size: var(--fs-micro);
-  line-height: 1.35;
+  line-height: var(--sp-4);
   text-align: center;
   white-space: nowrap;
   color: var(--fg-dark);
-  padding-bottom: 0.8rem;
+  padding-bottom: var(--sp-3);
 }
 
 /* zero-height box, so the dot centres on the axis without
@@ -536,9 +583,10 @@ tfoot td:not(.m5) {
 }
 
 .scale-mult {
-  margin-top: 0.75rem;
+  margin-top: var(--sp-3);
   font-family: var(--font-mono);
   font-size: var(--fs-micro);
+  line-height: var(--sp-4);
   color: var(--fg-muted);
   font-variant-numeric: tabular-nums;
 }
@@ -574,17 +622,17 @@ tfoot td:not(.m5) {
   position: absolute;
   top: var(--names);
   transform: translateY(-50%);
-  line-height: 1;
+  line-height: var(--sp-4);
   background: var(--bg);
 }
 
-.scale-ends span:first-child { left: 0; padding-right: 0.5rem; }
+.scale-ends span:first-child { left: 0; padding-right: var(--sp-2); }
 
 /* trailing negative margin cancels the last letter-space, so the word
    optically aligns with the right edge of the axis */
 .scale-ends span:last-child {
   right: 0;
-  padding-left: 0.5rem;
+  padding-left: var(--sp-2);
   margin-right: -0.14em;
 }
 
@@ -616,41 +664,46 @@ footer {
   border-top: 1px solid var(--fg-gutter);
   color: var(--fg-muted);
   font-size: var(--fs-small);
+  line-height: calc(var(--sp-4) + var(--sp-1));
   text-align: center;
 }
 
 /* Smaller screens */
 @media (max-width: 560px) {
-  main { padding: var(--sp-6) 1.1rem var(--sp-7); }
-  pre { padding: var(--sp-3); }
-  li::before { margin-right: 0.2rem; }
+  main { padding: var(--sp-6) var(--sp-4) var(--sp-7); }
+  pre { padding-left: var(--sp-2); }
+  li::before { margin-right: var(--sp-1); }
 
   /* no room for the flush-right credit: it drops under the keys,
      still flush with the table's left edge */
-  .legend { justify-content: flex-start; padding: 0 2px; }
+  .legend { justify-content: flex-start; }
   .legend-credit { margin-left: 0; }
 
-  /* The table is the widest thing on the page. Rather than scroll it, it
-     goes fluid: the fixed 38rem floor is dropped, the type rides the
-     viewport between two rungs of the scale, and the cell padding falls
-     to a hairline -- ten numeric columns need width, not air. Every cell
-     size is relative, so one declaration moves the whole table. */
-  table {
-    min-width: 0;
-    font-size: clamp(0.6rem, 2.9vw, var(--fs-small));
+  thead th:first-child,
+  tbody th,
+  tfoot th {
+    position: sticky;
+    left: 0;
+    background: var(--bg);
   }
 
-  thead th, tbody td, tfoot th, tfoot td { padding: var(--sp-1) 2px; }
-
-  /* the engine names span two columns each and are the widest thing in
-     the header, so they give up a step before the numbers do */
-  thead tr:first-child th { font-size: 0.85em; }
+  thead th:first-child { z-index: 1; }
 
   /* every pixel of width buys separation between the two slow points */
   .scale-track {
     width: 100%;
-    --names: 2.7rem;
-    height: calc(var(--names) + 4rem);
+    --names: var(--sp-6);
+    height: calc(var(--names) + var(--sp-7));
+  }
+
+  .scale-mark-python .scale-name,
+  .scale-mark-python .scale-mult {
+    transform: translateX(calc(0rem - var(--sp-2)));
+  }
+
+  .scale-mark-lua .scale-name,
+  .scale-mark-lua .scale-mult {
+    transform: translateX(var(--sp-2));
   }
 
   /* too narrow for end caps on the axis -- the left one would reach the

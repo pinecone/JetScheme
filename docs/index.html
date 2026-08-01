@@ -5,72 +5,33 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="dark">
 <title>JetScheme</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;700&family=Source+Sans+3:ital,wght@0,200..900;1,200..900&display=swap" rel="stylesheet">
-<link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,100..900&display=swap" rel="stylesheet">
+<link rel="preload" href="fonts/Inter.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/Manrope.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/SourceSans3.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/SourceSans3-Italic.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/0xProto-Regular.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/0xProto-Italic.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/0xProto-Bold.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="style.css">
-<script
-  type="module"
-  blocking="render"
-  src="https://cdn.jsdelivr.net/npm/justif@0.5.1/dist/auto.js"
-  integrity="sha384-DnIhwLwkHYcy1EkiE+4CmcVwlrGwWNxXiqxBt8n0HgxG23S897N5gJrH1OdjdX3R"
-  crossorigin="anonymous"
-></script>
+<script src="vendor/justif/auto-classic.js"></script>
 </head>
 <body>
 <main>
 
 <section id="usage">
-  <h2>JetScheme</h2>
-  <p class="tagline">JetScheme is a small <a href="https://en.wikipedia.org/wiki/Scheme_(programming_language)">Scheme</a> implementation in ~10k lines of C++. It compiles in seconds, runs fast, and has no dependencies.</p>
-<pre><code><span class="cmd">git</span> clone <a href="https://github.com/pinecone/JetScheme">https://github.com/pinecone/JetScheme.git</a>
-<span class="cmd">cd</span> JetScheme
-<span class="cmd">make</span> test
-<span class="cmd">build/jet</span> some-file.ss</code></pre>
-
-  <div class="table-wrap">
-    <table aria-describedby="perf-legend">
-      <thead>
-        <tr><th rowspan="2" class="hint" aria-label="benchmark"></th><th colspan="2" title="JavaScriptCore interpreter (LLInt, no JIT)">LLInt</th><th colspan="2" class="grp">python3.14</th><th colspan="2" class="grp">lua5.5</th><th colspan="2" class="grp">jet</th><th colspan="2" class="grp" title="JavaScriptCore with JIT">jsc</th></tr>
-        <tr><th class="m5" title="MacBook Air (Apple M5)">🍎</th><th title="Steam Deck OG (AMD Zen 2)">🎮</th><th class="grp m5" title="MacBook Air (Apple M5)">🍎</th><th title="Steam Deck OG (AMD Zen 2)">🎮</th><th class="grp m5" title="MacBook Air (Apple M5)">🍎</th><th title="Steam Deck OG (AMD Zen 2)">🎮</th><th class="grp m5" title="MacBook Air (Apple M5)">🍎</th><th title="Steam Deck OG (AMD Zen 2)">🎮</th><th class="grp m5" title="MacBook Air (Apple M5)">🍎</th><th title="Steam Deck OG (AMD Zen 2)">🎮</th></tr>
-      </thead>
-      <tbody>
-        <tr><td>astar</td><td class="m5">77</td><td>278</td><td class="grp m5">155</td><td>453</td><td class="grp m5">69</td><td>215</td><td class="grp m5">52</td><td>149</td><td class="grp m5">34</td><td>100</td></tr>
-        <tr><td>cdjs</td><td class="m5">98</td><td>308</td><td class="grp m5">162</td><td>353</td><td class="grp m5">113</td><td>331</td><td class="grp m5">53</td><td>128</td><td class="grp m5">23</td><td>55</td></tr>
-        <tr><td>deltablue</td><td class="m5">238</td><td>819</td><td class="grp m5">237</td><td>558</td><td class="grp m5">140</td><td>560</td><td class="grp m5">70</td><td>193</td><td class="grp m5">28</td><td>74</td></tr>
-        <tr><td>havlak</td><td class="m5">240</td><td>1238</td><td class="grp m5">279</td><td>794</td><td class="grp m5">338</td><td>1473</td><td class="grp m5">214</td><td>872</td><td class="grp m5">64</td><td>257</td></tr>
-        <tr><td>json</td><td class="m5">319</td><td>1143</td><td class="grp m5">148</td><td>312</td><td class="grp m5">145</td><td>398</td><td class="grp m5">76</td><td>220</td><td class="grp m5">36</td><td>114</td></tr>
-        <tr><td>nbody</td><td class="m5">398</td><td>1171</td><td class="grp m5">603</td><td>1294</td><td class="grp m5">371</td><td>897</td><td class="grp m5">165</td><td>353</td><td class="grp m5">23</td><td>64</td></tr>
-        <tr><td>raytrace</td><td class="m5">641</td><td>2490</td><td class="grp m5">512</td><td>1298</td><td class="grp m5">524</td><td>1479</td><td class="grp m5">137</td><td>494</td><td class="grp m5">43</td><td>114</td></tr>
-        <tr><td>richards</td><td class="m5">118</td><td>376</td><td class="grp m5">196</td><td>401</td><td class="grp m5">129</td><td>289</td><td class="grp m5">56</td><td>148</td><td class="grp m5">19</td><td>37</td></tr>
-        <tr><td>splay</td><td class="m5">25</td><td>94</td><td class="grp m5">42</td><td>67</td><td class="grp m5">44</td><td>130</td><td class="grp m5">20</td><td>49</td><td class="grp m5">15</td><td>35</td></tr>
-      </tbody>
-      <tfoot>
-        <tr><th>total</th><td class="m5"><span>2154</span></td><td><span>7917</span></td><td class="grp m5"><span>2334</span></td><td><span>5530</span></td><td class="grp m5"><span>1873</span></td><td><span>5772</span></td><td class="grp m5"><span>843</span></td><td><span>2606</span></td><td class="grp m5"><span>285</span></td><td><span>850</span></td></tr>
-      </tfoot>
-    </table>
-  </div>
-  <p class="legend" id="perf-legend">
-    <span class="legend-keys">
-      <span><span class="legend-glyph">🍎</span>MacBook Air (M5)</span>
-      <span><span class="legend-glyph">🎮</span>Steam Deck OG (Zen 2)</span>
-      <span>ms, median of 20 runs</span>
-    </span>
-    <span class="legend-credit"><code>make ab-cross-bench</code> at <a class="commit" href="https://github.com/pinecone/JetScheme/commit/a8836f5">a8836f5<span class="ext">↗</span></a></span>
-  </p>
-  <figure class="scale" role="img"
-          aria-label="Speed relative to jet: python is 2.4 times slower, LLInt 2.5 times slower, lua 2.2 times slower, and jsc 2.7 times faster.">
-    <figcaption>overall</figcaption>
-    <div class="scale-track">
+  <h1>JetScheme</h1>
+  <p class="tagline">JetScheme is a small <a href="https://en.wikipedia.org/wiki/Scheme_(programming_language)">Scheme</a> implementation in ~10k lines of C++. It compiles in seconds, has no dependencies, and runs <a class="perf-details" href="#benchmarks">fast</a>:</p>
+  <figure class="scale">
+    <div class="scale-track" role="img"
+         aria-label="Speed relative to jet: python is 2.4 times slower, lua 2.2 times slower, and jsc 2.7 times faster.">
       <div class="scale-axis"></div>
 
-      <div class="scale-mark" style="--x:19.4%" title="python is ≈2.4× and LLInt is ≈2.5× slower than jet">
-        <span class="scale-name">LLInt<br>python</span>
+      <div class="scale-mark scale-mark-python" style="--x:20.2%" title="python is 2.4× slower than jet">
+        <span class="scale-name">python</span>
         <span class="scale-dot"></span>
-        <span class="scale-mult">≈2.5×</span>
+        <span class="scale-mult">2.4×</span>
       </div>
-      <div class="scale-mark" style="--x:26.0%" title="lua is 2.2× slower than jet">
+      <div class="scale-mark scale-mark-lua" style="--x:26.0%" title="lua is 2.2× slower than jet">
         <span class="scale-name">lua</span>
         <span class="scale-dot"></span>
         <span class="scale-mult">2.2×</span>
@@ -89,21 +50,19 @@
       <div class="scale-ends"><span>&larr; slower</span><span>faster &rarr;</span></div>
     </div>
   </figure>
+  <p class="quickstart-intro">Try it out:</p>
+<pre><code><span class="cmd">git</span> clone <a href="https://github.com/pinecone/JetScheme">https://github.com/pinecone/JetScheme.git</a>
+<span class="cmd">cd</span> JetScheme
+<span class="cmd">make</span> test
+<span class="cmd">build/jet</span> some-file.ss</code></pre>
+
 </section>
 
 <section id="docs">
-  <h2>Docs</h2>
-
-  <p>JetScheme is a small Scheme, close to R7RS-small: lexical scope,
-  first-class functions, and proper tail calls. Deep tail recursion runs in
-  constant stack space. The forms are <code>quote</code>,
-  <code>define</code>, <code>lambda</code>, <code>if</code>, <code>begin</code>,
-  <code>let</code>, <code>let*</code>, <code>letrec</code>, <code>letrec*</code>
-  (plus named <code>let</code>), <code>set!</code>, <code>and</code>,
-  <code>or</code>, <code>cond</code> with <code>else</code>, <code>when</code>,
-  <code>unless</code>, <code>quasiquote</code>, and <code>include</code>, which
-  reads in another source file. <code>apply</code> calls a procedure with an
-  argument list you build at runtime.</p>
+  <h2 class="visually-hidden">Language reference</h2>
+  <p>JetScheme is close to R7RS-small, with lexical scope, first-class
+  functions, and proper tail calls. Deep tail recursion runs in constant
+  stack space.</p>
 <pre><code>(<span class="k">define</span> (<span class="b">make-counter</span>)
   (<span class="k">let</span> ((n <span class="n">0</span>))
     (<span class="k">lambda</span> ()
@@ -114,6 +73,16 @@
 (<span class="k">define</span> b (<span class="b">make-counter</span>))
 
 (<span class="b">displayn</span> (<span class="b">list</span> (a) (a) (b)))                    <span class="c">; prints (1 2 1) — b kept its own n</span></code></pre>
+
+  <p><strong>Forms.</strong> The forms are <code>quote</code>, <code>define</code>, <code>lambda</code>,
+  <code>if</code>, <code>begin</code>, <code>let</code>, <code>let*</code>,
+  <code>letrec</code>, <code>letrec*</code> (plus named <code>let</code>),
+  <code>set!</code>, <code>and</code>, <code>or</code>, <code>cond</code> with
+  <code>else</code>, <code>when</code>, <code>unless</code>,
+  <code>quasiquote</code>, and <code>include</code>, which reads in another
+  source file. <code>apply</code> calls a procedure with an argument list you
+  build at runtime.</p>
+
   <p><strong>All numbers are 64-bit doubles.</strong> <code>exact?</code> and
   <code>integer?</code> answer <code>#t</code> for every integral value.</p>
   <p><strong>Strings are immutable and byte-level UTF-8.</strong>
@@ -261,7 +230,7 @@
 
   <h3>I/O &amp; files</h3>
   <p><code>display</code> prints values in human-readable form. <code>write</code> prints them in code-form, which <code>read</code> can parse back. <code>newline</code> prints a newline, and
-  <code>displayn</code> is <code>display</code> followed by a newline.
+  <code>displayn</code> is <code>display</code> followed by a newline.</p>
 
   <p>To read and write a file one character at a time there are
   <code>open-input-file</code>, <code>open-output-file</code>,
@@ -285,6 +254,41 @@
   <p><code>($check expr)</code> reports the source position and fails when
   <code>expr</code> is false. <code>$file</code>, <code>$line</code>, and
   <code>$col</code> give you that file, line, and column.</p>
+</section>
+
+<section id="benchmarks">
+  <h2>Benchmarks</h2>
+  <div class="table-wrap" role="region" aria-label="Benchmark results" tabindex="0">
+    <table aria-describedby="perf-legend">
+      <caption class="visually-hidden">Benchmark runtimes in milliseconds</caption>
+      <thead>
+        <tr><th scope="col" rowspan="2" class="hint">benchmark</th><th scope="colgroup" colspan="2" aria-label="JavaScriptCore interpreter, LLInt, no JIT">LLInt</th><th scope="colgroup" colspan="2" class="grp">python3.14</th><th scope="colgroup" colspan="2" class="grp">lua5.5</th><th scope="colgroup" colspan="2" class="grp">jet</th><th scope="colgroup" colspan="2" class="grp" aria-label="JavaScriptCore with JIT">jsc</th></tr>
+        <tr><th scope="col" class="m5" aria-label="MacBook Air, Apple M5">🍎</th><th scope="col" aria-label="Steam Deck, AMD Zen 2">🎮</th><th scope="col" class="grp m5" aria-label="MacBook Air, Apple M5">🍎</th><th scope="col" aria-label="Steam Deck, AMD Zen 2">🎮</th><th scope="col" class="grp m5" aria-label="MacBook Air, Apple M5">🍎</th><th scope="col" aria-label="Steam Deck, AMD Zen 2">🎮</th><th scope="col" class="grp m5" aria-label="MacBook Air, Apple M5">🍎</th><th scope="col" aria-label="Steam Deck, AMD Zen 2">🎮</th><th scope="col" class="grp m5" aria-label="MacBook Air, Apple M5">🍎</th><th scope="col" aria-label="Steam Deck, AMD Zen 2">🎮</th></tr>
+      </thead>
+      <tbody>
+        <tr><th scope="row">astar</th><td class="m5">77</td><td>278</td><td class="grp m5">155</td><td>453</td><td class="grp m5">69</td><td>215</td><td class="grp m5">52</td><td>149</td><td class="grp m5">34</td><td>100</td></tr>
+        <tr><th scope="row">cdjs</th><td class="m5">98</td><td>308</td><td class="grp m5">162</td><td>353</td><td class="grp m5">113</td><td>331</td><td class="grp m5">53</td><td>128</td><td class="grp m5">23</td><td>55</td></tr>
+        <tr><th scope="row">deltablue</th><td class="m5">238</td><td>819</td><td class="grp m5">237</td><td>558</td><td class="grp m5">140</td><td>560</td><td class="grp m5">70</td><td>193</td><td class="grp m5">28</td><td>74</td></tr>
+        <tr><th scope="row">havlak</th><td class="m5">240</td><td>1238</td><td class="grp m5">279</td><td>794</td><td class="grp m5">338</td><td>1473</td><td class="grp m5">214</td><td>872</td><td class="grp m5">64</td><td>257</td></tr>
+        <tr><th scope="row">json</th><td class="m5">319</td><td>1143</td><td class="grp m5">148</td><td>312</td><td class="grp m5">145</td><td>398</td><td class="grp m5">76</td><td>220</td><td class="grp m5">36</td><td>114</td></tr>
+        <tr><th scope="row">nbody</th><td class="m5">398</td><td>1171</td><td class="grp m5">603</td><td>1294</td><td class="grp m5">371</td><td>897</td><td class="grp m5">165</td><td>353</td><td class="grp m5">23</td><td>64</td></tr>
+        <tr><th scope="row">raytrace</th><td class="m5">641</td><td>2490</td><td class="grp m5">512</td><td>1298</td><td class="grp m5">524</td><td>1479</td><td class="grp m5">137</td><td>494</td><td class="grp m5">43</td><td>114</td></tr>
+        <tr><th scope="row">richards</th><td class="m5">118</td><td>376</td><td class="grp m5">196</td><td>401</td><td class="grp m5">129</td><td>289</td><td class="grp m5">56</td><td>148</td><td class="grp m5">19</td><td>37</td></tr>
+        <tr><th scope="row">splay</th><td class="m5">25</td><td>94</td><td class="grp m5">42</td><td>67</td><td class="grp m5">44</td><td>130</td><td class="grp m5">20</td><td>49</td><td class="grp m5">15</td><td>35</td></tr>
+      </tbody>
+      <tfoot>
+        <tr><th scope="row">total</th><td class="m5"><span>2154</span></td><td><span>7917</span></td><td class="grp m5"><span>2334</span></td><td><span>5530</span></td><td class="grp m5"><span>1873</span></td><td><span>5772</span></td><td class="grp m5"><span>843</span></td><td><span>2606</span></td><td class="grp m5"><span>285</span></td><td><span>850</span></td></tr>
+      </tfoot>
+    </table>
+  </div>
+  <p class="legend" id="perf-legend">
+    <span class="legend-keys">
+      <span><span class="legend-glyph">🍎</span>MacBook Air (M5)</span>
+      <span><span class="legend-glyph">🎮</span>Steam Deck OG (Zen 2)</span>
+      <span>ms, median of 20 runs</span>
+    </span>
+    <span class="legend-credit"><code>make ab-cross-bench</code> at <a class="commit" href="https://github.com/pinecone/JetScheme/commit/a8836f5">a8836f5<span class="ext">↗</span></a></span>
+  </p>
 </section>
 
 <section id="optimizations">
