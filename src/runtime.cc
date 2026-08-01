@@ -1826,6 +1826,71 @@ static Atom hashset_lookup(Struct* instance, Atom key)
 	return box(set->items.find(make_key(key)) != set->items.end());
 }
 
+JET_ALWAYS_INLINE static bool make_fast_key(Atom atom, bool& needs_slow, FastKey& key)
+{
+	FastKeyKind kind;
+	uint64_t hash;
+	switch (atom.type())
+	{
+		case jet::Type::Number:
+		{
+			double value = atom.as_double();
+			if (std::isnan(value)) [[unlikely]]
+			{
+				return false;
+			}
+			hash = mix64(Atom::from_double(value == 0.0 ? 0.0 : value).bits);
+			kind = FastKeyKind::Number;
+			break;
+		}
+		case jet::Type::Boolean:
+		case jet::Type::Character:
+		case jet::Type::EmptyList:
+		case jet::Type::Eof:
+		case jet::Type::Symbol:
+			hash = mix64(atom.bits);
+			kind = FastKeyKind::Bits;
+			break;
+		case jet::Type::Struct:
+		{
+			Struct* instance = unbox<Struct>(atom);
+			if (instance->type->kind() != StructKind::Tuple)
+			{
+				return false;
+			}
+			uint32_t tuple_hash = static_cast<Tuple*>(instance)->hash;
+			if (tuple_hash < 2)
+			{
+				return false;
+			}
+			hash = mix64(static_cast<uint64_t>(tuple_hash) | (1ULL << 32));
+			kind = FastKeyKind::Tuple;
+			break;
+		}
+		default:
+			return false;
+	}
+	key = {{atom, hash}, &needs_slow, kind};
+	return true;
+}
+
+JET_ALWAYS_INLINE static bool hashmap_find_fast(HashMap* map, Atom key, size_t& position)
+{
+	bool needs_slow = false;
+	FastKey fast_key;
+	if (!make_fast_key(key, needs_slow, fast_key)) [[unlikely]]
+	{
+		return false;
+	}
+	auto it = map->index.find(fast_key);
+	if (it == map->index.end() || needs_slow) [[unlikely]]
+	{
+		return false;
+	}
+	position = it->second;
+	return true;
+}
+
 static Atom hashmap_lookup(Struct* instance, Atom key)
 {
 	HashMap* map = static_cast<HashMap*>(instance);
@@ -1995,6 +2060,94 @@ JET_PRESERVE_NONE static void table_stfk_handler(VM_OP_PARAMS)
 	DISPATCH();
 }
 
+JET_NOINLINE JET_PRESERVE_NONE static void hashmap_ldf_slow(VM_OP_PARAMS)
+{
+	JET_MUSTTAIL return table_ldf_handler<hashmap_lookup>(VM_OP_ARGS);
+}
+
+JET_NOINLINE JET_PRESERVE_NONE static void hashmap_stf_slow(VM_OP_PARAMS)
+{
+	JET_MUSTTAIL return table_stf_handler<hashmap_insert>(VM_OP_ARGS);
+}
+
+JET_NOINLINE JET_PRESERVE_NONE static void hashmap_resolved_ldfk_slow(VM_OP_PARAMS)
+{
+	JET_MUSTTAIL return table_resolved_ldfk_handler<hashmap_lookup>(VM_OP_ARGS);
+}
+
+JET_NOINLINE JET_PRESERVE_NONE static void hashmap_resolved_stfk_slow(VM_OP_PARAMS)
+{
+	JET_MUSTTAIL return table_resolved_stfk_handler<hashmap_insert>(VM_OP_ARGS);
+}
+
+JET_PRESERVE_NONE static void hashmap_ldf_handler(VM_OP_PARAMS)
+{
+	OP_ldf* op = reinterpret_cast<OP_ldf*>(pc - sizeof(OP_ldf));
+	HashMap* map = static_cast<HashMap*>(unbox<Struct>(callee));
+	size_t position;
+	if (!hashmap_find_fast(map, frame_regs[op->key], position)) [[unlikely]]
+	{
+		JET_MUSTTAIL return hashmap_ldf_slow(VM_OP_ARGS);
+	}
+	frame_regs[op->dst] = map->entry(position).value;
+	DISPATCH();
+}
+
+JET_PRESERVE_NONE static void hashmap_stf_handler(VM_OP_PARAMS)
+{
+	OP_stf* op = reinterpret_cast<OP_stf*>(pc - sizeof(OP_stf));
+	HashMap* map = static_cast<HashMap*>(unbox<Struct>(callee));
+	size_t position;
+	if (!hashmap_find_fast(map, frame_regs[op->key], position)) [[unlikely]]
+	{
+		JET_MUSTTAIL return hashmap_stf_slow(VM_OP_ARGS);
+	}
+	map->entry(position).value = frame_regs[op->val];
+	DISPATCH();
+}
+
+JET_PRESERVE_NONE static void hashmap_resolved_ldfk_handler(VM_OP_PARAMS)
+{
+	OP_ldfk* op = reinterpret_cast<OP_ldfk*>(pc);
+	Atom object = frame_regs[op->obj];
+	if (!object.tag_is<jet_tag::struct_>() ||
+	    op->ic.ic_dispatch_key != reinterpret_cast<uint64_t>(unbox<Struct>(object)->type)) [[unlikely]]
+	{
+		JET_MUSTTAIL return field_ldfk_miss(VM_OP_ARGS);
+	}
+	HashMap* map = static_cast<HashMap*>(unbox<Struct>(object));
+	size_t position;
+	if (!hashmap_find_fast(map, s.constants[op->key_idx], position)) [[unlikely]]
+	{
+		JET_MUSTTAIL return hashmap_resolved_ldfk_slow(VM_OP_ARGS);
+	}
+	frame_regs[op->dst] = map->entry(position).value;
+	pc += sizeof(*op);
+	JET_PROFILE_FIELD_DISPATCH(Opcode::ldfk, FieldReceiver::Struct, true);
+	DISPATCH();
+}
+
+JET_PRESERVE_NONE static void hashmap_resolved_stfk_handler(VM_OP_PARAMS)
+{
+	OP_stfk* op = reinterpret_cast<OP_stfk*>(pc);
+	Atom object = frame_regs[op->obj];
+	if (!object.tag_is<jet_tag::struct_>() ||
+	    op->ic.ic_dispatch_key != reinterpret_cast<uint64_t>(unbox<Struct>(object)->type)) [[unlikely]]
+	{
+		JET_MUSTTAIL return field_stfk_miss(VM_OP_ARGS);
+	}
+	HashMap* map = static_cast<HashMap*>(unbox<Struct>(object));
+	size_t position;
+	if (!hashmap_find_fast(map, s.constants[op->key_idx], position)) [[unlikely]]
+	{
+		JET_MUSTTAIL return hashmap_resolved_stfk_slow(VM_OP_ARGS);
+	}
+	map->entry(position).value = frame_regs[op->val];
+	pc += sizeof(*op);
+	JET_PROFILE_FIELD_DISPATCH(Opcode::stfk, FieldReceiver::Struct, true);
+	DISPATCH();
+}
+
 static Struct* construct_hashset(StructType* type, Atom* first, Atom* last)
 {
 	HashSet* set = HashSet::alloc(type);
@@ -2112,12 +2265,12 @@ static const StructOps hashmap_ops = {
 	StructKind::HashMap,
 	struct_constructor_handler<construct_hashmap>,
 	{
-		table_ldf_handler<hashmap_lookup>,
-		table_stf_handler<hashmap_insert>,
+		hashmap_ldf_handler,
+		hashmap_stf_handler,
 		table_ldfk_handler<hashmap_lookup>,
 		table_stfk_handler<hashmap_insert>,
-		table_resolved_ldfk_handler<hashmap_lookup>,
-		table_resolved_stfk_handler<hashmap_insert>,
+		hashmap_resolved_ldfk_handler,
+		hashmap_resolved_stfk_handler,
 		table_ref<hashmap_lookup>,
 		hashmap_cursor_make,
 	},

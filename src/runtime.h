@@ -292,15 +292,54 @@ struct TableKey
 	uint64_t hash;
 };
 
+enum class FastKeyKind : uint8_t
+{
+	Bits,
+	Number,
+	Tuple,
+};
+
+struct FastKey
+{
+	TableKey key;
+	bool* needs_slow;
+	FastKeyKind kind;
+};
+
 struct KeyHash
 {
 	using is_avalanching = void;
+	using is_transparent = void;
 	size_t operator()(const TableKey& key) const { return key.hash; }
+	size_t operator()(const FastKey& key) const { return key.key.hash; }
 };
 
 struct KeyEqual
 {
+	using is_transparent = void;
 	bool operator()(const TableKey& first, const TableKey& second) const;
+	bool operator()(const FastKey& first, const TableKey& second) const
+	{
+		if (first.key.hash != second.hash)
+		{
+			return false;
+		}
+		if (first.key.atom.bits == second.atom.bits)
+		{
+			return true;
+		}
+		if (first.kind == FastKeyKind::Number && is_type<jet::Type::Number>(second.atom))
+		{
+			Atom first_atom = first.key.atom;
+			Atom second_atom = second.atom;
+			return first_atom.as_double() == second_atom.as_double();
+		}
+		if (first.kind == FastKeyKind::Tuple)
+		{
+			*first.needs_slow = true;
+		}
+		return false;
+	}
 };
 
 struct HashSet : Struct

@@ -66,8 +66,10 @@
 #endif
 #ifdef _MSC_VER
 #    define ANKERL_UNORDERED_DENSE_NOINLINE __declspec(noinline)
+#    define ANKERL_UNORDERED_DENSE_FORCEINLINE __forceinline
 #else
 #    define ANKERL_UNORDERED_DENSE_NOINLINE __attribute__((noinline))
+#    define ANKERL_UNORDERED_DENSE_FORCEINLINE __attribute__((always_inline))
 #endif
 
 #if defined(__clang__) && defined(__has_attribute)
@@ -1241,7 +1243,7 @@ private:
     }
 
     template <typename K>
-    auto do_find(K const& key) -> iterator {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto do_find(K const& key) -> iterator {
         if (ANKERL_UNORDERED_DENSE_UNLIKELY(empty()))
             ANKERL_UNORDERED_DENSE_UNLIKELY_ATTR {
                 return end();
@@ -1282,7 +1284,7 @@ private:
     }
 
     template <typename K>
-    auto do_find(K const& key) const -> const_iterator {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto do_find(K const& key) const -> const_iterator {
         return const_cast<table*>(this)->do_find(key); // NOLINT(cppcoreguidelines-pro-type-const-cast)
     }
 
@@ -1958,12 +1960,12 @@ public:
     }
 
     template <class K, class H = Hash, class KE = KeyEqual, std::enable_if_t<is_transparent_v<H, KE>, bool> = true>
-    auto find(K const& key) -> iterator {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto find(K const& key) -> iterator {
         return do_find(key);
     }
 
     template <class K, class H = Hash, class KE = KeyEqual, std::enable_if_t<is_transparent_v<H, KE>, bool> = true>
-    auto find(K const& key) const -> const_iterator {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto find(K const& key) const -> const_iterator {
         return do_find(key);
     }
 
