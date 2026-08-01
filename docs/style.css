@@ -215,12 +215,13 @@ h3 {
 
 .perf-details {
   color: inherit;
-  border-bottom: 1px dotted var(--fg-gutter);
+  text-decoration-style: dotted;
+  text-decoration-color: var(--fg-gutter);
 }
 
 .perf-details:hover {
   color: var(--fg);
-  border-bottom-color: var(--fg-muted);
+  text-decoration-color: var(--fg-muted);
 }
 
 /* Body text */
@@ -242,10 +243,10 @@ a.cite {
   font-style: italic;
   font-weight: 400;
   font-size: var(--fs-small);
-  text-decoration: none;
-  border-bottom: 1px dotted var(--fg-gutter);
+  text-decoration-style: dotted;
+  text-decoration-color: var(--fg-gutter);
 }
-a.cite:hover { color: var(--fg-dark); border-bottom-color: var(--fg-muted); }
+a.cite:hover { color: var(--fg-dark); text-decoration-color: var(--fg-muted); }
 
 ul, ol {
   list-style: none;
@@ -291,14 +292,17 @@ li::before {
 /* Links */
 a {
   color: var(--cyan);
-  text-decoration: none;
-  border-bottom: 1px solid rgba(125,207,255,0.30);
-  transition: color 0.15s ease, border-color 0.15s ease;
+  text-decoration-line: underline;
+  text-decoration-color: rgba(125,207,255,0.30);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.14em;
+  text-decoration-skip-ink: auto;
+  transition: color 0.15s ease, text-decoration-color 0.15s ease;
 }
 
 a:hover {
   color: var(--cyan-pale);
-  border-bottom-color: var(--cyan-pale);
+  text-decoration-color: var(--cyan-pale);
 }
 
 a:focus-visible,
@@ -348,15 +352,16 @@ pre code .cmd { color: var(--blue); }
    it is a link with the underline alone */
 pre code a {
   color: inherit;
-  border-bottom: 1px dotted var(--fg-gutter);
+  text-decoration-style: dotted;
+  text-decoration-color: var(--fg-gutter);
 }
 
 pre code a:hover {
   color: var(--cyan);
-  border-bottom-color: var(--cyan);
+  text-decoration-color: var(--cyan);
 }
 
-pre code a.commit { border-bottom: 0; }
+pre code a.commit { text-decoration: none; }
 
 pre code a.commit .ext {
   margin-left: 0.15em;
@@ -437,12 +442,13 @@ table {
 .legend a.commit {
   color: var(--fg-dark);
   font-family: var(--font-mono);
-  border-bottom: 1px dotted var(--fg-gutter);
+  text-decoration-style: dotted;
+  text-decoration-color: var(--fg-gutter);
 }
 
 .legend a.commit:hover {
   color: var(--fg);
-  border-bottom-color: var(--fg-muted);
+  text-decoration-color: var(--fg-muted);
 }
 
 .legend a.commit .ext {
