@@ -102,10 +102,11 @@ end
 local function find_loops(finder)
   if finder.cfg.start == nil then return end
   local size = #finder.cfg.blocks
-  finder.non_back, finder.back, finder.number = {}, {}, {}
+  finder.non_back, finder.non_back_count, finder.back, finder.number = {}, {}, {}, {}
   finder.header, finder.kind, finder.last, finder.nodes = {}, {}, {}, {}
   for i = 1, size do
     finder.non_back[i] = {}
+    finder.non_back_count[i] = 0
     finder.back[i] = {}
     finder.number[finder.cfg.blocks[i].name] = UNVISITED
     finder.header[i] = 0
@@ -125,8 +126,9 @@ local function find_loops(finder)
           if w <= v and v <= finder.last[w + 1] then
             local back = finder.back[w + 1]
             back[#back + 1] = v
-          else
+          elseif not finder.non_back[w + 1][v] then
             finder.non_back[w + 1][v] = true
+            finder.non_back_count[w + 1] = finder.non_back_count[w + 1] + 1
           end
         end
       end
@@ -155,16 +157,18 @@ local function find_loops(finder)
       while at <= #pool do
         local x = pool[at]
         at = at + 1
-        local preds = finder.non_back[finder.nodes[x + 1].number + 1]
-        local count = 0
-        for _ in pairs(preds) do count = count + 1 end
-        if count > MAX_NON_BACK_PREDS then return end
+        local x_number = finder.nodes[x + 1].number
+        local preds = finder.non_back[x_number + 1]
+        if finder.non_back_count[x_number + 1] > MAX_NON_BACK_PREDS then return end
         for pred in pairs(preds) do
           local root = find_set(finder, pred)
           local root_number = finder.nodes[root + 1].number
           if not (w <= root_number and root_number <= finder.last[w + 1]) then
             finder.kind[w + 1] = IRREDUCIBLE
-            finder.non_back[w + 1][root_number] = true
+            if not finder.non_back[w + 1][root_number] then
+              finder.non_back[w + 1][root_number] = true
+              finder.non_back_count[w + 1] = finder.non_back_count[w + 1] + 1
+            end
           elseif root ~= w and not pool_ids[root] then
             pool_ids[root] = true
             pool[#pool + 1] = root
