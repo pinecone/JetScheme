@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <vector>
 
 using Bytecode = std::vector<uint8_t>;
@@ -16,7 +17,8 @@ struct CompileFlags
 	bool lift_lambdas = true;
 };
 
-Bytecode compile(std::string source, std::string filename = "<stdin>", CompileFlags flags = {});
+Bytecode compile(std::string source, std::string filename = "<stdin>", CompileFlags flags = {},
+                 std::string_view prelude = {});
 
 class Env;
 void init_reader(Env& e);

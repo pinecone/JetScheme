@@ -504,6 +504,7 @@ struct Compiler
 {
 	std::string source;
 	std::string filename;
+	std::string_view prelude;
 	std::vector<std::string> file_table;
 	Arena arena;
 	CompileFlags flags_;
@@ -2191,8 +2192,8 @@ Program& Compiler::ast()
 		{
 			file_table.push_back(filename);
 		}
-		std::vector<Token>& toks = tokens();
-		auto&& parse = [&]() -> Program
+		std::vector<Expr*> forms;
+		auto&& parse = [&](std::vector<Token>& toks)
 		{
 			ParseState state{
 				.tokens = toks,
@@ -2200,14 +2201,21 @@ Program& Compiler::ast()
 				.file_table = file_table,
 				.next_id = next_expr_id_,
 			};
-			std::vector<Expr*> forms;
 			while (!state.at_end())
 			{
 				forms.push_back(state.parse_expr());
 			}
-			return {state.make_slice(forms)};
 		};
-		ast_ = parse();
+		if (!prelude.empty())
+		{
+			uint32_t file_id = static_cast<uint32_t>(file_table.size());
+			file_table.push_back("<prelude>");
+			IPortMem port{prelude};
+			std::vector<Token> prelude_tokens = lex(&port, arena, file_id);
+			parse(prelude_tokens);
+		}
+		parse(tokens());
+		ast_ = Program{arena.copy_slice(forms)};
 		for (uint32_t i = 0; i < ast_->forms.size(); ++i)
 		{
 			ast_->forms[i] = expand(ast_->forms[i]);
@@ -6086,11 +6094,12 @@ Bytecode Compiler::compile()
 	return BytecodeEmitter{lir}.emit();
 }
 
-Bytecode compile(std::string source, std::string filename, CompileFlags flags)
+Bytecode compile(std::string source, std::string filename, CompileFlags flags, std::string_view prelude)
 {
 	Compiler compiler;
 	compiler.source = std::move(source);
 	compiler.filename = std::move(filename);
+	compiler.prelude = prelude;
 	compiler.flags_ = flags;
 	return compiler.compile();
 }

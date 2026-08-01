@@ -242,9 +242,8 @@
   <h3>Running programs</h3>
   <p><code>argv</code> is a vector of the script's command-line arguments, with
   the binary and script path already stripped. <code>exit</code> ends the process.
-  The prelude loads from <code>lib/prelude.ss</code> beside the binary; set
-  <code>JET_PRELUDE</code> to another prelude file, or pass
-  <code>--no-prelude</code> to skip it.</p>
+  The prelude is built into the executable; set <code>JET_PRELUDE</code> to another
+  prelude file, or pass <code>--no-prelude</code> to skip it.</p>
   <p><code>jet run</code> (or just <code>jet file.ss</code>) compiles and runs a
   program. <code>jet compile</code> writes bytecode to stdout, <code>jet exec</code>
   runs it, and <code>jet disasm</code> disassembles either source or bytecode.

@@ -29,6 +29,8 @@ VARIANT ?= release
 
 SRC			 := src
 BUILD		 := build
+PRELUDE := lib/prelude.ss
+PRELUDE_H := $(BUILD)/prelude.h
 
 # --- Variant selection ---------------------------------------------------
 
@@ -57,7 +59,7 @@ JET_BIN := $(BUILD)/jet$(SUFFIX)
 
 CXXFLAGS := -std=c++20 -fno-exceptions -fno-rtti -fno-strict-aliasing \
 						-Wall -Werror -pipe -Wold-style-cast -Wextra -Wno-unused-parameter \
-						$(OPT) $(PROFILE_DEF) -I$(SRC) -Ivendor
+						$(OPT) $(PROFILE_DEF) -I$(SRC) -I$(BUILD) -Ivendor
 
 LDFLAGS	 := $(LDOPT)
 
@@ -129,8 +131,21 @@ clean:
 $(JET_BIN): $(ALL_OBJ) | $(BUILD)
 	$(CXX) $(LDFLAGS) -o $@ $^
 
+$(OBJDIR)/main.o: $(PRELUDE_H)
+
 $(OBJDIR)/%.o: $(SRC)/%.cc | $(OBJDIR)
 	$(CXX) $(CXXFLAGS) -MMD -MP -c -o $@ $<
+
+$(PRELUDE_H): $(PRELUDE) | $(BUILD)
+	@{ \
+		printf '%s\n' '#pragma once' '#include <cstddef>' \
+			'inline constexpr unsigned char prelude_source[] = {'; \
+		LC_ALL=C od -An -v -tx1 $< | \
+			awk '{ for (i = 1; i <= NF; ++i) printf "0x%s,", $$i; print "" }'; \
+		printf '%s\n' '};' \
+			'inline constexpr std::size_t prelude_source_size = sizeof(prelude_source);'; \
+	} > $@.tmp
+	@mv $@.tmp $@
 
 $(BUILD):
 	@mkdir -p $@

@@ -1,43 +1,22 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Kirill Zorin
 
-#include <climits>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "compiler.h"
 #include "debug.h"
 #include "error.h"
+#include "prelude.h"
 #include "runtime.h"
 #include "vm.h"
 
 using namespace std;
-
-static string find_prelude(const char* argv0)
-{
-	if (const char* env = getenv("JET_PRELUDE"); env && *env)
-	{
-		return env;
-	}
-	if (argv0)
-	{
-		char buf[PATH_MAX];
-		if (realpath(argv0, buf))
-		{
-			string p{buf};
-			if (size_t slash = p.find_last_of('/'); slash != string::npos)
-			{
-				p.resize(slash);
-			}
-			return p + "/../lib/prelude.ss";
-		}
-	}
-	return "lib/prelude.ss";
-}
 
 static bool slurp_text(const string& path, string& out)
 {
@@ -79,8 +58,8 @@ static bool slurp_bytes(const string& path, vector<uint8_t>& out)
 	return true;
 }
 
-static int compile_to_bytecode(const string& source_path, const string& prelude_path, CompileFlags flags,
-                               Bytecode& out)
+static int compile_to_bytecode(const string& source_path, const string& prelude_path,
+                               string_view built_in_prelude, CompileFlags flags, Bytecode& out)
 {
 	string source;
 	JET_DIE_UNLESS(slurp_text(source_path, source), "error: cannot read '%s'", source_path.c_str());
@@ -89,7 +68,7 @@ static int compile_to_bytecode(const string& source_path, const string& prelude_
 		source = "(include \"" + prelude_path + "\")\n" + source;
 	}
 	string filename = source_path != "-" ? source_path : "<stdin>";
-	out = compile(std::move(source), std::move(filename), flags);
+	out = compile(std::move(source), std::move(filename), flags, built_in_prelude);
 	return 0;
 }
 
@@ -227,8 +206,14 @@ int main(int argc, char* argv[])
 
 	if (bool input_is_bc = want_disasm && ends_with(input_path, ".bc"); want_compile && !input_is_bc)
 	{
-		if (string prelude = no_prelude ? string{} : find_prelude(argv[0]);
-		    compile_to_bytecode(input_path, prelude, flags, bc) != 0)
+		const char* override = no_prelude ? nullptr : getenv("JET_PRELUDE");
+		string prelude_path = override && *override ? override : "";
+		string_view built_in_prelude;
+		if (!no_prelude && prelude_path.empty())
+		{
+			built_in_prelude = {reinterpret_cast<const char*>(prelude_source), prelude_source_size};
+		}
+		if (compile_to_bytecode(input_path, prelude_path, built_in_prelude, flags, bc) != 0)
 		{
 			return 1;
 		}
