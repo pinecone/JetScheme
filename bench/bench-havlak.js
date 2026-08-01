@@ -271,4 +271,3 @@ function run() {
 
 const result = run();
 if (result[0] !== 1605 || result[1] !== 5213) throw new Error(`verify failed: ${result}`);
-console.log('ok');
