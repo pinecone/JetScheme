@@ -816,20 +816,20 @@ JET_PRESERVE_NONE static void vector_cursor_next1(VM_OP_PARAMS)
 {
 	OP_iter_next1* op = reinterpret_cast<OP_iter_next1*>(pc - sizeof(OP_iter_next1));
 	VectorCursor* cursor = static_cast<VectorCursor*>(unbox<Struct>(callee));
-	JET_DIE_WHEN(cursor->index == SIZE_MAX, "%%iter-next!: cursor is exhausted");
+	JET_DIE_UNLESS(cursor->vector, "%%iter-next!: cursor is exhausted");
 	Vec& vector = *cursor->vector;
-	size_t index = cursor->index;
+	size_t& cursor_index = vector.cursor_indices[cursor->slot];
+	size_t index = cursor_index;
 	size_t size = vector.size();
 	if (index < size) [[likely]]
 	{
 		Atom* data = vector.data();
-		cursor->index = index + 1;
+		cursor_index = index + 1;
 		frame_regs[op->dst] = data[index];
 		DISPATCH();
 	}
 	if (index == size)
 	{
-		cursor->index = SIZE_MAX;
 		cursor->detach();
 		pc += op->size;
 		DISPATCH();

@@ -330,12 +330,9 @@ static Atom vector_push(Atom v, Atom val)
 
 static void vector_remove_at(Vec& vector, size_t index)
 {
-	for (VectorCursor* cursor : vector.cursors)
+	for (size_t& cursor_index : vector.cursor_indices)
 	{
-		if (index < cursor->index)
-		{
-			--cursor->index;
-		}
+		cursor_index -= index < cursor_index;
 	}
 }
 
@@ -370,7 +367,15 @@ static bool equal_vector_cursor(EqualContext&, Struct* first, Struct* second, Eq
 {
 	VectorCursor* a = static_cast<VectorCursor*>(first);
 	VectorCursor* b = static_cast<VectorCursor*>(second);
-	return a->index == b->index && is_eq(a->target, b->target);
+	if (!is_eq(a->target, b->target))
+	{
+		return false;
+	}
+	if (!a->vector || !b->vector)
+	{
+		return a->vector == b->vector;
+	}
+	return a->vector->cursor_indices[a->slot] == b->vector->cursor_indices[b->slot];
 }
 
 static void print_cursor(Struct*, std::string& out)

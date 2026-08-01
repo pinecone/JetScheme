@@ -176,12 +176,12 @@ struct VectorCursor : Cursor
 	inline static Atom type_atom{};
 	Vec* vector;
 	size_t slot;
-	size_t index;
 
 	VectorCursor(StructType* type, Atom target, const CursorOps* ops)
-		: Cursor{type, target, ops}, vector{unbox<Vec>(target)}, slot{vector->cursors.size()}, index{}
+		: Cursor{type, target, ops}, vector{unbox<Vec>(target)}, slot{vector->cursors.size()}
 	{
 		vector->cursors.push_back(this);
+		vector->cursor_indices.push_back(0);
 	}
 
 	~VectorCursor() {
@@ -196,8 +196,10 @@ struct VectorCursor : Cursor
 		}
 		VectorCursor* moved = vector->cursors.back();
 		vector->cursors[slot] = moved;
+		vector->cursor_indices[slot] = vector->cursor_indices.back();
 		moved->slot = slot;
 		vector->cursors.pop_back();
+		vector->cursor_indices.pop_back();
 		vector = nullptr;
 	}
 };

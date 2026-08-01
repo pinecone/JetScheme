@@ -204,6 +204,7 @@ struct Vec
 {
 	std::vector<Atom> values;
 	std::vector<VectorCursor*> cursors;
+	std::vector<size_t> cursor_indices;
 
 	Vec() = default;
 	template <typename It>
