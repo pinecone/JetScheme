@@ -14,6 +14,7 @@
 #include <charconv>
 #include <cstdio>
 #include <iomanip>
+#include <optional>
 #include <strings.h>
 #include <random>
 #include <unordered_set>
@@ -737,7 +738,7 @@ static bool is_equal(Atom first, Atom second, EqualContext::Cycles cycles)
 	return context.compare(first, second);
 }
 
-bool KeyEqual::operator()(const TableKey& first, const TableKey& second) const
+bool equal_key(const TableKey& first, const TableKey& second)
 {
 	return first.hash == second.hash &&
 	       is_equal(first.atom, second.atom, EqualContext::Cycles::No);
@@ -1847,7 +1848,7 @@ static TableKey make_key(Atom key)
 	return {key, hash};
 }
 
-JET_ALWAYS_INLINE static bool make_fast_key(Atom atom, bool& needs_slow, FastKey& key)
+JET_ALWAYS_INLINE static std::optional<FastKey> make_fast_key(Atom atom)
 {
 	FastKeyKind kind;
 	uint64_t hash;
@@ -1858,7 +1859,7 @@ JET_ALWAYS_INLINE static bool make_fast_key(Atom atom, bool& needs_slow, FastKey
 			double value = atom.as_double();
 			if (std::isnan(value)) [[unlikely]]
 			{
-				return false;
+				return std::nullopt;
 			}
 			hash = mix64(Atom::from_double(value == 0.0 ? 0.0 : value).bits);
 			kind = FastKeyKind::Number;
@@ -1877,34 +1878,39 @@ JET_ALWAYS_INLINE static bool make_fast_key(Atom atom, bool& needs_slow, FastKey
 			Struct* instance = unbox<Struct>(atom);
 			if (instance->type->kind() != StructKind::Tuple)
 			{
-				return false;
+				return std::nullopt;
 			}
 			uint32_t tuple_hash = static_cast<Tuple*>(instance)->hash;
 			if (tuple_hash < 2)
 			{
-				return false;
+				return std::nullopt;
 			}
 			hash = mix64(static_cast<uint64_t>(tuple_hash) | (1ULL << 32));
 			kind = FastKeyKind::Tuple;
 			break;
 		}
 		default:
-			return false;
+			return std::nullopt;
 	}
-	key = {{atom, hash}, &needs_slow, kind};
-	return true;
+	return FastKey{{atom, hash}, kind};
 }
 
-JET_ALWAYS_INLINE static bool hashset_find_fast(HashSet* set, Atom key)
+enum class FastFind
 {
-	bool needs_slow = false;
-	FastKey fast_key;
-	if (!make_fast_key(key, needs_slow, fast_key)) [[unlikely]]
+	Found,
+	Missing,
+	Unsupported,
+};
+
+JET_ALWAYS_INLINE static FastFind hashset_find_fast(HashSet* set, Atom key)
+{
+	std::optional<FastKey> fast_key = make_fast_key(key);
+	if (!fast_key) [[unlikely]]
 	{
-		return false;
+		return FastFind::Unsupported;
 	}
-	auto it = set->index.find(fast_key);
-	return it != set->index.end() && !needs_slow;
+	auto it = set->index.find(*fast_key);
+	return it == set->index.end() ? FastFind::Missing : FastFind::Found;
 }
 
 static Atom hashset_lookup(Struct* instance, Atom key)
@@ -1913,21 +1919,20 @@ static Atom hashset_lookup(Struct* instance, Atom key)
 	return box(set->index.find(make_key(key)) != set->index.end());
 }
 
-JET_ALWAYS_INLINE static bool hashmap_find_fast(HashMap* map, Atom key, size_t& position)
+JET_ALWAYS_INLINE static FastFind hashmap_find_fast(HashMap* map, Atom key, size_t& position)
 {
-	bool needs_slow = false;
-	FastKey fast_key;
-	if (!make_fast_key(key, needs_slow, fast_key)) [[unlikely]]
+	std::optional<FastKey> fast_key = make_fast_key(key);
+	if (!fast_key) [[unlikely]]
 	{
-		return false;
+		return FastFind::Unsupported;
 	}
-	auto it = map->index.find(fast_key);
-	if (it == map->index.end() || needs_slow) [[unlikely]]
+	auto it = map->index.find(*fast_key);
+	if (it == map->index.end())
 	{
-		return false;
+		return FastFind::Missing;
 	}
 	position = it->second;
-	return true;
+	return FastFind::Found;
 }
 
 static Atom hashmap_lookup(Struct* instance, Atom key)
@@ -2196,11 +2201,12 @@ JET_PRESERVE_NONE static void hashset_ldf_handler(VM_OP_PARAMS)
 {
 	OP_ldf* op = reinterpret_cast<OP_ldf*>(pc - sizeof(OP_ldf));
 	HashSet* set = static_cast<HashSet*>(unbox<Struct>(callee));
-	if (!hashset_find_fast(set, frame_regs[op->key])) [[unlikely]]
+	FastFind found = hashset_find_fast(set, frame_regs[op->key]);
+	if (found == FastFind::Unsupported) [[unlikely]]
 	{
 		JET_MUSTTAIL return hashset_ldf_slow(VM_OP_ARGS);
 	}
-	frame_regs[op->dst] = box(true);
+	frame_regs[op->dst] = box(found == FastFind::Found);
 	DISPATCH();
 }
 
@@ -2217,7 +2223,7 @@ JET_PRESERVE_NONE static void hashset_stf_handler(VM_OP_PARAMS)
 		JET_MUSTTAIL return hashset_stf_bad_value(VM_OP_ARGS);
 	}
 	HashSet* set = static_cast<HashSet*>(unbox<Struct>(callee));
-	if (!hashset_find_fast(set, frame_regs[op->key])) [[unlikely]]
+	if (hashset_find_fast(set, frame_regs[op->key]) != FastFind::Found) [[unlikely]]
 	{
 		JET_MUSTTAIL return hashset_stf_slow(VM_OP_ARGS);
 	}
@@ -2234,11 +2240,12 @@ JET_PRESERVE_NONE static void hashset_resolved_ldfk_handler(VM_OP_PARAMS)
 		JET_MUSTTAIL return field_ldfk_miss(VM_OP_ARGS);
 	}
 	HashSet* set = static_cast<HashSet*>(unbox<Struct>(object));
-	if (!hashset_find_fast(set, s.constants[op->key_idx])) [[unlikely]]
+	FastFind found = hashset_find_fast(set, s.constants[op->key_idx]);
+	if (found == FastFind::Unsupported) [[unlikely]]
 	{
 		JET_MUSTTAIL return hashset_resolved_ldfk_slow(VM_OP_ARGS);
 	}
-	frame_regs[op->dst] = box(true);
+	frame_regs[op->dst] = box(found == FastFind::Found);
 	pc += sizeof(*op);
 	JET_PROFILE_FIELD_DISPATCH(Opcode::ldfk, FieldReceiver::Struct, true);
 	DISPATCH();
@@ -2263,7 +2270,7 @@ JET_PRESERVE_NONE static void hashset_resolved_stfk_handler(VM_OP_PARAMS)
 		JET_MUSTTAIL return hashset_resolved_stfk_bad_value(VM_OP_ARGS);
 	}
 	HashSet* set = static_cast<HashSet*>(unbox<Struct>(object));
-	if (!hashset_find_fast(set, s.constants[op->key_idx])) [[unlikely]]
+	if (hashset_find_fast(set, s.constants[op->key_idx]) != FastFind::Found) [[unlikely]]
 	{
 		JET_MUSTTAIL return hashset_resolved_stfk_slow(VM_OP_ARGS);
 	}
@@ -2275,6 +2282,11 @@ JET_PRESERVE_NONE static void hashset_resolved_stfk_handler(VM_OP_PARAMS)
 JET_NOINLINE JET_PRESERVE_NONE static void hashmap_ldf_slow(VM_OP_PARAMS)
 {
 	JET_MUSTTAIL return table_ldf_handler<hashmap_lookup>(VM_OP_ARGS);
+}
+
+JET_NOINLINE JET_PRESERVE_NONE static void hashmap_ldf_missing(VM_OP_PARAMS)
+{
+	JET_DIE("ref: key not found in hashmap");
 }
 
 JET_NOINLINE JET_PRESERVE_NONE static void hashmap_stf_slow(VM_OP_PARAMS)
@@ -2297,9 +2309,14 @@ JET_PRESERVE_NONE static void hashmap_ldf_handler(VM_OP_PARAMS)
 	OP_ldf* op = reinterpret_cast<OP_ldf*>(pc - sizeof(OP_ldf));
 	HashMap* map = static_cast<HashMap*>(unbox<Struct>(callee));
 	size_t position;
-	if (!hashmap_find_fast(map, frame_regs[op->key], position)) [[unlikely]]
+	FastFind found = hashmap_find_fast(map, frame_regs[op->key], position);
+	if (found == FastFind::Unsupported) [[unlikely]]
 	{
 		JET_MUSTTAIL return hashmap_ldf_slow(VM_OP_ARGS);
+	}
+	if (found == FastFind::Missing) [[unlikely]]
+	{
+		JET_MUSTTAIL return hashmap_ldf_missing(VM_OP_ARGS);
 	}
 	frame_regs[op->dst] = map->entry(position).value;
 	DISPATCH();
@@ -2310,7 +2327,7 @@ JET_PRESERVE_NONE static void hashmap_stf_handler(VM_OP_PARAMS)
 	OP_stf* op = reinterpret_cast<OP_stf*>(pc - sizeof(OP_stf));
 	HashMap* map = static_cast<HashMap*>(unbox<Struct>(callee));
 	size_t position;
-	if (!hashmap_find_fast(map, frame_regs[op->key], position)) [[unlikely]]
+	if (hashmap_find_fast(map, frame_regs[op->key], position) != FastFind::Found) [[unlikely]]
 	{
 		JET_MUSTTAIL return hashmap_stf_slow(VM_OP_ARGS);
 	}
@@ -2329,9 +2346,14 @@ JET_PRESERVE_NONE static void hashmap_resolved_ldfk_handler(VM_OP_PARAMS)
 	}
 	HashMap* map = static_cast<HashMap*>(unbox<Struct>(object));
 	size_t position;
-	if (!hashmap_find_fast(map, s.constants[op->key_idx], position)) [[unlikely]]
+	FastFind found = hashmap_find_fast(map, s.constants[op->key_idx], position);
+	if (found == FastFind::Unsupported) [[unlikely]]
 	{
 		JET_MUSTTAIL return hashmap_resolved_ldfk_slow(VM_OP_ARGS);
+	}
+	if (found == FastFind::Missing) [[unlikely]]
+	{
+		JET_MUSTTAIL return hashmap_ldf_missing(VM_OP_ARGS);
 	}
 	frame_regs[op->dst] = map->entry(position).value;
 	pc += sizeof(*op);
@@ -2350,7 +2372,7 @@ JET_PRESERVE_NONE static void hashmap_resolved_stfk_handler(VM_OP_PARAMS)
 	}
 	HashMap* map = static_cast<HashMap*>(unbox<Struct>(object));
 	size_t position;
-	if (!hashmap_find_fast(map, s.constants[op->key_idx], position)) [[unlikely]]
+	if (hashmap_find_fast(map, s.constants[op->key_idx], position) != FastFind::Found) [[unlikely]]
 	{
 		JET_MUSTTAIL return hashmap_resolved_stfk_slow(VM_OP_ARGS);
 	}

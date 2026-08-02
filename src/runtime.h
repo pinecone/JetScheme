@@ -302,7 +302,6 @@ enum class FastKeyKind : uint8_t
 struct FastKey
 {
 	TableKey key;
-	bool* needs_slow;
 	FastKeyKind kind;
 };
 
@@ -314,10 +313,12 @@ struct KeyHash
 	size_t operator()(const FastKey& key) const { return key.key.hash; }
 };
 
+bool equal_key(const TableKey& first, const TableKey& second);
+
 struct KeyEqual
 {
 	using is_transparent = void;
-	bool operator()(const TableKey& first, const TableKey& second) const;
+	bool operator()(const TableKey& first, const TableKey& second) const { return equal_key(first, second); }
 	bool operator()(const FastKey& first, const TableKey& second) const
 	{
 		if (first.key.hash != second.hash)
@@ -336,7 +337,7 @@ struct KeyEqual
 		}
 		if (first.kind == FastKeyKind::Tuple)
 		{
-			*first.needs_slow = true;
+			return equal_key(first.key, second);
 		}
 		return false;
 	}
