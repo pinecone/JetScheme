@@ -122,6 +122,7 @@ struct Gc
 	uint64_t* mark_bits;
 	std::vector<StructDestructor> struct_destructors{nullptr};
 	void* freelist[jet_tag::TAG_MAX][N_BUCKETS] = {};
+	void* raw_freelist[N_BUCKETS] = {};
 	uint32_t alloc_since_gc = 0;
 	uint32_t gc_threshold = 256;
 
@@ -153,6 +154,31 @@ struct Gc
 		*objects_end++ = {start, static_cast<uint32_t>(n), destructor_id, static_cast<uint8_t>(tag)};
 		++alloc_since_gc;
 		return mem;
+	}
+
+	JET_ALWAYS_INLINE void* alloc_raw(size_t bytes)
+	{
+		size_t n = (bytes + CELL_SIZE - 1) / CELL_SIZE;
+		void* mem = n < N_BUCKETS ? raw_freelist[n] : nullptr;
+		if (mem)
+		{
+			raw_freelist[n] = *static_cast<void**>(mem);
+			return mem;
+		}
+		JET_DIE_UNLESS(bump_cells + n <= TOTAL_CELLS, "gc: arena exhausted");
+		mem = arena_base + bump_cells * CELL_SIZE;
+		bump_cells += n;
+		return mem;
+	}
+
+	JET_ALWAYS_INLINE void free_raw(void* mem, size_t bytes)
+	{
+		size_t n = (bytes + CELL_SIZE - 1) / CELL_SIZE;
+		if (n < N_BUCKETS)
+		{
+			*static_cast<void**>(mem) = raw_freelist[n];
+			raw_freelist[n] = mem;
+		}
 	}
 
 	bool should_collect() { return alloc_since_gc > gc_threshold; }

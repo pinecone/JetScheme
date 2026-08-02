@@ -344,11 +344,58 @@ struct KeyEqual
 };
 
 template <typename T>
+struct HashSetAllocator
+{
+	using value_type = T;
+	using is_always_equal = std::true_type;
+
+	HashSetAllocator() = default;
+	template <typename U>
+	HashSetAllocator(const HashSetAllocator<U>&) {}
+
+	[[nodiscard]] T* allocate(size_t n)
+	{
+		static_assert(alignof(T) <= Gc::CELL_SIZE);
+		return static_cast<T*>(g_gc->alloc_raw(n * sizeof(T)));
+	}
+
+	void deallocate(T* p, size_t n)
+	{
+		g_gc->free_raw(p, n * sizeof(T));
+	}
+};
+
+template <typename T, typename U>
+bool operator==(const HashSetAllocator<T>&, const HashSetAllocator<U>&)
+{
+	return true;
+}
+
+template <typename T, typename U>
+bool operator!=(const HashSetAllocator<T>&, const HashSetAllocator<U>&)
+{
+	return false;
+}
+
+using HashSetIndexAllocator = HashSetAllocator<std::pair<TableKey, size_t>>;
+using HashSetIndex =
+	ankerl::unordered_dense::map<TableKey, size_t, KeyHash, KeyEqual, HashSetIndexAllocator>;
+
+template <typename T, typename Allocator = std::allocator<T>>
 class Ring
 {
 static_assert(std::is_trivially_copyable_v<T>);
 
 public:
+	explicit Ring(const Allocator& allocator = Allocator{}) : allocator_{allocator} {}
+	~Ring()
+	{
+		if (values_)
+		{
+			std::allocator_traits<Allocator>::deallocate(allocator_, values_, mask_ + 1);
+		}
+	}
+
 	bool empty() const { return count_ == 0; }
 	size_t size() const { return count_; }
 	T& operator[](size_t index) { return values_[physical(index)]; }
@@ -383,7 +430,8 @@ public:
 
 private:
 	static constexpr size_t initial_capacity = 4;
-	std::unique_ptr<T[]> values_;
+	[[no_unique_address]] Allocator allocator_;
+	T* values_{};
 	size_t mask_{};
 	size_t head_{};
 	size_t count_{};
@@ -392,13 +440,18 @@ private:
 
 	void grow()
 	{
-		size_t capacity = values_ ? (mask_ + 1) * 2 : initial_capacity;
-		std::unique_ptr<T[]> values = std::make_unique<T[]>(capacity);
+		size_t old_capacity = values_ ? mask_ + 1 : 0;
+		size_t capacity = old_capacity ? old_capacity * 2 : initial_capacity;
+		T* values = std::allocator_traits<Allocator>::allocate(allocator_, capacity);
 		for (size_t i = 0; i < count_; ++i)
 		{
 			values[i] = std::move((*this)[i]);
 		}
-		values_ = std::move(values);
+		if (values_)
+		{
+			std::allocator_traits<Allocator>::deallocate(allocator_, values_, old_capacity);
+		}
+		values_ = values;
 		mask_ = capacity - 1;
 		head_ = 0;
 	}
@@ -408,11 +461,11 @@ struct HashSetCursor;
 
 struct HashSet : Struct
 {
-	ankerl::unordered_dense::map<TableKey, size_t, KeyHash, KeyEqual> index;
-	Ring<TableKey> entries;
-	Ring<uint64_t> live_words;
-	std::vector<HashSetCursor*> cursors;
-	std::vector<size_t> cursor_positions;
+	HashSetIndex index;
+	Ring<TableKey, HashSetAllocator<TableKey>> entries;
+	Ring<uint64_t, HashSetAllocator<uint64_t>> live_words;
+	std::vector<HashSetCursor*, HashSetAllocator<HashSetCursor*>> cursors;
+	std::vector<size_t, HashSetAllocator<size_t>> cursor_positions;
 	size_t first{};
 	size_t last{};
 
