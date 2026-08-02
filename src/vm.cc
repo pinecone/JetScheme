@@ -9,7 +9,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <sys/mman.h>
@@ -26,6 +28,70 @@ static constexpr std::array<GcDestructor, jet_tag::TAG_MAX> gc_destructor_table 
 	return table;
 }();
 static VmOp dispatch_table[256];
+
+struct SpanPool
+{
+	using Sizes = std::multimap<size_t, size_t>;
+
+	struct Span
+	{
+		size_t size;
+		Sizes::iterator size_it;
+	};
+
+	std::map<size_t, Span> addresses;
+	Sizes sizes;
+
+	std::optional<size_t> take(size_t size)
+	{
+		Sizes::iterator size_it = sizes.lower_bound(size);
+		if (size_it == sizes.end())
+		{
+			return std::nullopt;
+		}
+		size_t start = size_it->second;
+		auto address_it = addresses.find(start);
+		JET_DIE_UNLESS(address_it != addresses.end(), "gc: missing free span");
+		size_t available = address_it->second.size;
+		sizes.erase(size_it);
+		addresses.erase(address_it);
+		if (available > size)
+		{
+			insert(start + size, available - size);
+		}
+		return start;
+	}
+
+	void insert(size_t start, size_t size)
+	{
+		auto next = addresses.lower_bound(start);
+		if (next != addresses.begin())
+		{
+			auto previous = std::prev(next);
+			JET_DIE_UNLESS(previous->first + previous->second.size <= start,
+			               "gc: overlapping free spans");
+			if (previous->first + previous->second.size == start)
+			{
+				start = previous->first;
+				size += previous->second.size;
+				sizes.erase(previous->second.size_it);
+				addresses.erase(previous);
+			}
+		}
+		if (next != addresses.end())
+		{
+			JET_DIE_UNLESS(start + size <= next->first, "gc: overlapping free spans");
+			if (start + size == next->first)
+			{
+				size += next->second.size;
+				sizes.erase(next->second.size_it);
+				addresses.erase(next);
+			}
+		}
+		Sizes::iterator size_it = sizes.emplace(size, start);
+		addresses.emplace(start, Span{size, size_it});
+	}
+};
 
 uint16_t Gc::register_struct_destructor(StructDestructor destructor)
 {
@@ -64,6 +130,7 @@ JET_ALWAYS_INLINE static void destroy_object(
 
 Gc::Gc()
 {
+	spans = new SpanPool{};
 	void* p = ::mmap(nullptr, ARENA_SIZE, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
 	JET_DIE_UNLESS(p != MAP_FAILED, "gc: mmap %zu bytes failed", ARENA_SIZE);
 	arena_base = static_cast<char*>(p);
@@ -87,6 +154,7 @@ Gc::~Gc()
 		destroy_object(*e, object, struct_destructor_table);
 	}
 	::free(objects);
+	delete spans;
 	::munmap(arena_base, ARENA_SIZE);
 	::munmap(live_bits, BITMAP_WORDS * sizeof(uint64_t));
 	::munmap(mark_bits, BITMAP_WORDS * sizeof(uint64_t));
@@ -101,6 +169,11 @@ void* Gc::alloc_slow(size_t n, int tag, uint16_t destructor_id)
 	{
 		mem = freelist[tag][n];
 		freelist[tag][n] = *static_cast<void**>(mem);
+		start = static_cast<uint32_t>((static_cast<char*>(mem) - arena_base) / CELL_SIZE);
+	}
+	else if (n >= N_BUCKETS)
+	{
+		mem = alloc_large(n);
 		start = static_cast<uint32_t>((static_cast<char*>(mem) - arena_base) / CELL_SIZE);
 	}
 	else
@@ -123,6 +196,37 @@ void* Gc::alloc_slow(size_t n, int tag, uint16_t destructor_id)
 	*objects_end++ = {start, static_cast<uint32_t>(n), destructor_id, static_cast<uint8_t>(tag)};
 	++alloc_since_gc;
 	return mem;
+}
+
+void* Gc::alloc_large(size_t n)
+{
+	std::optional<size_t> recycled = spans->take(n);
+	if (recycled)
+	{
+		return arena_base + *recycled * CELL_SIZE;
+	}
+	JET_DIE_UNLESS(bump_cells + n <= TOTAL_CELLS, "gc: arena exhausted");
+	void* mem = arena_base + bump_cells * CELL_SIZE;
+	bump_cells += n;
+	return mem;
+}
+
+void Gc::free_large(void* mem, size_t n)
+{
+	size_t start = static_cast<size_t>((static_cast<char*>(mem) - arena_base) / CELL_SIZE);
+	spans->insert(start, n);
+}
+
+void* alloc_raw_large(size_t bytes)
+{
+	size_t n = (bytes + Gc::CELL_SIZE - 1) / Gc::CELL_SIZE;
+	return g_gc->alloc_large(n);
+}
+
+void free_raw_large(void* mem, size_t bytes)
+{
+	size_t n = (bytes + Gc::CELL_SIZE - 1) / Gc::CELL_SIZE;
+	g_gc->free_large(mem, n);
 }
 
 void Gc::grow_objects()
@@ -251,6 +355,10 @@ void Gc::sweep()
 			{
 				*static_cast<void**>(obj) = freelist[e->tag][e->n_cells];
 				freelist[e->tag][e->n_cells] = obj;
+			}
+			else
+			{
+				free_large(obj, e->n_cells);
 			}
 		}
 	}

@@ -36,6 +36,12 @@
 #define JET_NOINLINE
 #endif
 
+#if __has_cpp_attribute(gnu::cold)
+#define JET_COLD [[gnu::cold]]
+#else
+#define JET_COLD
+#endif
+
 #if __has_cpp_attribute(clang::musttail)
 #define JET_MUSTTAIL [[clang::musttail]]
 #elif __has_cpp_attribute(gnu::musttail)
@@ -91,6 +97,10 @@ inline bool test_bit(const uint64_t* bits, size_t i)
 	return (bits[i / 64] >> (i % 64)) & 1ULL;
 }
 
+struct SpanPool;
+JET_NOINLINE JET_COLD void* alloc_raw_large(size_t bytes);
+JET_NOINLINE JET_COLD void free_raw_large(void* mem, size_t bytes);
+
 struct Gc
 {
 	struct ObjEntry
@@ -125,12 +135,15 @@ struct Gc
 	void* raw_freelist[N_BUCKETS] = {};
 	uint32_t alloc_since_gc = 0;
 	uint32_t gc_threshold = 256;
+	SpanPool* spans = nullptr;
 
 	Gc();
 	~Gc();
 
 	uint16_t register_struct_destructor(StructDestructor destructor);
 	JET_NOINLINE void* alloc_slow(size_t n, int tag, uint16_t destructor_id);
+	JET_NOINLINE JET_COLD void* alloc_large(size_t n);
+	JET_NOINLINE JET_COLD void free_large(void* mem, size_t n);
 	JET_NOINLINE void grow_objects();
 	void sweep();
 	void mark_atom(uint64_t bits);
@@ -156,10 +169,9 @@ struct Gc
 		return mem;
 	}
 
-	JET_ALWAYS_INLINE void* alloc_raw(size_t bytes)
+	JET_ALWAYS_INLINE void* alloc_raw_small(size_t n)
 	{
-		size_t n = (bytes + CELL_SIZE - 1) / CELL_SIZE;
-		void* mem = n < N_BUCKETS ? raw_freelist[n] : nullptr;
+		void* mem = raw_freelist[n];
 		if (mem)
 		{
 			raw_freelist[n] = *static_cast<void**>(mem);
@@ -171,14 +183,31 @@ struct Gc
 		return mem;
 	}
 
+	JET_ALWAYS_INLINE void* alloc_raw(size_t bytes)
+	{
+		if (bytes > (N_BUCKETS - 1) * CELL_SIZE) [[unlikely]]
+		{
+			return alloc_raw_large(bytes);
+		}
+		size_t n = (bytes + CELL_SIZE - 1) / CELL_SIZE;
+		return alloc_raw_small(n);
+	}
+
+	JET_ALWAYS_INLINE void free_raw_small(void* mem, size_t n)
+	{
+		*static_cast<void**>(mem) = raw_freelist[n];
+		raw_freelist[n] = mem;
+	}
+
 	JET_ALWAYS_INLINE void free_raw(void* mem, size_t bytes)
 	{
-		size_t n = (bytes + CELL_SIZE - 1) / CELL_SIZE;
-		if (n < N_BUCKETS)
+		if (bytes > (N_BUCKETS - 1) * CELL_SIZE) [[unlikely]]
 		{
-			*static_cast<void**>(mem) = raw_freelist[n];
-			raw_freelist[n] = mem;
+			free_raw_large(mem, bytes);
+			return;
 		}
+		size_t n = (bytes + CELL_SIZE - 1) / CELL_SIZE;
+		free_raw_small(mem, n);
 	}
 
 	bool should_collect() { return alloc_since_gc > gc_threshold; }
