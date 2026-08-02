@@ -168,8 +168,8 @@ h3 {
 
 /* Masthead, not a logo: no retail typeface is drawn to be a logotype, so
    the name is not blown up into a fake one. It parts from the section
-   heads on every axis at once -- own face, mixed case, white instead of
-   magenta, a step up in size -- which is what makes it read as the title
+   heads on every axis at once -- own face, mixed case, pale cyan instead
+   of magenta, a step up in size -- which is what makes it read as the title
    of the page rather than one more section of it. Mixed case wants the
    tracking closed up, not opened out. */
 #usage h1 {
@@ -178,11 +178,13 @@ h3 {
   font-optical-sizing: auto;
   font-size: var(--fs-title);
   line-height: calc(var(--sp-6) + var(--sp-2));
-  font-weight: 500;
-  color: var(--fg);
+  font-weight: 600;
+  color: var(--cyan-pale);
   text-transform: none;
   letter-spacing: -0.015em;
-  text-shadow: none;
+  text-shadow:
+    0 0 7px rgba(137, 221, 255, 0.38),
+    0 0 24px rgba(187, 154, 247, 0.24);
 }
 
 .quickstart-intro {
