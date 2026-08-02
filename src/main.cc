@@ -76,19 +76,14 @@ static int execute_bytecode(vector<uint8_t>& bytecode, int script_argc, char* sc
 {
 	Env primitives_env;
 	VmState vm{.env = primitives_env};
-	{
-		Gc gc;
-		g_gc = &gc;
 
-		init_primitives(primitives_env);
-		init_cmdline(primitives_env, script_argc, script_argv);
+	init_primitives(vm);
+	init_cmdline(vm, script_argc, script_argv);
 
-		LoadedProgram prog = load_program(vm.symbols, bytecode.data(), bytecode.size(), primitives_env);
+	LoadedProgram prog = load_program(vm, bytecode.data(), bytecode.size());
 
-		Frame frame = {prog.code, nullptr, 0, prog.n_toplevel_slots};
-		eval(vm, frame, prog.constants.data(), prog.constants.size(), prog.n_toplevel_slots);
-	}
-	g_gc = nullptr;
+	Frame frame = {prog.code, nullptr, 0, prog.n_toplevel_slots};
+	eval(vm, frame, prog.constants.data(), prog.constants.size(), prog.n_toplevel_slots);
 	return 0;
 }
 

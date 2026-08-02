@@ -20,5 +20,5 @@ struct CompileFlags
 Bytecode compile(std::string source, std::string filename = "<stdin>", CompileFlags flags = {},
                  std::string_view prelude = {});
 
-class Env;
-void init_reader(Env& e);
+struct VmState;
+void init_reader(VmState& s);

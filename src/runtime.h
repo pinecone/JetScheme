@@ -29,14 +29,9 @@ struct Cons
 
 bool operator==(Cons& p1, Cons& p2);
 
-JET_ALWAYS_INLINE inline Cons* make_cons(Atom obj1, Atom obj2)
+JET_ALWAYS_INLINE inline Atom cons(VmState& s, Atom obj1, Atom obj2)
 {
-	return gc_alloc<Cons>(jet_tag::pair, obj1, obj2);
-}
-
-JET_ALWAYS_INLINE inline Atom cons(Atom obj1, Atom obj2)
-{
-	return Atom::make_tagged(jet_tag::pair, make_cons(obj1, obj2));
+	return s.gc.alloc_tagged<Cons>(obj1, obj2);
 }
 
 inline Atom car(Atom a)
@@ -51,7 +46,7 @@ inline Atom cdr(Atom a)
 
 Atom is_list(Atom a);
 
-void init_lists(Env& e);
+void init_lists(VmState& s);
 
 template <typename Out>
 Out list_to_args(Atom list, Out out)
@@ -66,21 +61,21 @@ Out list_to_args(Atom list, Out out)
 inline const std::string& symbol_to_string(Symbol symbol) { return *symbol; }
 Atom string_to_symbol(VmState& vm, Atom a);
 
-void init_symbols(Env& e);
+void init_symbols(VmState& s);
 
 bool operator==(Vec& v1, Vec& v2);
 
 Atom is_vector(Atom a);
-Atom vector_ctor(Atom* first, Atom* last);
-Atom make_vector(Atom s, Atom f);
+Atom vector_ctor(VmState& s, Atom* first, Atom* last);
+Atom make_vector(VmState& s, Atom n, Atom f);
 Atom vector_ref(Atom v, Atom i);
 Atom vector_length(Atom v);
-void init_vecs(Env& e);
+void init_vecs(VmState& s);
 
 Atom string_ref(Atom s, Atom k);
 
 Atom bytevector_u8_ref(Atom bv, Atom k);
-void init_bytevectors(Env& e);
+void init_bytevectors(VmState& s);
 
 struct EqualContext;
 struct Struct;
@@ -110,9 +105,9 @@ struct StructOps
 class StructType
 {
 public:
-	StructType(Atom name, std::vector<Atom> field_names, Arity arity, const StructOps& ops)
+	StructType(VmState& s, Atom name, std::vector<Atom> field_names, Arity arity, const StructOps& ops)
 		: name_{name}, field_names_{std::move(field_names)}, arity_{arity},
-		destructor_id_{g_gc->register_struct_destructor(ops.destroy)}, kind_{ops.kind}, ops_{&ops}
+		destructor_id_{s.gc.register_struct_destructor(ops.destroy)}, kind_{ops.kind}, ops_{&ops}
 	{
 	}
 
@@ -142,6 +137,12 @@ private:
 	StructKind kind_;
 	const StructOps* ops_;
 };
+
+inline Atom make_struct_type(VmState& s, Atom name, std::vector<Atom> field_names, Arity arity,
+                             const StructOps& ops)
+{
+	return s.gc.alloc_tagged<StructType>(s, name, std::move(field_names), arity, ops);
+}
 
 inline bool operator==(StructType& a, StructType& b)
 {
@@ -223,13 +224,11 @@ struct SchemeStruct : Struct
 
 	SchemeStruct(StructType* type, uint32_t n) : Struct{type}, n_fields{n} {}
 
-	static SchemeStruct* alloc(StructType* type, uint32_t n_fields)
+	static SchemeStruct* alloc(VmState& s, StructType* type, uint32_t n_fields)
 	{
 		size_t total = sizeof(SchemeStruct) + static_cast<size_t>(n_fields) * sizeof(Atom);
-		void* mem = g_gc->alloc(total, jet_tag::struct_, type->destructor_id());
-		SchemeStruct* obj = static_cast<SchemeStruct*>(mem);
-		new (obj) SchemeStruct{type, n_fields};
-		return obj;
+		void* mem = s.gc.alloc(total, jet_tag::struct_, type->destructor_id());
+		return new (mem) SchemeStruct{type, n_fields};
 	}
 
 	void trace(Gc& gc)
@@ -255,13 +254,11 @@ struct Tuple : Struct
 
 	Tuple(StructType* type, uint32_t size_) : Struct{type}, size{size_}, hash{hash_unset} {}
 
-	static Tuple* alloc(StructType* type, uint32_t size)
+	static Tuple* alloc(VmState& s, StructType* type, uint32_t size)
 	{
 		size_t total = sizeof(Tuple) + static_cast<size_t>(size) * sizeof(Atom);
-		void* mem = g_gc->alloc(total, jet_tag::struct_, type->destructor_id());
-		Tuple* obj = static_cast<Tuple*>(mem);
-		new (obj) Tuple{type, size};
-		return obj;
+		void* mem = s.gc.alloc(total, jet_tag::struct_, type->destructor_id());
+		return new (mem) Tuple{type, size};
 	}
 
 	void trace(Gc& gc)
@@ -355,20 +352,22 @@ struct GcAllocator
 	using value_type = T;
 	using is_always_equal = std::true_type;
 
-	GcAllocator() = default;
+	VmState* vm;
+
+	GcAllocator() = delete;
+	explicit GcAllocator(VmState& s) : vm{&s} {}
 	template <typename U>
-	GcAllocator(const GcAllocator<U>&) {
-	}
+	GcAllocator(const GcAllocator<U>& other) : vm{other.vm} {}
 
 	[[nodiscard]] T* allocate(size_t n)
 	{
 		static_assert(alignof(T) <= Gc::CELL_SIZE);
-		return static_cast<T*>(g_gc->alloc_raw(n * sizeof(T)));
+		return static_cast<T*>(vm->gc.alloc_raw(n * sizeof(T)));
 	}
 
 	void deallocate(T* p, size_t n)
 	{
-		g_gc->free_raw(p, n * sizeof(T));
+		vm->gc.free_raw(p, n * sizeof(T));
 	}
 };
 
@@ -387,13 +386,13 @@ bool operator!=(const GcAllocator<T>&, const GcAllocator<U>&)
 using TableIndexAllocator = GcAllocator<std::pair<TableKey, size_t>>;
 using TableIndex = ankerl::unordered_dense::map<TableKey, size_t, KeyHash, KeyEqual, TableIndexAllocator>;
 
-template <typename T, typename Allocator = std::allocator<T>>
+template <typename T, typename Allocator>
 class Ring
 {
 static_assert(std::is_trivially_copyable_v<T>);
 
 public:
-	explicit Ring(const Allocator& allocator = Allocator{}) : allocator_{allocator} {}
+	explicit Ring(const Allocator& allocator) : allocator_{allocator} {}
 	~Ring()
 	{
 		if (values_)
@@ -500,13 +499,18 @@ struct Table : Struct
 	size_t first{};
 	size_t last{};
 
-	explicit Table(StructType* type) : Struct{type} {}
+	Table(VmState& s, StructType* type)
+		: Struct{type}, index{GcAllocator<std::pair<TableKey, size_t>>{s}}, entries{GcAllocator<Entry>{s}},
+		live_words{GcAllocator<uint64_t>{s}}, cursors{GcAllocator<CursorType*>{s}},
+		cursor_positions{GcAllocator<size_t>{s}}
+	{
+	}
 	~Table();
 
-	static Table* alloc(StructType* type)
+	static Table* alloc(VmState& s, StructType* type)
 	{
-		void* mem = g_gc->alloc(sizeof(Table), jet_tag::struct_, type->destructor_id());
-		return new (mem) Table{type};
+		void* mem = s.gc.alloc(sizeof(Table), jet_tag::struct_, type->destructor_id());
+		return new (mem) Table{s, type};
 	}
 
 	Entry& entry(size_t position) { return entries[position - first]; }
@@ -676,8 +680,8 @@ using HashSetCursor = TableCursor<TableKey>;
 using HashMap = Table<HashMapEntry>;
 using HashMapCursor = TableCursor<HashMapEntry>;
 
-Cursor* hashset_cursor_make(Atom target);
-Cursor* hashmap_cursor_make(Atom target);
+Cursor* hashset_cursor_make(VmState& s, Atom target);
+Cursor* hashmap_cursor_make(VmState& s, Atom target);
 
 inline bool operator==(Struct& a, Struct& b)
 {
@@ -687,11 +691,6 @@ inline bool operator==(Struct& a, Struct& b)
 template <>
 struct box_unbox_t<Struct>
 {
-	static Atom box(StructType* type, uint32_t n_fields)
-	{
-		return Atom::make_tagged(jet_tag::struct_, SchemeStruct::alloc(type, n_fields));
-	}
-
 	static Struct* unbox(Atom x) { return static_cast<Struct*>(x.as_ptr()); }
 };
 
@@ -713,7 +712,7 @@ template <auto Construct>
 JET_PRESERVE_NONE void struct_constructor_handler(VM_OP_PARAMS)
 {
 	StructType* type = unbox<StructType>(callee);
-	Struct* instance = Construct(type, args, stack_top);
+	Struct* instance = Construct(s, type, args, stack_top);
 	*args = Atom::make_tagged(jet_tag::struct_, instance);
 	stack_top = stack_base + frame->top;
 	DISPATCH();
@@ -847,12 +846,12 @@ Atom struct_ref(Atom object, Atom key)
 Atom display_to(Atom value, std::string& out);
 Atom write_to(Atom value, std::string& out);
 
-void init_structs(Env& e);
-Atom construct_struct(StructType* type, Atom* first, Atom* last);
+void init_structs(VmState& s);
+Atom construct_struct(VmState& s, StructType* type, Atom* first, Atom* last);
 
 struct Prim
 {
-	using Fun = Atom (*)(Atom*, Atom*);
+	using Fun = Atom (*)(VmState&, Atom*, Atom*);
 
 	VmOp stub;
 	Arity arity;
@@ -898,7 +897,7 @@ template <auto fn>
 JET_PRESERVE_NONE inline void prim_stub_varargs(VM_OP_PARAMS)
 {
 	JET_PROFILE_PRIM;
-	Atom result = fn(args, stack_top);
+	Atom result = fn(s, args, stack_top);
 	*args = result;
 	stack_top = stack_base + frame->top;
 	DISPATCH();
@@ -926,28 +925,28 @@ JET_PRESERVE_NONE inline void prim_stub_typed(VM_OP_PARAMS)
 }
 
 template <auto fn>
-Atom make_prim(Arity arity)
+Atom make_prim(VmState& s, Arity arity)
 {
 	if constexpr (std::is_same_v<decltype(fn), Prim::Fun>)
 	{
-		return box(Prim{&prim_stub_varargs<fn>, arity});
+		return s.gc.alloc_tagged<Prim>(Prim{&prim_stub_varargs<fn>, arity});
 	}
 	else
 	{
-		return box(Prim{&prim_stub_typed<fn>, arity});
+		return s.gc.alloc_tagged<Prim>(Prim{&prim_stub_typed<fn>, arity});
 	}
 }
 
 template <auto fn>
-Atom make_prim()
+Atom make_prim(VmState& s)
 {
 	if constexpr (std::is_same_v<decltype(fn), Prim::Fun>)
 	{
-		return make_prim<fn>(n_ary());
+		return make_prim<fn>(s, n_ary());
 	}
 	else
 	{
-		return make_prim<fn>(exactly(PrimTraits<decltype(fn)>::arity));
+		return make_prim<fn>(s, exactly(PrimTraits<decltype(fn)>::arity));
 	}
 }
 
@@ -972,7 +971,7 @@ inline bool is_byte(Atom a)
 	return is_positive_integer(a) && unbox<Number>(a) <= 255;
 }
 
-void init_number(Env& env);
+void init_number(VmState& s);
 
 template <typename op_t>
 JET_ALWAYS_INLINE inline Atom fold(Atom* first, Atom* last, Number result)
@@ -985,21 +984,21 @@ JET_ALWAYS_INLINE inline Atom fold(Atom* first, Atom* last, Number result)
 }
 
 template <typename op_t>
-JET_ALWAYS_INLINE inline Atom folding_op(Atom* first, Atom* last)
+JET_ALWAYS_INLINE inline Atom folding_op(VmState&, Atom* first, Atom* last)
 {
 	Number result = slow_unbox<Number>(*first++);
 	return fold<op_t>(first, last, result);
 }
 
 template <typename op_t, int init>
-JET_ALWAYS_INLINE inline Atom folding_op(Atom* first, Atom* last)
+JET_ALWAYS_INLINE inline Atom folding_op(VmState&, Atom* first, Atom* last)
 {
 	Number result = last - first < 2 ? init : slow_unbox<Number>(*first++);
 	return fold<op_t>(first, last, result);
 }
 
 template <typename op_t>
-JET_ALWAYS_INLINE inline Atom folding_pred(Atom* first, Atom* last)
+JET_ALWAYS_INLINE inline Atom folding_pred(VmState&, Atom* first, Atom* last)
 {
 	bool result = true;
 	while (first != last)
@@ -1013,31 +1012,31 @@ JET_ALWAYS_INLINE inline Atom folding_pred(Atom* first, Atom* last)
 }
 
 template <typename op_t>
-Atom arith_op(Atom* first, Atom*)
+Atom arith_op(VmState&, Atom* first, Atom*)
 {
 	return box(op_t()(slow_unbox<Number>(first[0]), slow_unbox<Number>(first[1])));
 }
 
 template <typename T, T (*op)()>
-Atom arith_nullary_fun(Atom*, Atom*)
+Atom arith_nullary_fun(VmState&, Atom*, Atom*)
 {
 	return box(Number(op()));
 }
 
 template <typename T, T (*op)(T)>
-Atom arith_unary_fun(Atom* first, Atom*)
+Atom arith_unary_fun(VmState&, Atom* first, Atom*)
 {
 	return box(op(slow_unbox<Number>(*first)));
 }
 
 template <typename T, bool (*op)(T)>
-Atom arith_unary_pred(Atom* first, Atom*)
+Atom arith_unary_pred(VmState&, Atom* first, Atom*)
 {
 	return box(op(slow_unbox<Number>(*first)));
 }
 
 template <typename T, T (*op)(T, T)>
-Atom arith_binary_fun(Atom* first, Atom*)
+Atom arith_binary_fun(VmState&, Atom* first, Atom*)
 {
 	return box(op(slow_unbox<Number>(first[0]), slow_unbox<Number>(first[1])));
 }
@@ -1057,16 +1056,16 @@ bool compare_objects(Atom obj1, Atom obj2)
 	}
 }
 
-void init_equivalence(Env& e);
+void init_equivalence(VmState& s);
 
 Atom display(Atom a);
 Atom write_to(Atom a, std::string& out);
-void init_display_primitives(Env& e);
+void init_display_primitives(VmState& s);
 
-void init_strings(Env& e);
-void init_chars(Env& e);
+void init_strings(VmState& s);
+void init_chars(VmState& s);
 
-void init_sys(Env& e);
+void init_sys(VmState& s);
 
 inline bool is_true(Atom a)
 {
@@ -1106,7 +1105,7 @@ public:
 	virtual void write_byte(char c) = 0;
 };
 
-void init_port(Env& e);
+void init_port(VmState& s);
 
 Atom make_eof();
 
@@ -1158,9 +1157,9 @@ private:
 };
 
 Atom read_char(Atom p);
-void init_port_file(Env& e);
+void init_port_file(VmState& s);
 
-void init_primitives(Env& e);
-void init_cmdline(Env& e, int argc, char* argv[]);
+void init_primitives(VmState& s);
+void init_cmdline(VmState& s, int argc, char* argv[]);
 
 #endif

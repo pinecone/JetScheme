@@ -6142,7 +6142,7 @@ Bytecode compile(std::string source, std::string filename, CompileFlags flags, s
 namespace
 {
 
-	Atom datum_to_atom(InternedSymbols& symbols, Env& env, Expr* e)
+	Atom datum_to_atom(VmState& s, Expr* e)
 	{
 		switch (e->kind)
 		{
@@ -6152,13 +6152,13 @@ namespace
 				return box<Number>(v);
 			}
 			case ExprKind::StringLit:
-				return box<String>(std::string{e->string_lit.value});
+				return s.gc.alloc_tagged<String>(e->string_lit.value);
 			case ExprKind::BooleanLit:
 				return box(e->boolean_lit.value);
 			case ExprKind::CharacterLit:
 				return box(static_cast<Character>(e->character_lit.value));
 			case ExprKind::SymbolLit:
-				return box(symbols.intern(e->symbol_lit.name));
+				return box(s.symbols.intern(e->symbol_lit.name));
 			case ExprKind::Call:
 			{
 				Expr* proc = e->call.proc;
@@ -6169,24 +6169,24 @@ namespace
 					Atom result = box(EmptyList{});
 					for (size_t i = e->call.args.size(); i-- > 0;)
 					{
-						result = cons(datum_to_atom(symbols, env, e->call.args[i]), result);
+						result = cons(s, datum_to_atom(s, e->call.args[i]), result);
 					}
 					return result;
 				}
 				if (name == "cons")
 				{
 					JET_DIE_UNLESS(e->call.args.size() == 2, "datum_to_atom: cons arity");
-					return cons(datum_to_atom(symbols, env, e->call.args[0]),
-					            datum_to_atom(symbols, env, e->call.args[1]));
+					return cons(s, datum_to_atom(s, e->call.args[0]),
+					            datum_to_atom(s, e->call.args[1]));
 				}
 				if (name == "vector")
 				{
 					Vec v;
 					for (uint32_t i = 0; i < e->call.args.size(); ++i)
 					{
-						v.push_back(datum_to_atom(symbols, env, e->call.args[i]));
+						v.push_back(datum_to_atom(s, e->call.args[i]));
 					}
-					return box(std::move(v));
+					return s.gc.alloc_tagged<Vec>(std::move(v));
 				}
 				if (name == "bytevector")
 				{
@@ -6194,23 +6194,23 @@ namespace
 					bv.reserve(e->call.args.size());
 					for (uint32_t i = 0; i < e->call.args.size(); ++i)
 					{
-						Atom byte_val = datum_to_atom(symbols, env, e->call.args[i]);
+						Atom byte_val = datum_to_atom(s, e->call.args[i]);
 						bv.push_back(static_cast<uint8_t>(unbox<Number>(byte_val)));
 					}
-					return box(std::move(bv));
+					return s.gc.alloc_tagged<ByteVector>(std::move(bv));
 				}
 				if (is_struct_constructor(name))
 				{
-					Atom* bound_type = env.lookup(name);
+					Atom* bound_type = s.env.lookup(name);
 					JET_DIE_UNLESS(bound_type, "read: '%.*s' is unbound", static_cast<int>(name.size()),
 					               name.data());
 					std::vector<Atom> args;
 					args.reserve(e->call.args.size());
 					for (uint32_t i = 0; i < e->call.args.size(); ++i)
 					{
-						args.push_back(datum_to_atom(symbols, env, e->call.args[i]));
+						args.push_back(datum_to_atom(s, e->call.args[i]));
 					}
-					return construct_struct(unbox<StructType>(*bound_type), args.data(),
+					return construct_struct(s, unbox<StructType>(*bound_type), args.data(),
 					                        args.data() + args.size());
 				}
 				JET_DIE("datum_to_atom: unexpected call proc");
@@ -6242,12 +6242,13 @@ namespace
 			return make_eof();
 		}
 		Expr* datum = parser.parse_datum();
-		return datum_to_atom(vm.symbols, vm.env, datum);
+		return datum_to_atom(vm, datum);
 	}
 
 } // namespace
 
-void init_reader(Env& e)
+void init_reader(VmState& s)
 {
-	e.bind("read", make_prim<read_port>());
+	Env& e = s.env;
+	e.bind("read", make_prim<read_port>(s));
 }

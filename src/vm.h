@@ -98,8 +98,6 @@ inline bool test_bit(const uint64_t* bits, size_t i)
 }
 
 struct SpanPool;
-JET_NOINLINE JET_COLD void* alloc_raw_large(size_t bytes);
-JET_NOINLINE JET_COLD void free_raw_large(void* mem, size_t bytes);
 
 struct Gc
 {
@@ -123,6 +121,8 @@ struct Gc
 	static constexpr size_t HEAP_GROWTH_FACTOR = 4;
 	static constexpr uint32_t MIN_GC_THRESHOLD = 256;
 
+	uint32_t alloc_since_gc = 0;
+	uint32_t gc_threshold = 256;
 	char* arena_base;
 	size_t bump_cells = 0;
 	ObjEntry* objects = nullptr;
@@ -133,17 +133,20 @@ struct Gc
 	std::vector<StructDestructor> struct_destructors{nullptr};
 	void* freelist[jet_tag::TAG_MAX][N_BUCKETS] = {};
 	void* raw_freelist[N_BUCKETS] = {};
-	uint32_t alloc_since_gc = 0;
-	uint32_t gc_threshold = 256;
 	SpanPool* spans = nullptr;
 
 	Gc();
 	~Gc();
 
+	Gc(const Gc&) = delete;
+	Gc& operator=(const Gc&) = delete;
+
 	uint16_t register_struct_destructor(StructDestructor destructor);
 	JET_NOINLINE void* alloc_slow(size_t n, int tag, uint16_t destructor_id);
 	JET_NOINLINE JET_COLD void* alloc_large(size_t n);
 	JET_NOINLINE JET_COLD void free_large(void* mem, size_t n);
+	JET_NOINLINE JET_COLD void* alloc_raw_large(size_t bytes);
+	JET_NOINLINE JET_COLD void free_raw_large(void* mem, size_t bytes);
 	JET_NOINLINE void grow_objects();
 	void sweep();
 	void mark_atom(uint64_t bits);
@@ -212,6 +215,9 @@ struct Gc
 
 	bool should_collect() { return alloc_since_gc > gc_threshold; }
 
+	template <typename T, typename... Args>
+	Atom alloc_tagged(Args&&... args);
+
 	void begin_mark()
 	{
 		for (ObjEntry* e = objects; e != objects_end; ++e)
@@ -220,8 +226,6 @@ struct Gc
 		}
 	}
 };
-
-inline Gc* g_gc = nullptr;
 
 template <typename T>
 constexpr StructDestructor struct_destructor()
@@ -234,15 +238,6 @@ constexpr StructDestructor struct_destructor()
 	{
 		return [](Struct* instance) { static_cast<T*>(instance)->~T(); };
 	}
-}
-
-template <typename T, typename... Args>
-JET_ALWAYS_INLINE T* gc_alloc(int tag, Args&&... args)
-{
-	void* mem = g_gc->alloc(sizeof(T), tag, 0);
-	T* obj = static_cast<T*>(mem);
-	new (obj) T(static_cast<Args&&>(args)...);
-	return obj;
 }
 
 constexpr int type_to_tag(jet::Type t)
@@ -272,15 +267,16 @@ struct box_unbox_t
 {
 	static constexpr int tag = type_to_tag(dynamic_type<T>::id);
 
-	template <typename... Args>
-	static Atom box(Args&&... args)
-	{
-		T* obj = gc_alloc<T>(tag, static_cast<Args&&>(args)...);
-		return Atom::make_tagged(tag, obj);
-	}
-
 	static T* unbox(Atom x) { return static_cast<T*>(x.as_ptr()); }
 };
+
+template <typename T, typename... Args>
+JET_ALWAYS_INLINE Atom Gc::alloc_tagged(Args&&... args)
+{
+	constexpr int tag = box_unbox_t<T>::tag;
+	void* mem = alloc(sizeof(T), tag, 0);
+	return Atom::make_tagged(tag, new (mem) T(static_cast<Args&&>(args)...));
+}
 
 template <>
 struct box_unbox_t<Symbol>
@@ -448,13 +444,11 @@ struct Lambda
 
 	Lambda(Code* c, Arity a, uint16_t nl, uint16_t n) : code{c}, arity{a}, n_locals{nl}, n_captures{n} {}
 
-	static Lambda* alloc(Code* code, Arity arity, uint16_t n_locals, uint16_t n_captures)
+	static Atom alloc(Gc& gc, Code* code, Arity arity, uint16_t n_locals, uint16_t n_captures)
 	{
 		size_t total = sizeof(Lambda) + static_cast<size_t>(n_captures) * sizeof(Atom);
-		void* mem = g_gc->alloc(total, jet_tag::procedure, 0);
-		Lambda* obj = static_cast<Lambda*>(mem);
-		new (obj) Lambda{code, arity, n_locals, n_captures};
-		return obj;
+		void* mem = gc.alloc(total, jet_tag::procedure, 0);
+		return Atom::make_tagged(jet_tag::procedure, new (mem) Lambda{code, arity, n_locals, n_captures});
 	}
 
 	Lambda(const Lambda&) = delete;
@@ -469,16 +463,12 @@ inline bool operator==(Lambda& l1, Lambda& l2)
 template <>
 struct box_unbox_t<Lambda>
 {
-	static Atom box(Code* code, Arity arity, uint16_t n_locals, uint16_t n_captures)
-	{
-		return Atom::make_tagged(jet_tag::procedure, Lambda::alloc(code, arity, n_locals, n_captures));
-	}
-
 	static Lambda* unbox(Atom x) { return static_cast<Lambda*>(x.as_ptr()); }
 };
 
 struct VmState
 {
+	Gc gc{};
 	Env& env;
 	InternedSymbols symbols{};
 	FrameStack frames{};
@@ -516,7 +506,7 @@ struct ObjShape
 	VmOp resolved_ldfk_handler;
 	VmOp resolved_stfk_handler;
 	Atom (*slow_ref)(Atom, Atom);
-	Cursor* (*iter)(Atom);
+	Cursor* (*iter)(VmState&, Atom);
 };
 
 extern ObjShape g_shape_by_tag[jet_tag::HEAP_END];
@@ -534,7 +524,7 @@ extern ObjShape g_shape_by_tag[jet_tag::HEAP_END];
 #define JET_GC_CHECK()                                                                                      \
 	do                                                                                                       \
 	{                                                                                                        \
-		if (g_gc->should_collect()) [[unlikely]]                                                             \
+		if (s.gc.should_collect()) [[unlikely]]                                                             \
 		{                                                                                                    \
 			JET_MUSTTAIL return gc_then_dispatch(VM_OP_ARGS);                                               \
 		}                                                                                                    \
@@ -550,6 +540,6 @@ struct LoadedProgram
 };
 
 // Bytecode layout: [u32 n_toplevel_slots][u32 n_constants][pool entries][toplevel code...].
-LoadedProgram load_program(InternedSymbols& symbols, Code* bytecode, size_t n_bytes, Env& env);
+LoadedProgram load_program(VmState& s, Code* bytecode, size_t n_bytes);
 
 #endif

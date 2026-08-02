@@ -52,7 +52,7 @@ static Atom set_cdr(Atom pair, Atom x)
 	return Atom{};
 }
 
-static Atom append_prim(Atom* first, Atom* last)
+static Atom append_prim(VmState& s, Atom* first, Atom* last)
 {
 	Atom head = box(EmptyList{});
 	Atom* slot = &head;
@@ -62,9 +62,9 @@ static Atom append_prim(Atom* first, Atom* last)
 		while (is_type<jet::Type::Pair>(x))
 		{
 			Cons* src = unbox<Cons>(x);
-			Cons* cell = make_cons(src->car, box(EmptyList{}));
-			*slot = Atom::make_tagged(jet_tag::pair, cell);
-			slot = &cell->cdr;
+			Atom cell = cons(s, src->car, box(EmptyList{}));
+			*slot = cell;
+			slot = &unbox<Cons>(cell)->cdr;
 			x = src->cdr;
 		}
 		JET_DIE_UNLESS(is_type<jet::Type::EmptyList>(x), "append expects a list, given %s",
@@ -77,19 +77,20 @@ static Atom append_prim(Atom* first, Atom* last)
 	return head;
 }
 
-void init_lists(Env& e)
+void init_lists(VmState& s)
 {
-	e.bind("cons", make_prim<cons>());
-	e.bind("append", make_prim<append_prim>(n_ary()));
+	Env& e = s.env;
+	e.bind("cons", make_prim<cons>(s));
+	e.bind("append", make_prim<append_prim>(s, n_ary()));
 
-	e.bind("car", make_prim<car>());
-	e.bind("cdr", make_prim<cdr>());
+	e.bind("car", make_prim<car>(s));
+	e.bind("cdr", make_prim<cdr>(s));
 
-	e.bind("pair?", make_prim<is_type<jet::Type::Pair>>());
-	e.bind("list?", make_prim<is_list>());
-	e.bind("null?", make_prim<is_type<jet::Type::EmptyList>>());
-	e.bind("set-car!", make_prim<set_car>());
-	e.bind("set-cdr!", make_prim<set_cdr>());
+	e.bind("pair?", make_prim<is_type<jet::Type::Pair>>(s));
+	e.bind("list?", make_prim<is_list>(s));
+	e.bind("null?", make_prim<is_type<jet::Type::EmptyList>>(s));
+	e.bind("set-car!", make_prim<set_car>(s));
+	e.bind("set-cdr!", make_prim<set_cdr>(s));
 }
 
 static Number jet_modulo(Number a, Number b)
@@ -200,70 +201,71 @@ static Atom random_seed()
 	return Atom{};
 }
 
-void init_number(Env& e)
+void init_number(VmState& s)
 {
+	Env& e = s.env;
 	using namespace std;
 
-	e.bind("+", make_prim<folding_op<plus<Number>, 0>>());
-	e.bind("-", make_prim<folding_op<minus<Number>, 0>>(at_least(1)));
-	e.bind("*", make_prim<folding_op<multiplies<Number>, 1>>());
-	e.bind("/", make_prim<folding_op<divides<Number>, 1>>(at_least(1)));
+	e.bind("+", make_prim<folding_op<plus<Number>, 0>>(s));
+	e.bind("-", make_prim<folding_op<minus<Number>, 0>>(s, at_least(1)));
+	e.bind("*", make_prim<folding_op<multiplies<Number>, 1>>(s));
+	e.bind("/", make_prim<folding_op<divides<Number>, 1>>(s, at_least(1)));
 
-	e.bind("floor", make_prim<arith_unary_fun<Number, ::floor>>(exactly(1)));
-	e.bind("ceiling", make_prim<arith_unary_fun<Number, ::ceil>>(exactly(1)));
-	e.bind("truncate", make_prim<arith_unary_fun<Number, ::trunc>>(exactly(1)));
-	e.bind("round", make_prim<arith_unary_fun<Number, ::round>>(exactly(1)));
-	e.bind("sqrt", make_prim<arith_unary_fun<Number, ::sqrt>>(exactly(1)));
-	e.bind("expt", make_prim<arith_binary_fun<Number, ::pow>>(exactly(2)));
-	e.bind("exp", make_prim<arith_unary_fun<Number, ::exp>>(exactly(1)));
-	e.bind("log", make_prim<arith_unary_fun<Number, ::log>>(exactly(1)));
-	e.bind("sin", make_prim<arith_unary_fun<Number, ::sin>>(exactly(1)));
-	e.bind("cos", make_prim<arith_unary_fun<Number, ::cos>>(exactly(1)));
-	e.bind("tan", make_prim<arith_unary_fun<Number, ::tan>>(exactly(1)));
-	e.bind("asin", make_prim<arith_unary_fun<Number, ::asin>>(exactly(1)));
-	e.bind("acos", make_prim<arith_unary_fun<Number, ::acos>>(exactly(1)));
-	e.bind("atan", make_prim<arith_unary_fun<Number, ::atan>>(exactly(1)));
-	e.bind("abs", make_prim<arith_unary_fun<Number, jet_abs>>(exactly(1)));
-	e.bind("square", make_prim<arith_unary_fun<Number, jet_square>>(exactly(1)));
-	e.bind("quotient", make_prim<arith_binary_fun<Number, jet_quotient>>(exactly(2)));
-	e.bind("remainder", make_prim<arith_binary_fun<Number, jet_remainder>>(exactly(2)));
+	e.bind("floor", make_prim<arith_unary_fun<Number, ::floor>>(s, exactly(1)));
+	e.bind("ceiling", make_prim<arith_unary_fun<Number, ::ceil>>(s, exactly(1)));
+	e.bind("truncate", make_prim<arith_unary_fun<Number, ::trunc>>(s, exactly(1)));
+	e.bind("round", make_prim<arith_unary_fun<Number, ::round>>(s, exactly(1)));
+	e.bind("sqrt", make_prim<arith_unary_fun<Number, ::sqrt>>(s, exactly(1)));
+	e.bind("expt", make_prim<arith_binary_fun<Number, ::pow>>(s, exactly(2)));
+	e.bind("exp", make_prim<arith_unary_fun<Number, ::exp>>(s, exactly(1)));
+	e.bind("log", make_prim<arith_unary_fun<Number, ::log>>(s, exactly(1)));
+	e.bind("sin", make_prim<arith_unary_fun<Number, ::sin>>(s, exactly(1)));
+	e.bind("cos", make_prim<arith_unary_fun<Number, ::cos>>(s, exactly(1)));
+	e.bind("tan", make_prim<arith_unary_fun<Number, ::tan>>(s, exactly(1)));
+	e.bind("asin", make_prim<arith_unary_fun<Number, ::asin>>(s, exactly(1)));
+	e.bind("acos", make_prim<arith_unary_fun<Number, ::acos>>(s, exactly(1)));
+	e.bind("atan", make_prim<arith_unary_fun<Number, ::atan>>(s, exactly(1)));
+	e.bind("abs", make_prim<arith_unary_fun<Number, jet_abs>>(s, exactly(1)));
+	e.bind("square", make_prim<arith_unary_fun<Number, jet_square>>(s, exactly(1)));
+	e.bind("quotient", make_prim<arith_binary_fun<Number, jet_quotient>>(s, exactly(2)));
+	e.bind("remainder", make_prim<arith_binary_fun<Number, jet_remainder>>(s, exactly(2)));
 
-	e.bind("positive?", make_prim<arith_unary_pred<Number, jet_is_positive>>(exactly(1)));
-	e.bind("negative?", make_prim<arith_unary_pred<Number, jet_is_negative>>(exactly(1)));
-	e.bind("even?", make_prim<arith_unary_pred<Number, jet_is_even>>(exactly(1)));
-	e.bind("odd?", make_prim<arith_unary_pred<Number, jet_is_odd>>(exactly(1)));
+	e.bind("positive?", make_prim<arith_unary_pred<Number, jet_is_positive>>(s, exactly(1)));
+	e.bind("negative?", make_prim<arith_unary_pred<Number, jet_is_negative>>(s, exactly(1)));
+	e.bind("even?", make_prim<arith_unary_pred<Number, jet_is_even>>(s, exactly(1)));
+	e.bind("odd?", make_prim<arith_unary_pred<Number, jet_is_odd>>(s, exactly(1)));
 
-	e.bind("=", make_prim<folding_pred<equal_to<Number>>>(at_least(2)));
-	e.bind("<", make_prim<folding_pred<less<Number>>>(at_least(2)));
-	e.bind("<=", make_prim<folding_pred<less_equal<Number>>>(at_least(2)));
+	e.bind("=", make_prim<folding_pred<equal_to<Number>>>(s, at_least(2)));
+	e.bind("<", make_prim<folding_pred<less<Number>>>(s, at_least(2)));
+	e.bind("<=", make_prim<folding_pred<less_equal<Number>>>(s, at_least(2)));
 
-	e.bind(">", make_prim<folding_pred<greater<Number>>>(at_least(2)));
-	e.bind(">=", make_prim<folding_pred<greater_equal<Number>>>(at_least(2)));
+	e.bind(">", make_prim<folding_pred<greater<Number>>>(s, at_least(2)));
+	e.bind(">=", make_prim<folding_pred<greater_equal<Number>>>(s, at_least(2)));
 
-	e.bind("modulo", make_prim<arith_binary_fun<Number, jet_modulo>>(exactly(2)));
-	e.bind("max", make_prim<folding_op<::max<Number>>>(at_least(1)));
-	e.bind("min", make_prim<folding_op<::min<Number>>>(at_least(1)));
+	e.bind("modulo", make_prim<arith_binary_fun<Number, jet_modulo>>(s, exactly(2)));
+	e.bind("max", make_prim<folding_op<::max<Number>>>(s, at_least(1)));
+	e.bind("min", make_prim<folding_op<::min<Number>>>(s, at_least(1)));
 
-	e.bind("bitwise-and", make_prim<folding_op<::bit_and<Number>, -1>>());
-	e.bind("bitwise-ior", make_prim<folding_op<::bit_ior<Number>, 0>>());
-	e.bind("bitwise-xor", make_prim<folding_op<::bit_xor<Number>, 0>>());
-	e.bind("bitwise-not", make_prim<arith_unary_fun<Number, jet_bitwise_not>>(exactly(1)));
-	e.bind("arithmetic-shift", make_prim<arith_binary_fun<Number, jet_arithmetic_shift>>(exactly(2)));
+	e.bind("bitwise-and", make_prim<folding_op<::bit_and<Number>, -1>>(s));
+	e.bind("bitwise-ior", make_prim<folding_op<::bit_ior<Number>, 0>>(s));
+	e.bind("bitwise-xor", make_prim<folding_op<::bit_xor<Number>, 0>>(s));
+	e.bind("bitwise-not", make_prim<arith_unary_fun<Number, jet_bitwise_not>>(s, exactly(1)));
+	e.bind("arithmetic-shift", make_prim<arith_binary_fun<Number, jet_arithmetic_shift>>(s, exactly(2)));
 
-	e.bind("exact?", make_prim<arith_unary_pred<Number, is_exact>>(exactly(1)));
-	e.bind("integer?", make_prim<arith_unary_pred<Number, is_integer>>(exactly(1)));
-	e.bind("number?", make_prim<is_type<jet::Type::Number>>());
-	e.bind("real?", make_prim<is_type<jet::Type::Number>>());
-	e.bind("rational?", make_prim<is_type<jet::Type::Number>>());
-	e.bind("complex?", make_prim<is_type<jet::Type::Number>>());
+	e.bind("exact?", make_prim<arith_unary_pred<Number, is_exact>>(s, exactly(1)));
+	e.bind("integer?", make_prim<arith_unary_pred<Number, is_integer>>(s, exactly(1)));
+	e.bind("number?", make_prim<is_type<jet::Type::Number>>(s));
+	e.bind("real?", make_prim<is_type<jet::Type::Number>>(s));
+	e.bind("rational?", make_prim<is_type<jet::Type::Number>>(s));
+	e.bind("complex?", make_prim<is_type<jet::Type::Number>>(s));
 
-	e.bind("random", make_prim<arith_nullary_fun<long, random>>(exactly(0)));
-	e.bind("random-seed", make_prim<random_seed>());
+	e.bind("random", make_prim<arith_nullary_fun<long, random>>(s, exactly(0)));
+	e.bind("random-seed", make_prim<random_seed>(s));
 }
 
-static Atom symbol_to_string_prim(Atom a)
+static Atom symbol_to_string_prim(VmState& s, Atom a)
 {
-	return box(String{symbol_to_string(unbox<Symbol>(a))});
+	return s.gc.alloc_tagged<String>(symbol_to_string(unbox<Symbol>(a)));
 }
 
 Atom string_to_symbol(VmState& vm, Atom a)
@@ -271,11 +273,12 @@ Atom string_to_symbol(VmState& vm, Atom a)
 	return box(vm.symbols.intern(*unbox<String>(a)));
 }
 
-void init_symbols(Env& e)
+void init_symbols(VmState& s)
 {
-	e.bind("symbol->string", make_prim<symbol_to_string_prim>());
-	e.bind("string->symbol", make_prim<string_to_symbol>());
-	e.bind("symbol?", make_prim<is_type<jet::Type::Symbol>>());
+	Env& e = s.env;
+	e.bind("symbol->string", make_prim<symbol_to_string_prim>(s));
+	e.bind("string->symbol", make_prim<string_to_symbol>(s));
+	e.bind("symbol?", make_prim<is_type<jet::Type::Symbol>>(s));
 }
 
 bool operator==(Vec& v1, Vec& v2)
@@ -283,16 +286,16 @@ bool operator==(Vec& v1, Vec& v2)
 	return &v1 == &v2;
 }
 
-Atom vector_ctor(Atom* first, Atom* last)
+Atom vector_ctor(VmState& s, Atom* first, Atom* last)
 {
-	return box(Vec(first, last));
+	return s.gc.alloc_tagged<Vec>(first, last);
 }
 
-Atom make_vector(Atom s, Atom f)
+Atom make_vector(VmState& s, Atom n, Atom f)
 {
-	JET_DIE_UNLESS(is_positive_integer(s), "make-vector expects positive integer, given %g",
-	               unbox<Number>(s));
-	return box(Vec(unbox<Number>(s), f));
+	JET_DIE_UNLESS(is_positive_integer(n), "make-vector expects positive integer, given %g",
+	               unbox<Number>(n));
+	return s.gc.alloc_tagged<Vec>(unbox<Number>(n), f);
 }
 
 Atom vector_ref(Atom v, Atom idx)
@@ -431,22 +434,23 @@ static const StructOps hashmap_cursor_struct_ops = {
 	print_cursor,
 };
 
-void init_vecs(Env& e)
+void init_vecs(VmState& s)
 {
+	Env& e = s.env;
 	static const std::string vector_cursor_name = "%vector-cursor";
-	Atom vector_cursor_type = box<StructType>(box(&vector_cursor_name), std::vector<Atom>{}, exactly(0),
-	                                          vector_cursor_struct_ops);
+	Atom vector_cursor_type =
+		make_struct_type(s, box(&vector_cursor_name), {}, exactly(0), vector_cursor_struct_ops);
 	e.bind("%vector-cursor", vector_cursor_type);
 	VectorCursor::type_atom = vector_cursor_type;
-	e.bind("vector?", make_prim<is_type<jet::Type::Vector>>());
-	e.bind("vector-push!", make_prim<vector_push>());
-	e.bind("vector-pop!", make_prim<vector_pop>());
-	e.bind("vector-pop-first!", make_prim<vector_pop_first>());
-	e.bind("vector-length", make_prim<vector_length>());
-	e.bind("vector-ref", make_prim<vector_ref>());
-	e.bind("vector-set!", make_prim<vector_set>());
-	e.bind("make-vector", make_prim<make_vector>());
-	e.bind("vector", make_prim<vector_ctor>(n_ary()));
+	e.bind("vector?", make_prim<is_type<jet::Type::Vector>>(s));
+	e.bind("vector-push!", make_prim<vector_push>(s));
+	e.bind("vector-pop!", make_prim<vector_pop>(s));
+	e.bind("vector-pop-first!", make_prim<vector_pop_first>(s));
+	e.bind("vector-length", make_prim<vector_length>(s));
+	e.bind("vector-ref", make_prim<vector_ref>(s));
+	e.bind("vector-set!", make_prim<vector_set>(s));
+	e.bind("make-vector", make_prim<make_vector>(s));
+	e.bind("vector", make_prim<vector_ctor>(s, n_ary()));
 }
 
 static void die_unless_byte(Atom b)
@@ -482,15 +486,15 @@ static Atom bytevector_length(Atom bv)
 	return box(Number(slow_unbox<ByteVector>(bv)->size()));
 }
 
-static Atom make_bytevector(Atom k, Atom fill)
+static Atom make_bytevector(VmState& s, Atom k, Atom fill)
 {
 	JET_DIE_UNLESS(is_positive_integer(k), "make-bytevector expects positive integer, given %g",
 	               unbox<Number>(k));
 	die_unless_byte(fill);
-	return box(ByteVector(unbox<Number>(k), static_cast<uint8_t>(unbox<Number>(fill))));
+	return s.gc.alloc_tagged<ByteVector>(unbox<Number>(k), static_cast<uint8_t>(unbox<Number>(fill)));
 }
 
-static Atom bytevector_ctor(Atom* first, Atom* last)
+static Atom bytevector_ctor(VmState& s, Atom* first, Atom* last)
 {
 	ByteVector result;
 	result.reserve(last - first);
@@ -499,10 +503,10 @@ static Atom bytevector_ctor(Atom* first, Atom* last)
 		die_unless_byte(*p);
 		result.push_back(static_cast<uint8_t>(unbox<Number>(*p)));
 	}
-	return box(std::move(result));
+	return s.gc.alloc_tagged<ByteVector>(std::move(result));
 }
 
-static Atom bytevector_copy(Atom bv, Atom start, Atom end)
+static Atom bytevector_copy(VmState& vm, Atom bv, Atom start, Atom end)
 {
 	JET_DIE_UNLESS(is_positive_integer(start), "bytevector-copy expects positive integer start, given %g",
 	               unbox<Number>(start));
@@ -512,7 +516,7 @@ static Atom bytevector_copy(Atom bv, Atom start, Atom end)
 	size_t s = unbox<Number>(start);
 	size_t e = unbox<Number>(end);
 	JET_DIE_UNLESS(s <= e && e <= src.size(), "bytevector-copy range %zu..%zu out of bounds", s, e);
-	return box(ByteVector(src.begin() + s, src.begin() + e));
+	return vm.gc.alloc_tagged<ByteVector>(src.begin() + s, src.begin() + e);
 }
 
 static Atom bytevector_copy_bang(Atom to, Atom at, Atom from, Atom start, Atom end)
@@ -547,7 +551,7 @@ static Atom bytevector_copy_bang(Atom to, Atom at, Atom from, Atom start, Atom e
 	return to;
 }
 
-static Atom bytevector_append(Atom* first, Atom* last)
+static Atom bytevector_append(VmState& s, Atom* first, Atom* last)
 {
 	ByteVector result;
 	size_t total = 0;
@@ -561,20 +565,21 @@ static Atom bytevector_append(Atom* first, Atom* last)
 		ByteVector& part = *slow_unbox<ByteVector>(*p);
 		result.insert(result.end(), part.begin(), part.end());
 	}
-	return box(std::move(result));
+	return s.gc.alloc_tagged<ByteVector>(std::move(result));
 }
 
-void init_bytevectors(Env& e)
+void init_bytevectors(VmState& s)
 {
-	e.bind("bytevector?", make_prim<is_type<jet::Type::ByteVector>>());
-	e.bind("bytevector-length", make_prim<bytevector_length>());
-	e.bind("bytevector-u8-ref", make_prim<bytevector_u8_ref>());
-	e.bind("bytevector-u8-set!", make_prim<bytevector_u8_set>());
-	e.bind("make-bytevector", make_prim<make_bytevector>());
-	e.bind("bytevector", make_prim<bytevector_ctor>(n_ary()));
-	e.bind("bytevector-copy", make_prim<bytevector_copy>());
-	e.bind("bytevector-copy!", make_prim<bytevector_copy_bang>());
-	e.bind("bytevector-append", make_prim<bytevector_append>(n_ary()));
+	Env& e = s.env;
+	e.bind("bytevector?", make_prim<is_type<jet::Type::ByteVector>>(s));
+	e.bind("bytevector-length", make_prim<bytevector_length>(s));
+	e.bind("bytevector-u8-ref", make_prim<bytevector_u8_ref>(s));
+	e.bind("bytevector-u8-set!", make_prim<bytevector_u8_set>(s));
+	e.bind("make-bytevector", make_prim<make_bytevector>(s));
+	e.bind("bytevector", make_prim<bytevector_ctor>(s, n_ary()));
+	e.bind("bytevector-copy", make_prim<bytevector_copy>(s));
+	e.bind("bytevector-copy!", make_prim<bytevector_copy_bang>(s));
+	e.bind("bytevector-append", make_prim<bytevector_append>(s, n_ary()));
 }
 
 bool is_eqv(Atom obj1, Atom obj2)
@@ -603,12 +608,12 @@ bool is_eqv(Atom obj1, Atom obj2)
 	}
 }
 
-static Atom eqv_prim(Atom* first, Atom*)
+static Atom eqv_prim(VmState&, Atom* first, Atom*)
 {
 	return box(is_eqv(first[0], first[1]));
 }
 
-static Atom eq_prim(Atom* first, Atom*) { return box(is_eq(first[0], first[1])); }
+static Atom eq_prim(VmState&, Atom* first, Atom*) { return box(is_eq(first[0], first[1])); }
 
 static bool equal_recur(EqualContext& context, Atom first, Atom second);
 
@@ -727,7 +732,7 @@ bool equal_key(const TableKey& first, const TableKey& second)
 	       is_equal(first.atom, second.atom, EqualContext::Cycles::No);
 }
 
-static Atom equal_prim(Atom* first, Atom*)
+static Atom equal_prim(VmState&, Atom* first, Atom*)
 {
 	return box(is_equal(first[0], first[1], EqualContext::Cycles::Maybe));
 }
@@ -746,13 +751,14 @@ static bool symbol_eq(Atom a, Atom b)
 	return unbox<Symbol>(a) == unbox<Symbol>(b);
 }
 
-void init_equivalence(Env& e)
+void init_equivalence(VmState& s)
 {
-	e.bind("eqv?", make_prim<eqv_prim>(exactly(2)));
-	e.bind("eq?", make_prim<eq_prim>(exactly(2)));
-	e.bind("equal?", make_prim<equal_prim>(exactly(2)));
-	e.bind("boolean=?", make_prim<boolean_eq>());
-	e.bind("symbol=?", make_prim<symbol_eq>());
+	Env& e = s.env;
+	e.bind("eqv?", make_prim<eqv_prim>(s, exactly(2)));
+	e.bind("eq?", make_prim<eq_prim>(s, exactly(2)));
+	e.bind("equal?", make_prim<equal_prim>(s, exactly(2)));
+	e.bind("boolean=?", make_prim<boolean_eq>(s));
+	e.bind("symbol=?", make_prim<symbol_eq>(s));
 }
 
 using printer_t = Atom (*)(Atom, std::string&);
@@ -975,20 +981,21 @@ static Atom write_atom(Atom a)
 	return Atom{};
 }
 
-void init_display_primitives(Env& e)
+void init_display_primitives(VmState& s)
 {
-	e.bind("display", make_prim<display>());
-	e.bind("write", make_prim<write_atom>());
+	Env& e = s.env;
+	e.bind("display", make_prim<display>(s));
+	e.bind("write", make_prim<write_atom>(s));
 }
 
-static Atom string_append(Atom* first, Atom* last)
+static Atom string_append(VmState& s, Atom* first, Atom* last)
 {
 	String str;
 	while (first != last)
 	{
 		str += *slow_unbox<String>(*first++);
 	}
-	return box(str);
+	return s.gc.alloc_tagged<String>(std::move(str));
 }
 
 static size_t string_index(Atom s, Atom k, const char* op)
@@ -1001,14 +1008,14 @@ static size_t string_index(Atom s, Atom k, const char* op)
 	return i;
 }
 
-static Atom make_string(Atom* first, Atom* last)
+static Atom make_string(VmState& s, Atom* first, Atom* last)
 {
 	size_t n = first != last ? slow_unbox<Number>(*first++) : 0;
 	Character fill = first != last ? slow_unbox<Character>(*first++) : ' ';
-	return box(String(n, static_cast<char>(fill)));
+	return s.gc.alloc_tagged<String>(n, static_cast<char>(fill));
 }
 
-static Atom string_ctor(Atom* first, Atom* last)
+static Atom string_ctor(VmState& s, Atom* first, Atom* last)
 {
 	String str;
 	str.reserve(last - first);
@@ -1016,7 +1023,7 @@ static Atom string_ctor(Atom* first, Atom* last)
 	{
 		str += static_cast<char>(slow_unbox<Character>(*first++));
 	}
-	return box(str);
+	return s.gc.alloc_tagged<String>(std::move(str));
 }
 
 static Number string_length(Atom s)
@@ -1031,29 +1038,29 @@ Atom string_ref(Atom s, Atom k)
 	return box(static_cast<Character>(static_cast<uint8_t>(string[index])));
 }
 
-static Atom substring(Atom* first, Atom* last)
+static Atom substring(VmState& s, Atom* first, Atom* last)
 {
-	String& s = *slow_unbox<String>(first[0]);
-	size_t n = s.size();
+	String& str = *slow_unbox<String>(first[0]);
+	size_t n = str.size();
 	size_t start = last - first >= 2 ? static_cast<size_t>(slow_unbox<Number>(first[1])) : 0;
 	size_t end = last - first >= 3 ? static_cast<size_t>(slow_unbox<Number>(first[2])) : n;
 	JET_DIE_UNLESS(start <= end && end <= n, "substring: bad range [%zu, %zu) for length %zu", start, end, n);
-	return box(s.substr(start, end - start));
+	return s.gc.alloc_tagged<String>(str.substr(start, end - start));
 }
 
-static Atom string_copy(Atom* first, Atom* last)
+static Atom string_copy(VmState& s, Atom* first, Atom* last)
 {
-	String& s = *slow_unbox<String>(first[0]);
-	size_t n = s.size();
+	String& str = *slow_unbox<String>(first[0]);
+	size_t n = str.size();
 	size_t start = last - first >= 2 ? static_cast<size_t>(slow_unbox<Number>(first[1])) : 0;
 	size_t end = last - first >= 3 ? static_cast<size_t>(slow_unbox<Number>(first[2])) : n;
 	JET_DIE_UNLESS(start <= end && end <= n, "string-copy: bad range [%zu, %zu) for length %zu", start, end,
 	               n);
-	return box(s.substr(start, end - start));
+	return s.gc.alloc_tagged<String>(str.substr(start, end - start));
 }
 
 template <typename Op>
-static Atom string_folding_pred(Atom* first, Atom* last)
+static Atom string_folding_pred(VmState& s, Atom* first, Atom* last)
 {
 	JET_DIE_UNLESS(last - first >= 2, "string comparison expects at least 2 arguments");
 	bool result = true;
@@ -1067,17 +1074,17 @@ static Atom string_folding_pred(Atom* first, Atom* last)
 	return box(result);
 }
 
-static Atom string_to_number(Atom* first, Atom* last)
+static Atom string_to_number(VmState& s, Atom* first, Atom* last)
 {
-	String& s = *slow_unbox<String>(first[0]);
+	String& str = *slow_unbox<String>(first[0]);
 	int radix = last - first >= 2 ? static_cast<int>(slow_unbox<Number>(first[1])) : 10;
-	if (s.empty())
+	if (str.empty())
 	{
 		return box(false);
 	}
 	if (radix == 10)
 	{
-		const char* p = s.c_str();
+		const char* p = str.c_str();
 		char* end = nullptr;
 		double v = strtod(p, &end);
 		if (!end || *end != '\0' || end == p)
@@ -1088,7 +1095,7 @@ static Atom string_to_number(Atom* first, Atom* last)
 	}
 	JET_DIE_UNLESS(radix == 2 || radix == 8 || radix == 16,
 	               "string->number: radix must be 2, 8, 10, or 16, got %d", radix);
-	const char* p = s.c_str();
+	const char* p = str.c_str();
 	char* end = nullptr;
 	long long v = std::strtoll(p, &end, radix);
 	if (!end || *end != '\0' || end == p)
@@ -1098,7 +1105,7 @@ static Atom string_to_number(Atom* first, Atom* last)
 	return box<Number>(static_cast<Number>(v));
 }
 
-static Atom number_to_string(Atom* first, Atom* last)
+static Atom number_to_string(VmState& s, Atom* first, Atom* last)
 {
 	Number n = slow_unbox<Number>(first[0]);
 	int radix = last - first >= 2 ? static_cast<int>(slow_unbox<Number>(first[1])) : 10;
@@ -1106,7 +1113,7 @@ static Atom number_to_string(Atom* first, Atom* last)
 	{
 		std::string os;
 		display_to(first[0], os);
-		return box(std::move(os));
+		return s.gc.alloc_tagged<String>(std::move(os));
 	}
 	JET_DIE_UNLESS(radix == 2 || radix == 8 || radix == 16,
 	               "number->string: radix must be 2, 8, 10, or 16, got %d", radix);
@@ -1114,25 +1121,26 @@ static Atom number_to_string(Atom* first, Atom* last)
 	char buf[72];
 	std::to_chars_result r = std::to_chars(buf, buf + sizeof(buf), static_cast<long long>(n), radix);
 	JET_DIE_UNLESS(r.ec == std::errc{}, "number->string: conversion failed");
-	return box(std::string(buf, r.ptr));
+	return s.gc.alloc_tagged<String>(buf, r.ptr);
 }
 
-void init_strings(Env& e)
+void init_strings(VmState& s)
 {
-	e.bind("string-append", make_prim<string_append>());
-	e.bind("make-string", make_prim<make_string>(at_least(1)));
-	e.bind("string", make_prim<string_ctor>(n_ary()));
-	e.bind("string-length", make_prim<string_length>());
-	e.bind("string-ref", make_prim<string_ref>());
-	e.bind("substring", make_prim<substring>(at_least(1)));
-	e.bind("string-copy", make_prim<string_copy>(at_least(1)));
-	e.bind("string=?", make_prim<string_folding_pred<std::equal_to<String>>>(at_least(2)));
-	e.bind("string<?", make_prim<string_folding_pred<std::less<String>>>(at_least(2)));
-	e.bind("string<=?", make_prim<string_folding_pred<std::less_equal<String>>>(at_least(2)));
-	e.bind("string>?", make_prim<string_folding_pred<std::greater<String>>>(at_least(2)));
-	e.bind("string>=?", make_prim<string_folding_pred<std::greater_equal<String>>>(at_least(2)));
-	e.bind("string->number", make_prim<string_to_number>(at_least(1)));
-	e.bind("number->string", make_prim<number_to_string>(at_least(1)));
+	Env& e = s.env;
+	e.bind("string-append", make_prim<string_append>(s));
+	e.bind("make-string", make_prim<make_string>(s, at_least(1)));
+	e.bind("string", make_prim<string_ctor>(s, n_ary()));
+	e.bind("string-length", make_prim<string_length>(s));
+	e.bind("string-ref", make_prim<string_ref>(s));
+	e.bind("substring", make_prim<substring>(s, at_least(1)));
+	e.bind("string-copy", make_prim<string_copy>(s, at_least(1)));
+	e.bind("string=?", make_prim<string_folding_pred<std::equal_to<String>>>(s, at_least(2)));
+	e.bind("string<?", make_prim<string_folding_pred<std::less<String>>>(s, at_least(2)));
+	e.bind("string<=?", make_prim<string_folding_pred<std::less_equal<String>>>(s, at_least(2)));
+	e.bind("string>?", make_prim<string_folding_pred<std::greater<String>>>(s, at_least(2)));
+	e.bind("string>=?", make_prim<string_folding_pred<std::greater_equal<String>>>(s, at_least(2)));
+	e.bind("string->number", make_prim<string_to_number>(s, at_least(1)));
+	e.bind("number->string", make_prim<number_to_string>(s, at_least(1)));
 }
 
 static Number char_to_integer(Atom c)
@@ -1148,7 +1156,7 @@ static Atom integer_to_char(Atom n)
 }
 
 template <typename Op>
-static Atom char_folding_pred(Atom* first, Atom* last)
+static Atom char_folding_pred(VmState& s, Atom* first, Atom* last)
 {
 	JET_DIE_UNLESS(last - first >= 2, "char comparison expects at least 2 arguments");
 	bool result = true;
@@ -1190,28 +1198,29 @@ static Number digit_value(Atom c)
 	return std::isdigit(ch) ? static_cast<Number>(ch - '0') : -1;
 }
 
-void init_chars(Env& e)
+void init_chars(VmState& s)
 {
-	e.bind("char->integer", make_prim<char_to_integer>());
-	e.bind("integer->char", make_prim<integer_to_char>());
-	e.bind("char=?", make_prim<char_folding_pred<std::equal_to<Character>>>(at_least(2)));
-	e.bind("char<?", make_prim<char_folding_pred<std::less<Character>>>(at_least(2)));
-	e.bind("char<=?", make_prim<char_folding_pred<std::less_equal<Character>>>(at_least(2)));
-	e.bind("char>?", make_prim<char_folding_pred<std::greater<Character>>>(at_least(2)));
-	e.bind("char>=?", make_prim<char_folding_pred<std::greater_equal<Character>>>(at_least(2)));
-	e.bind("char-ci=?", make_prim<char_folding_pred<ch_ci<std::equal_to<int>>>>(at_least(2)));
-	e.bind("char-ci<?", make_prim<char_folding_pred<ch_ci<std::less<int>>>>(at_least(2)));
-	e.bind("char-ci<=?", make_prim<char_folding_pred<ch_ci<std::less_equal<int>>>>(at_least(2)));
-	e.bind("char-ci>?", make_prim<char_folding_pred<ch_ci<std::greater<int>>>>(at_least(2)));
-	e.bind("char-ci>=?", make_prim<char_folding_pred<ch_ci<std::greater_equal<int>>>>(at_least(2)));
-	e.bind("char-alphabetic?", make_prim<char_pred<std::isalpha>>());
-	e.bind("char-numeric?", make_prim<char_pred<std::isdigit>>());
-	e.bind("char-whitespace?", make_prim<char_pred<std::isspace>>());
-	e.bind("char-upper-case?", make_prim<char_pred<std::isupper>>());
-	e.bind("char-lower-case?", make_prim<char_pred<std::islower>>());
-	e.bind("char-upcase", make_prim<char_upcase>());
-	e.bind("char-downcase", make_prim<char_downcase>());
-	e.bind("digit-value", make_prim<digit_value>());
+	Env& e = s.env;
+	e.bind("char->integer", make_prim<char_to_integer>(s));
+	e.bind("integer->char", make_prim<integer_to_char>(s));
+	e.bind("char=?", make_prim<char_folding_pred<std::equal_to<Character>>>(s, at_least(2)));
+	e.bind("char<?", make_prim<char_folding_pred<std::less<Character>>>(s, at_least(2)));
+	e.bind("char<=?", make_prim<char_folding_pred<std::less_equal<Character>>>(s, at_least(2)));
+	e.bind("char>?", make_prim<char_folding_pred<std::greater<Character>>>(s, at_least(2)));
+	e.bind("char>=?", make_prim<char_folding_pred<std::greater_equal<Character>>>(s, at_least(2)));
+	e.bind("char-ci=?", make_prim<char_folding_pred<ch_ci<std::equal_to<int>>>>(s, at_least(2)));
+	e.bind("char-ci<?", make_prim<char_folding_pred<ch_ci<std::less<int>>>>(s, at_least(2)));
+	e.bind("char-ci<=?", make_prim<char_folding_pred<ch_ci<std::less_equal<int>>>>(s, at_least(2)));
+	e.bind("char-ci>?", make_prim<char_folding_pred<ch_ci<std::greater<int>>>>(s, at_least(2)));
+	e.bind("char-ci>=?", make_prim<char_folding_pred<ch_ci<std::greater_equal<int>>>>(s, at_least(2)));
+	e.bind("char-alphabetic?", make_prim<char_pred<std::isalpha>>(s));
+	e.bind("char-numeric?", make_prim<char_pred<std::isdigit>>(s));
+	e.bind("char-whitespace?", make_prim<char_pred<std::isspace>>(s));
+	e.bind("char-upper-case?", make_prim<char_pred<std::isupper>>(s));
+	e.bind("char-lower-case?", make_prim<char_pred<std::islower>>(s));
+	e.bind("char-upcase", make_prim<char_upcase>(s));
+	e.bind("char-downcase", make_prim<char_downcase>(s));
+	e.bind("digit-value", make_prim<digit_value>(s));
 }
 
 static Atom exit_(Atom status)
@@ -1219,9 +1228,10 @@ static Atom exit_(Atom status)
 	exit(slow_unbox<Number>(status));
 }
 
-void init_sys(Env& e)
+void init_sys(VmState& s)
 {
-	e.bind("exit", make_prim<exit_>());
+	Env& e = s.env;
+	e.bind("exit", make_prim<exit_>(s));
 }
 
 static Atom close_input_port(Atom p)
@@ -1274,19 +1284,20 @@ static Atom is_output_port(Atom p)
 	return box(slow_unbox<Port>(p)->is_output());
 }
 
-void init_port(Env& e)
+void init_port(VmState& s)
 {
-	e.bind("input-port?", make_prim<is_input_port>());
-	e.bind("output-port?", make_prim<is_output_port>());
+	Env& e = s.env;
+	e.bind("input-port?", make_prim<is_input_port>(s));
+	e.bind("output-port?", make_prim<is_output_port>(s));
 
-	e.bind("close-input-port", make_prim<close_input_port>());
-	e.bind("close-output-port", make_prim<close_output_port>());
+	e.bind("close-input-port", make_prim<close_input_port>(s));
+	e.bind("close-output-port", make_prim<close_output_port>(s));
 
-	e.bind("read-char", make_prim<read_char>());
+	e.bind("read-char", make_prim<read_char>(s));
 
-	e.bind("write-char", make_prim<write_char>());
+	e.bind("write-char", make_prim<write_char>(s));
 
-	e.bind("eof-object?", make_prim<is_type<jet::Type::Eof>>());
+	e.bind("eof-object?", make_prim<is_type<jet::Type::Eof>>(s));
 }
 
 Atom make_eof()
@@ -1391,26 +1402,27 @@ void OPortFile::close()
 	}
 }
 
-static Atom open_input_file(Atom name)
+static Atom open_input_file(VmState& s, Atom name)
 {
-	return box<IPortFile>(slow_unbox<String>(name)->c_str());
+	return s.gc.alloc_tagged<IPortFile>(slow_unbox<String>(name)->c_str());
 }
 
-static Atom open_output_file(Atom name)
+static Atom open_output_file(VmState& s, Atom name)
 {
-	return box<OPortFile>(slow_unbox<String>(name)->c_str());
+	return s.gc.alloc_tagged<OPortFile>(slow_unbox<String>(name)->c_str());
 }
 
-void init_port_file(Env& e)
+void init_port_file(VmState& s)
 {
-	e.bind("open-input-file", make_prim<open_input_file>());
-	e.bind("open-output-file", make_prim<open_output_file>());
+	Env& e = s.env;
+	e.bind("open-input-file", make_prim<open_input_file>(s));
+	e.bind("open-output-file", make_prim<open_output_file>(s));
 }
 
-static Struct* construct_scheme_struct(StructType* type, Atom* first, Atom* last)
+static Struct* construct_scheme_struct(VmState& s, StructType* type, Atom* first, Atom* last)
 {
 	uint32_t size = static_cast<uint32_t>(last - first);
-	SchemeStruct* instance = SchemeStruct::alloc(type, size);
+	SchemeStruct* instance = SchemeStruct::alloc(s, type, size);
 	for (uint32_t i = 0; i < size; ++i)
 	{
 		instance->values[i] = first[i];
@@ -1418,11 +1430,11 @@ static Struct* construct_scheme_struct(StructType* type, Atom* first, Atom* last
 	return instance;
 }
 
-static Struct* construct_tuple(StructType* type, Atom* first, Atom* last)
+static Struct* construct_tuple(VmState& s, StructType* type, Atom* first, Atom* last)
 {
 	size_t count = static_cast<size_t>(last - first);
 	uint32_t size = static_cast<uint32_t>(count);
-	Tuple* tuple = Tuple::alloc(type, size);
+	Tuple* tuple = Tuple::alloc(s, type, size);
 	for (uint32_t i = 0; i < size; ++i)
 	{
 		tuple->elements[i] = first[i];
@@ -1574,7 +1586,7 @@ static Atom slow_ref_field(Atom obj, Atom key)
 	return sh->slow_ref(obj, key);
 }
 
-static Atom make_cursor(Atom target)
+static Atom make_cursor(VmState& s, Atom target)
 {
 	const ObjShape* shape = shape_of(target);
 	if (!shape || !shape->iter) [[unlikely]]
@@ -1582,10 +1594,10 @@ static Atom make_cursor(Atom target)
 		std::string_view name = type_name(target.type());
 		JET_DIE("%%iter: cannot iterate <%.*s>", static_cast<int>(name.size()), name.data());
 	}
-	return Atom::make_tagged(jet_tag::struct_, shape->iter(target));
+	return Atom::make_tagged(jet_tag::struct_, shape->iter(s, target));
 }
 
-static Atom struct_ctor(Atom name, Atom names_list)
+static Atom struct_ctor(VmState& s, Atom name, Atom names_list)
 {
 	type_check(name, jet::Type::Symbol);
 	std::vector<Atom> field_names;
@@ -1596,7 +1608,7 @@ static Atom struct_ctor(Atom name, Atom names_list)
 		field_names.push_back(field);
 	}
 	Arity arity = exactly(field_names.size());
-	return box<StructType>(name, std::move(field_names), arity, scheme_struct_ops);
+	return make_struct_type(s, name, std::move(field_names), arity, scheme_struct_ops);
 }
 
 static Atom isa(Atom value, Atom type)
@@ -2165,9 +2177,9 @@ JET_PRESERVE_NONE static void hashmap_resolved_stfk_handler(VM_OP_PARAMS)
 	DISPATCH();
 }
 
-static Struct* construct_hashset(StructType* type, Atom* first, Atom* last)
+static Struct* construct_hashset(VmState& s, StructType* type, Atom* first, Atom* last)
 {
-	HashSet* set = HashSet::alloc(type);
+	HashSet* set = HashSet::alloc(s, type);
 	for (Atom* it = first; it != last; ++it)
 	{
 		hashset_insert(set, *it, box(true));
@@ -2175,11 +2187,11 @@ static Struct* construct_hashset(StructType* type, Atom* first, Atom* last)
 	return set;
 }
 
-static Struct* construct_hashmap(StructType* type, Atom* first, Atom* last)
+static Struct* construct_hashmap(VmState& s, StructType* type, Atom* first, Atom* last)
 {
 	size_t count = static_cast<size_t>(last - first);
 	JET_DIE_WHEN(count % 2 != 0, "hashmap: expected an even number of arguments, given %zu", count);
-	HashMap* map = HashMap::alloc(type);
+	HashMap* map = HashMap::alloc(s, type);
 	for (Atom* it = first; it != last; it += 2)
 	{
 		hashmap_insert(map, it[0], it[1]);
@@ -2298,23 +2310,23 @@ static const StructOps hashmap_ops = {
 	print_hashmap<write_to>,
 };
 
-Atom construct_struct(StructType* type, Atom* first, Atom* last)
+Atom construct_struct(VmState& s, StructType* type, Atom* first, Atom* last)
 {
 	check_arity(type->arity(), static_cast<size_t>(last - first));
 	Struct* instance = nullptr;
 	switch (type->kind())
 	{
 		case StructKind::Scheme:
-			instance = construct_scheme_struct(type, first, last);
+			instance = construct_scheme_struct(s, type, first, last);
 			break;
 		case StructKind::Tuple:
-			instance = construct_tuple(type, first, last);
+			instance = construct_tuple(s, type, first, last);
 			break;
 		case StructKind::HashSet:
-			instance = construct_hashset(type, first, last);
+			instance = construct_hashset(s, type, first, last);
 			break;
 		case StructKind::HashMap:
-			instance = construct_hashmap(type, first, last);
+			instance = construct_hashmap(s, type, first, last);
 			break;
 		default:
 		{
@@ -2331,36 +2343,35 @@ static Atom is_kind(Atom value)
 	return box(is_type<jet::Type::Struct>(value) && unbox<Struct>(value)->type->kind() == kind);
 }
 
-void init_structs(Env& e)
+void init_structs(VmState& s)
 {
+	Env& e = s.env;
 	static const std::string tuple_name = "tuple";
 	static const std::string hashset_name = "hashset";
 	static const std::string hashmap_name = "hashmap";
 	static const std::string hashset_cursor_name = "%hashset-cursor";
 	static const std::string hashmap_cursor_name = "%hashmap-cursor";
 	Atom name = box(static_cast<Symbol>(&tuple_name));
-	e.bind("tuple", box<StructType>(name, std::vector<Atom>{}, n_ary(), tuple_ops));
-	e.bind("hashset", box<StructType>(box(static_cast<Symbol>(&hashset_name)), std::vector<Atom>{},
-	                                  n_ary(), hashset_ops));
-	e.bind("hashmap", box<StructType>(box(static_cast<Symbol>(&hashmap_name)), std::vector<Atom>{},
-	                                  n_ary(), hashmap_ops));
+	e.bind("tuple", make_struct_type(s, name, {}, n_ary(), tuple_ops));
+	e.bind("hashset", make_struct_type(s, box(static_cast<Symbol>(&hashset_name)), {}, n_ary(),
+	                                   hashset_ops));
+	e.bind("hashmap", make_struct_type(s, box(static_cast<Symbol>(&hashmap_name)), {}, n_ary(),
+	                                   hashmap_ops));
 	Atom hashset_cursor_type =
-		box<StructType>(box(&hashset_cursor_name), std::vector<Atom>{}, exactly(0),
-		                hashset_cursor_struct_ops);
+		make_struct_type(s, box(&hashset_cursor_name), {}, exactly(0), hashset_cursor_struct_ops);
 	e.bind("%hashset-cursor", hashset_cursor_type);
 	HashSetCursor::type_atom = hashset_cursor_type;
 	Atom hashmap_cursor_type =
-		box<StructType>(box(&hashmap_cursor_name), std::vector<Atom>{}, exactly(0),
-		                hashmap_cursor_struct_ops);
+		make_struct_type(s, box(&hashmap_cursor_name), {}, exactly(0), hashmap_cursor_struct_ops);
 	e.bind("%hashmap-cursor", hashmap_cursor_type);
 	HashMapCursor::type_atom = hashmap_cursor_type;
-	e.bind("hashset?", make_prim<is_kind<StructKind::HashSet>>());
-	e.bind("hashmap?", make_prim<is_kind<StructKind::HashMap>>());
-	e.bind("hashset-length", make_prim<hashset_length>());
-	e.bind("hashset-unset!", make_prim<hashset_unset>());
-	e.bind("hashmap-unset!", make_prim<hashmap_unset>());
-	e.bind("struct", make_prim<struct_ctor>());
-	e.bind("isa?", make_prim<isa>());
+	e.bind("hashset?", make_prim<is_kind<StructKind::HashSet>>(s));
+	e.bind("hashmap?", make_prim<is_kind<StructKind::HashMap>>(s));
+	e.bind("hashset-length", make_prim<hashset_length>(s));
+	e.bind("hashset-unset!", make_prim<hashset_unset>(s));
+	e.bind("hashmap-unset!", make_prim<hashmap_unset>(s));
+	e.bind("struct", make_prim<struct_ctor>(s));
+	e.bind("isa?", make_prim<isa>(s));
 }
 
 static bool is_procedure(Atom a)
@@ -2368,7 +2379,7 @@ static bool is_procedure(Atom a)
 	return is_type<jet::Type::Procedure>(a) || is_type<jet::Type::Primitive>(a);
 }
 
-static Atom prim_check(Atom* first, Atom*)
+static Atom prim_check(VmState&, Atom* first, Atom*)
 {
 	// (%check test-result file line col)
 	if (bool test = is_true(first[0]); !test)
@@ -2381,38 +2392,40 @@ static Atom prim_check(Atom* first, Atom*)
 	return Atom{};
 }
 
-void init_primitives(Env& e)
+void init_primitives(VmState& s)
 {
-	init_number(e);
-	init_lists(e);
-	init_vecs(e);
-	init_bytevectors(e);
-	init_equivalence(e);
-	init_symbols(e);
-	init_display_primitives(e);
-	init_port(e);
-	init_port_file(e);
-	init_reader(e);
-	init_sys(e);
-	init_strings(e);
-	init_chars(e);
-	init_structs(e);
-	e.bind("ref", make_prim<slow_ref_field>());
-	e.bind("%iter", make_prim<make_cursor>());
-	e.bind("boolean?", make_prim<is_type<jet::Type::Boolean>>());
-	e.bind("string?", make_prim<is_type<jet::Type::String>>());
-	e.bind("char?", make_prim<is_type<jet::Type::Character>>());
-	e.bind("procedure?", make_prim<is_procedure>());
-	e.bind("%check", make_prim<prim_check>(exactly(4)));
+	Env& e = s.env;
+	init_number(s);
+	init_lists(s);
+	init_vecs(s);
+	init_bytevectors(s);
+	init_equivalence(s);
+	init_symbols(s);
+	init_display_primitives(s);
+	init_port(s);
+	init_port_file(s);
+	init_reader(s);
+	init_sys(s);
+	init_strings(s);
+	init_chars(s);
+	init_structs(s);
+	e.bind("ref", make_prim<slow_ref_field>(s));
+	e.bind("%iter", make_prim<make_cursor>(s));
+	e.bind("boolean?", make_prim<is_type<jet::Type::Boolean>>(s));
+	e.bind("string?", make_prim<is_type<jet::Type::String>>(s));
+	e.bind("char?", make_prim<is_type<jet::Type::Character>>(s));
+	e.bind("procedure?", make_prim<is_procedure>(s));
+	e.bind("%check", make_prim<prim_check>(s, exactly(4)));
 }
 
-void init_cmdline(Env& e, int argc, char* argv[])
+void init_cmdline(VmState& s, int argc, char* argv[])
 {
+	Env& e = s.env;
 	Vec args;
 	args.reserve(argc);
 	for (char** x = &argv[1]; x != &argv[argc]; ++x)
 	{
-		args.push_back(box(String{*x}));
+		args.push_back(s.gc.alloc_tagged<String>(*x));
 	}
-	e.bind("argv", box(args));
+	e.bind("argv", s.gc.alloc_tagged<Vec>(std::move(args)));
 }

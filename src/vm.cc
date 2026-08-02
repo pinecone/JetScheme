@@ -217,16 +217,16 @@ void Gc::free_large(void* mem, size_t n)
 	spans->insert(start, n);
 }
 
-void* alloc_raw_large(size_t bytes)
+void* Gc::alloc_raw_large(size_t bytes)
 {
 	size_t n = (bytes + Gc::CELL_SIZE - 1) / Gc::CELL_SIZE;
-	return g_gc->alloc_large(n);
+	return alloc_large(n);
 }
 
-void free_raw_large(void* mem, size_t bytes)
+void Gc::free_raw_large(void* mem, size_t bytes)
 {
 	size_t n = (bytes + Gc::CELL_SIZE - 1) / Gc::CELL_SIZE;
-	g_gc->free_large(mem, n);
+	free_large(mem, n);
 }
 
 void Gc::grow_objects()
@@ -373,7 +373,7 @@ void collect(VmState& s)
 {
 	JET_PROFILE_GC;
 	JET_PROFILE_GC_TIMER;
-	Gc& gc = *g_gc;
+	Gc& gc = s.gc;
 	gc.begin_mark();
 
 	// Scan every frame-claimed slot, not just up to stack_top: enclosing frames
@@ -415,7 +415,7 @@ void collect(VmState& s)
 	s.stack_watermark = scan_frontier;
 }
 
-LoadedProgram load_program(InternedSymbols& symbols, Code* bytecode, size_t n_bytes, Env& env)
+LoadedProgram load_program(VmState& s, Code* bytecode, size_t n_bytes)
 {
 	auto&& link_opcode_handlers = [](Code* begin, Code* end)
 	{
@@ -459,13 +459,13 @@ LoadedProgram load_program(InternedSymbols& symbols, Code* bytecode, size_t n_by
 			case ConstTag::String:
 			{
 				char* string = reinterpret_cast<char*>(code);
-				out = box(String{string});
+				out = s.gc.alloc_tagged<String>(string);
 				return code + strlen(string) + 1;
 			}
 			case ConstTag::Symbol:
 			{
 				char* value = reinterpret_cast<char*>(code);
-				out = box(symbols.intern(value));
+				out = box(s.symbols.intern(value));
 				return code + strlen(value) + 1;
 			}
 			case ConstTag::EmptyList:
@@ -477,7 +477,7 @@ LoadedProgram load_program(InternedSymbols& symbols, Code* bytecode, size_t n_by
 			case ConstTag::GlobalName:
 			{
 				char* name = reinterpret_cast<char*>(code);
-				Atom* atom = env.lookup(name);
+				Atom* atom = s.env.lookup(name);
 				JET_DIE_UNLESS(atom, "unknown primitive in pool: <%s>", name);
 				out = *atom;
 				return code + strlen(name) + 1;
@@ -506,7 +506,7 @@ LoadedProgram load_program(InternedSymbols& symbols, Code* bytecode, size_t n_by
 				link_opcode_handlers(lambda_code, lambda_code + code_size);
 				const char* lambda_name = reinterpret_cast<const char*>(code);
 				code += strlen(lambda_name) + 1;
-				out = box<Lambda>(lambda_code, arity, n_locals, static_cast<uint16_t>(0));
+				out = Lambda::alloc(s.gc, lambda_code, arity, n_locals, static_cast<uint16_t>(0));
 				return code;
 			}
 		}
@@ -540,12 +540,12 @@ constexpr size_t STACK_SLACK = 4096;
 template <bool is_tail>
 JET_NOINLINE JET_PRESERVE_NONE static void slow_call_lambda(VM_OP_PARAMS)
 {
-	auto&& pack_args_to_list = [](Atom* first, Atom* last) -> Atom
+	auto&& pack_args_to_list = [&s](Atom* first, Atom* last) -> Atom
 	{
 		Atom result = box(EmptyList{});
 		while (first != last)
 		{
-			result = cons(*--last, result);
+			result = cons(s, *--last, result);
 		}
 		return result;
 	};
@@ -958,12 +958,12 @@ static const CursorOps vector_cursor_ops = {
 	nullptr,
 };
 
-static Cursor* vector_cursor_make(Atom target)
+static Cursor* vector_cursor_make(VmState& s, Atom target)
 {
 	JET_DIE_UNLESS(is_type<jet::Type::StructType>(VectorCursor::type_atom),
 	               "vector cursor type is not initialized");
 	StructType* type = unbox<StructType>(VectorCursor::type_atom);
-	void* mem = g_gc->alloc(sizeof(VectorCursor), jet_tag::struct_, type->destructor_id());
+	void* mem = s.gc.alloc(sizeof(VectorCursor), jet_tag::struct_, type->destructor_id());
 	return new (mem) VectorCursor{type, target, &vector_cursor_ops};
 }
 
@@ -997,12 +997,12 @@ static const CursorOps hashset_cursor_ops = {
 	nullptr,
 };
 
-Cursor* hashset_cursor_make(Atom target)
+Cursor* hashset_cursor_make(VmState& s, Atom target)
 {
 	JET_DIE_UNLESS(is_type<jet::Type::StructType>(HashSetCursor::type_atom),
 	               "hashset cursor type is not initialized");
 	StructType* type = unbox<StructType>(HashSetCursor::type_atom);
-	void* mem = g_gc->alloc(sizeof(HashSetCursor), jet_tag::struct_, type->destructor_id());
+	void* mem = s.gc.alloc(sizeof(HashSetCursor), jet_tag::struct_, type->destructor_id());
 	return new (mem) HashSetCursor{type, target, &hashset_cursor_ops};
 }
 
@@ -1037,12 +1037,12 @@ static const CursorOps hashmap_cursor_ops = {
 	hashmap_cursor_next2,
 };
 
-Cursor* hashmap_cursor_make(Atom target)
+Cursor* hashmap_cursor_make(VmState& s, Atom target)
 {
 	JET_DIE_UNLESS(is_type<jet::Type::StructType>(HashMapCursor::type_atom),
 	               "hashmap cursor type is not initialized");
 	StructType* type = unbox<StructType>(HashMapCursor::type_atom);
-	void* mem = g_gc->alloc(sizeof(HashMapCursor), jet_tag::struct_, type->destructor_id());
+	void* mem = s.gc.alloc(sizeof(HashMapCursor), jet_tag::struct_, type->destructor_id());
 	return new (mem) HashMapCursor{type, target, &hashmap_cursor_ops};
 }
 
@@ -1439,7 +1439,7 @@ JET_PRESERVE_NONE static void op_box(VM_OP_PARAMS)
 	OP_box* op = reinterpret_cast<OP_box*>(pc);
 	pc += sizeof(*op);
 	Atom prev = frame_regs[op->reg];
-	frame_regs[op->reg] = box<Slot>(prev);
+	frame_regs[op->reg] = s.gc.alloc_tagged<Slot>(prev);
 	DISPATCH();
 }
 
@@ -1450,7 +1450,7 @@ JET_PRESERVE_NONE static void op_clos(VM_OP_PARAMS)
 	pc += sizeof(*op);
 
 	Lambda& tmpl = *unbox<Lambda>(s.constants[op->pool_idx]);
-	Atom la_atom = box<Lambda>(tmpl.code, tmpl.arity, tmpl.n_locals, op->n_captures);
+	Atom la_atom = Lambda::alloc(s.gc, tmpl.code, tmpl.arity, tmpl.n_locals, op->n_captures);
 	Lambda* la = unbox<Lambda>(la_atom);
 	for (uint16_t i = 0; i < op->n_captures; ++i)
 	{
