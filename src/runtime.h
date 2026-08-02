@@ -734,7 +734,7 @@ JET_PRESERVE_NONE void struct_resolved_ldfk_handler(VM_OP_PARAMS)
 	Struct* instance = unbox<Struct>(object);
 	frame_regs[op->dst] = Load(instance, op->ic.ic_extra1);
 	pc += sizeof(*op);
-	JET_PROFILE_FIELD_DISPATCH(Opcode::ldfk, FieldReceiver::Struct, true);
+	JET_PROFILE_FIELD_DISPATCH(Opcode::ldfk, profile_field_receiver(object), true);
 	DISPATCH();
 }
 
@@ -752,7 +752,7 @@ JET_PRESERVE_NONE void struct_resolved_stfk_handler(VM_OP_PARAMS)
 	Struct* instance = unbox<Struct>(object);
 	Store(instance, op->ic.ic_extra1, frame_regs[op->val]);
 	pc += sizeof(*op);
-	JET_PROFILE_FIELD_DISPATCH(Opcode::stfk, FieldReceiver::Struct, true);
+	JET_PROFILE_FIELD_DISPATCH(Opcode::stfk, profile_field_receiver(object), true);
 	DISPATCH();
 }
 

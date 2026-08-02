@@ -2135,7 +2135,7 @@ JET_PRESERVE_NONE static void table_resolved_ldfk_handler(VM_OP_PARAMS)
 	}
 	frame_regs[op->dst] = Lookup(unbox<Struct>(object), s.constants[op->key_idx]);
 	pc += sizeof(*op);
-	JET_PROFILE_FIELD_DISPATCH(Opcode::ldfk, FieldReceiver::Struct, true);
+	JET_PROFILE_FIELD_DISPATCH(Opcode::ldfk, profile_field_receiver(object), true);
 	DISPATCH();
 }
 
@@ -2151,7 +2151,7 @@ JET_PRESERVE_NONE static void table_resolved_stfk_handler(VM_OP_PARAMS)
 	}
 	Store(unbox<Struct>(object), s.constants[op->key_idx], frame_regs[op->val]);
 	pc += sizeof(*op);
-	JET_PROFILE_FIELD_DISPATCH(Opcode::stfk, FieldReceiver::Struct, true);
+	JET_PROFILE_FIELD_DISPATCH(Opcode::stfk, profile_field_receiver(object), true);
 	DISPATCH();
 }
 
@@ -2247,7 +2247,7 @@ JET_PRESERVE_NONE static void hashset_resolved_ldfk_handler(VM_OP_PARAMS)
 	}
 	frame_regs[op->dst] = box(found == FastFind::Found);
 	pc += sizeof(*op);
-	JET_PROFILE_FIELD_DISPATCH(Opcode::ldfk, FieldReceiver::Struct, true);
+	JET_PROFILE_FIELD_DISPATCH(Opcode::ldfk, profile_field_receiver(object), true);
 	DISPATCH();
 }
 
@@ -2275,7 +2275,7 @@ JET_PRESERVE_NONE static void hashset_resolved_stfk_handler(VM_OP_PARAMS)
 		JET_MUSTTAIL return hashset_resolved_stfk_slow(VM_OP_ARGS);
 	}
 	pc += sizeof(*op);
-	JET_PROFILE_FIELD_DISPATCH(Opcode::stfk, FieldReceiver::Struct, true);
+	JET_PROFILE_FIELD_DISPATCH(Opcode::stfk, profile_field_receiver(object), true);
 	DISPATCH();
 }
 
@@ -2357,7 +2357,7 @@ JET_PRESERVE_NONE static void hashmap_resolved_ldfk_handler(VM_OP_PARAMS)
 	}
 	frame_regs[op->dst] = map->entry(position).value;
 	pc += sizeof(*op);
-	JET_PROFILE_FIELD_DISPATCH(Opcode::ldfk, FieldReceiver::Struct, true);
+	JET_PROFILE_FIELD_DISPATCH(Opcode::ldfk, profile_field_receiver(object), true);
 	DISPATCH();
 }
 
@@ -2378,7 +2378,7 @@ JET_PRESERVE_NONE static void hashmap_resolved_stfk_handler(VM_OP_PARAMS)
 	}
 	map->entry(position).value = frame_regs[op->val];
 	pc += sizeof(*op);
-	JET_PROFILE_FIELD_DISPATCH(Opcode::stfk, FieldReceiver::Struct, true);
+	JET_PROFILE_FIELD_DISPATCH(Opcode::stfk, profile_field_receiver(object), true);
 	DISPATCH();
 }
 

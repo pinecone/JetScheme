@@ -57,8 +57,15 @@ void trace_step(VmState& s, Frame* frame, Code* pc, Atom* stack_top);
 
 enum class FieldReceiver : uint8_t
 {
-	Container,
-	Struct,
+	Vector,
+	String,
+	Bytevector,
+	SchemeStruct,
+	Tuple,
+	HashSet,
+	HashMap,
+	Cursor,
+	Other,
 	Count
 };
 
@@ -204,6 +211,7 @@ struct ProfileGcTimer
 		g_profile.start_ns = profile_wall_ns();                                                                \
 	} while (0)
 
+FieldReceiver profile_field_receiver(Atom object);
 void profile_print();
 
 #else

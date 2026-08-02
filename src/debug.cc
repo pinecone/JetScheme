@@ -176,7 +176,9 @@ void profile_print()
 	}
 
 	constexpr Opcode field_ops[] = {Opcode::ldf, Opcode::stf, Opcode::ldfk, Opcode::stfk};
-	constexpr const char* field_receivers[] = {"container", "struct"};
+	constexpr const char* field_receivers[] = {
+		"vector", "string", "bytevector", "scheme", "tuple", "hashset", "hashmap", "cursor", "other",
+	};
 	std::fprintf(stderr, "\nfield IC outcomes:\n");
 	std::fprintf(stderr, " %-8s %-9s %12s %12s %12s %12s %12s\n", "opcode", "receiver", "total",
 	             "hit/hit", "hit/key-miss", "recv-miss/hit", "both-miss");
@@ -186,6 +188,10 @@ void profile_print()
 		for (size_t receiver = 0; receiver < static_cast<size_t>(FieldReceiver::Count); ++receiver)
 		{
 			const FieldProfile& field = g_profile.fields[op][receiver];
+			if (field.count == 0)
+			{
+				continue;
+			}
 			std::fprintf(stderr, " %-8s %-9s %12llu", profile_opcode_name(op).data(),
 			             field_receivers[receiver], static_cast<unsigned long long>(field.count));
 			for (uint64_t count : field.outcome_counts)
@@ -205,6 +211,10 @@ void profile_print()
 		for (size_t receiver = 0; receiver < static_cast<size_t>(FieldReceiver::Count); ++receiver)
 		{
 			const FieldProfile& field = g_profile.fields[op][receiver];
+			if (field.count == 0)
+			{
+				continue;
+			}
 			uint64_t ticks = 0;
 			for (uint64_t outcome_ticks : field.outcome_ticks)
 			{

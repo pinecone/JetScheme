@@ -984,9 +984,33 @@ static uint16_t type_bits(Atom a)
 }
 
 #ifdef JET_PROFILE
-static FieldReceiver profile_field_receiver(Atom object)
+FieldReceiver profile_field_receiver(Atom object)
 {
-	return object.tag() == jet_tag::struct_ ? FieldReceiver::Struct : FieldReceiver::Container;
+	switch (object.type())
+	{
+		case jet::Type::Vector:
+			return FieldReceiver::Vector;
+		case jet::Type::String:
+			return FieldReceiver::String;
+		case jet::Type::ByteVector:
+			return FieldReceiver::Bytevector;
+		case jet::Type::Struct:
+			switch (unbox<Struct>(object)->type->kind())
+			{
+				case StructKind::Scheme:
+					return FieldReceiver::SchemeStruct;
+				case StructKind::Tuple:
+					return FieldReceiver::Tuple;
+				case StructKind::HashSet:
+					return FieldReceiver::HashSet;
+				case StructKind::HashMap:
+					return FieldReceiver::HashMap;
+				case StructKind::Cursor:
+					return FieldReceiver::Cursor;
+			}
+		default:
+			return FieldReceiver::Other;
+	}
 }
 #endif
 
