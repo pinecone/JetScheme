@@ -338,6 +338,7 @@ void Gc::sweep()
 	{
 		if (test_bit(mark_bits, e->cell_idx))
 		{
+			clear_bit(mark_bits, e->cell_idx);
 			*out++ = *e;
 		}
 		else
@@ -368,7 +369,6 @@ void collect(VmState& s)
 	JET_PROFILE_GC;
 	JET_PROFILE_GC_TIMER;
 	Gc& gc = s.gc;
-	gc.begin_mark();
 
 	// Scan every frame-claimed slot, not just up to stack_top: enclosing frames
 	// reach above the innermost extent, and marking their stale slots keeps the

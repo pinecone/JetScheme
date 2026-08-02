@@ -252,14 +252,6 @@ struct Gc
 
 	template <typename T, typename... Args>
 	Atom alloc_tagged(Args&&... args);
-
-	void begin_mark()
-	{
-		for (ObjEntry* e = objects; e != objects_end; ++e)
-		{
-			clear_bit(mark_bits, e->cell_idx);
-		}
-	}
 };
 
 template <typename T>
