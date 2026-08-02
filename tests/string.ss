@@ -39,23 +39,6 @@
 ($check (string<=? "abc" "abc"))
 ($check (string>? "abd" "abc"))
 ($check (string>=? "abc" "abc"))
-($check (string-ci=? "AbC" "aBc"))
-($check (string-ci<? "abc" "ABD"))
-
-;; case
-($check (string=? "HELLO" (string-upcase "Hello")))
-($check (string=? "hello" (string-downcase "Hello")))
-($check (string=? "" (string-upcase "")))
-
-;; conversion
-($check (equal? '(#\a #\b #\c) (string->list "abc")))
-($check (equal? '(#\b #\c) (string->list "abc" 1)))
-($check (equal? '(#\b) (string->list "abc" 1 2)))
-($check (string=? "abc" (list->string '(#\a #\b #\c))))
-($check (string=? "" (list->string '())))
-
-($check (equal? #(#\a #\b #\c) (string->vector "abc")))
-($check (string=? "abc" (vector->string #(#\a #\b #\c))))
 
 ;; numbers
 ($check (= 42 (string->number "42")))

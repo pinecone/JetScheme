@@ -173,6 +173,7 @@ h3 {
    of the page rather than one more section of it. Mixed case wants the
    tracking closed up, not opened out. */
 #usage h1 {
+  grid-area: title;
   margin: 0 0 var(--sp-4) 0;
   font-family: var(--font-mark);
   font-optical-sizing: auto;
@@ -187,8 +188,42 @@ h3 {
     0 0 24px rgba(187, 154, 247, 0.24);
 }
 
-.quickstart-intro {
-  margin-bottom: var(--sp-2);
+.masthead {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  grid-template-areas:
+    "title ."
+    "tagline acquire";
+  align-items: baseline;
+  column-gap: var(--sp-8);
+}
+
+.acquire {
+  grid-area: acquire;
+  display: grid;
+  justify-self: end;
+  width: max-content;
+  max-width: 100%;
+  gap: var(--sp-1);
+  min-width: 0;
+  color: var(--fg-dark);
+  font-size: var(--fs-small);
+  line-height: calc(var(--sp-4) + var(--sp-1));
+}
+
+.acquire code {
+  display: grid;
+  grid-template-columns: var(--sp-4) minmax(0, 1fr);
+}
+
+.acquire code::before {
+  content: "$";
+  color: var(--comment);
+}
+
+.acquire code span {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .visually-hidden {
@@ -204,6 +239,7 @@ h3 {
 }
 
 .tagline {
+  grid-area: tagline;
   color: var(--fg-dark);
   font-size: var(--fs-base);
   line-height: var(--sp-5);
@@ -218,7 +254,7 @@ h3 {
 .perf-details {
   color: inherit;
   text-decoration-style: dotted;
-  text-decoration-color: var(--fg-gutter);
+  text-decoration-color: var(--comment);
 }
 
 .perf-details:hover {
@@ -246,7 +282,7 @@ a.cite {
   font-weight: 400;
   font-size: var(--fs-small);
   text-decoration-style: dotted;
-  text-decoration-color: var(--fg-gutter);
+  text-decoration-color: var(--comment);
 }
 a.cite:hover { color: var(--fg-dark); text-decoration-color: var(--fg-muted); }
 
@@ -348,17 +384,19 @@ pre code .b   { color: var(--blue); }
 pre code .n   { color: var(--orange); }
 pre code .s   { color: var(--green); }
 pre code .ch  { color: var(--green); }
-pre code .cmd { color: var(--blue); }
+code .cmd { color: var(--blue); }
 
 /* a link inside a terminal block keeps the block's own colour, and says
    it is a link with the underline alone */
-pre code a {
+pre code a,
+.acquire code a {
   color: inherit;
   text-decoration-style: dotted;
-  text-decoration-color: var(--fg-gutter);
+  text-decoration-color: var(--comment);
 }
 
-pre code a:hover {
+pre code a:hover,
+.acquire code a:hover {
   color: var(--cyan);
   text-decoration-color: var(--cyan);
 }
@@ -445,7 +483,7 @@ table {
   color: var(--fg-dark);
   font-family: var(--font-mono);
   text-decoration-style: dotted;
-  text-decoration-color: var(--fg-gutter);
+  text-decoration-color: var(--comment);
 }
 
 .legend a.commit:hover {
@@ -549,7 +587,7 @@ tfoot td:not(.m5) {
   height: 1px;
   background: repeating-linear-gradient(
     to right,
-    var(--fg-gutter) 0 1px,
+    var(--comment) 0 1px,
     transparent 1px 5px);
   -webkit-mask-image: linear-gradient(to right, transparent, black 4%, black 96%, transparent);
   mask-image: linear-gradient(to right, transparent, black 4%, black 96%, transparent);
@@ -674,6 +712,21 @@ footer {
   font-size: var(--fs-small);
   line-height: calc(var(--sp-4) + var(--sp-1));
   text-align: center;
+}
+
+@media (max-width: 800px) {
+  .masthead {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "title"
+      "tagline"
+      "acquire";
+  }
+
+  .acquire {
+    justify-self: start;
+    margin-top: var(--sp-4);
+  }
 }
 
 /* Smaller screens */

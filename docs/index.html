@@ -19,8 +19,14 @@
 <main>
 
 <section id="usage">
-  <h1>JetScheme</h1>
-  <p class="tagline">JetScheme is a small <a href="https://en.wikipedia.org/wiki/Scheme_(programming_language)">Scheme</a> implementation in ~10k lines of C++. It compiles in seconds, has no dependencies, and runs <a class="perf-details" href="#benchmarks">fast</a>:</p>
+  <div class="masthead">
+    <h1>JetScheme</h1>
+    <p class="tagline">A small, <a class="perf-details" href="#benchmarks">fast</a>, single-executable <a href="https://en.wikipedia.org/wiki/Scheme_(programming_language)">Scheme</a>.</p>
+    <div class="acquire" role="group" aria-label="Clone and build JetScheme">
+      <code><span><span class="cmd">git</span> clone <a href="https://github.com/pinecone/JetScheme">https://github.com/pinecone/JetScheme</a></span></code>
+      <code><span><span class="cmd">cd</span> JetScheme &amp;&amp; <span class="cmd">make</span></span></code>
+    </div>
+  </div>
   <figure class="scale">
     <div class="scale-track" role="img"
          aria-label="Speed relative to jet: python is 2.5 times slower, lua 2.2 times slower, and jsc 2.6 times faster.">
@@ -50,45 +56,30 @@
       <div class="scale-ends"><span>&larr; slower</span><span>faster &rarr;</span></div>
     </div>
   </figure>
-  <p class="quickstart-intro">Try it out:</p>
-<pre><code><span class="cmd">git</span> clone <a href="https://github.com/pinecone/JetScheme">https://github.com/pinecone/JetScheme.git</a>
-<span class="cmd">cd</span> JetScheme
-<span class="cmd">make</span> test
-<span class="cmd">build/jet</span> some-file.ss</code></pre>
 
 </section>
 
 <section id="docs">
-  <h2 class="visually-hidden">Language reference</h2>
-  <p>JetScheme is close to R7RS-small, with lexical scope, first-class
-  functions, and proper tail calls. Deep tail recursion runs in constant
-  stack space.</p>
-<pre><code>(<span class="k">define</span> (<span class="b">make-counter</span>)
-  (<span class="k">let</span> ((n <span class="n">0</span>))
-    (<span class="k">lambda</span> ()
-      (<span class="k">set!</span> n (+ n <span class="n">1</span>))
-      n)))
+  <h2>Language</h2>
+  <p>On top of Scheme's familiar lexical scope, lambdas, and proper tail calls, JetScheme adds
+  fast generic access for containers and structs through <code>ref</code> and <code>setf!</code>,
+  along with deterministic iteration that stays valid as mutable containers change.</p>
+<pre><code>(<span class="k">define</span> (<span class="b">find</span> matches? items)
+  (<span class="k">cond</span>
+    ((<span class="b">null?</span> items)
+     #f)
+    ((matches? (<span class="b">first</span> items))
+     (<span class="b">first</span> items))
+    (<span class="k">else</span>
+     (<span class="b">find</span> matches? (<span class="b">rest</span> items)))))
 
-(<span class="k">define</span> a (<span class="b">make-counter</span>))
-(<span class="k">define</span> b (<span class="b">make-counter</span>))
-
-(<span class="b">displayn</span> (<span class="b">list</span> (a) (a) (b)))                    <span class="c">; prints (1 2 1) — b kept its own n</span></code></pre>
-
-  <p><strong>Forms.</strong> The forms are <code>quote</code>, <code>define</code>, <code>lambda</code>,
-  <code>if</code>, <code>begin</code>, <code>let</code>, <code>let*</code>,
-  <code>letrec</code>, <code>letrec*</code> (plus named <code>let</code>),
-  <code>set!</code>, <code>and</code>, <code>or</code>, <code>cond</code> with
-  <code>else</code>, <code>when</code>, <code>unless</code>,
-  <code>quasiquote</code>, and <code>include</code>, which reads in another
-  source file. <code>apply</code> calls a procedure with an argument list you
-  build at runtime.</p>
+(<span class="b">display</span> (<span class="b">find</span> <span class="b">even?</span> '(<span class="n">1</span> <span class="n">3</span> <span class="n">8</span> <span class="n">9</span>)))</code></pre>
 
   <p><strong>All numbers are 64-bit doubles.</strong> <code>exact?</code> and
   <code>integer?</code> answer <code>#t</code> for every integral value.</p>
   <p><strong>Strings are immutable and byte-level UTF-8.</strong>
   <code>string-length</code> and <code>string-ref</code> are byte-indexed, and
-  comparison sorts by codepoint. Case conversion and character classes cover
-  ASCII.</p>
+  comparison sorts by codepoint. Character classes cover ASCII.</p>
   <p><strong><code>ref</code> and <code>setf!</code> are generic accessors.</strong>
   <code>(ref v i)</code> reads and <code>(setf! v i x)</code> stores <code>x</code> at
   key <code>i</code> in <code>v</code>. Vectors, strings, bytevectors, and tuples
@@ -151,12 +142,7 @@
   <code>substring</code>, <code>string-copy</code>,
   <code>string-length</code>; index with <code>ref</code>.
   Comparisons are case-sensitive (<code>string=?</code>,
-  <code>string&lt;?</code>, &hellip;) or case-insensitive
-  (<code>string-ci=?</code>, &hellip;). There are also
-  <code>string-upcase</code>, <code>string-downcase</code>, and conversions
-  between strings, lists, and vectors (<code>string-&gt;list</code>,
-  <code>list-&gt;string</code>, <code>string-&gt;vector</code>,
-  <code>vector-&gt;string</code>).</p>
+  <code>string&lt;?</code>, &hellip;).</p>
   <p>Characters: <code>char-&gt;integer</code>, <code>integer-&gt;char</code>,
   comparisons (<code>char=?</code>, <code>char-ci=?</code>, &hellip;),
   predicates <code>char-alphabetic?</code>,

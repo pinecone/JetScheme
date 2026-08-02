@@ -15,7 +15,6 @@
 #include <cstdio>
 #include <iomanip>
 #include <optional>
-#include <strings.h>
 #include <random>
 #include <unordered_set>
 
@@ -1068,91 +1067,6 @@ static Atom string_folding_pred(Atom* first, Atom* last)
 	return box(result);
 }
 
-static int ci_cmp(String& a, String& b)
-{
-	if (int r = strncasecmp(a.data(), b.data(), std::min(a.size(), b.size())); r != 0)
-	{
-		return r;
-	}
-	return a.size() < b.size() ? -1 : a.size() > b.size() ? 1 : 0;
-}
-
-struct str_ci_eq { bool operator()(String& a, String& b) { return ci_cmp(a, b) == 0; } };
-struct str_ci_lt { bool operator()(String& a, String& b) { return ci_cmp(a, b) <  0; } };
-struct str_ci_le { bool operator()(String& a, String& b) { return ci_cmp(a, b) <= 0; } };
-struct str_ci_gt { bool operator()(String& a, String& b) { return ci_cmp(a, b) >  0; } };
-struct str_ci_ge { bool operator()(String& a, String& b) { return ci_cmp(a, b) >= 0; } };
-
-static Atom string_upcase(Atom s)
-{
-	auto&& to_upper_byte = [](unsigned char c) { return std::toupper(c); };
-	String out = *slow_unbox<String>(s);
-	std::transform(out.begin(), out.end(), out.begin(), to_upper_byte);
-	return box(out);
-}
-
-static Atom string_downcase(Atom s)
-{
-	auto&& to_lower_byte = [](unsigned char c) { return std::tolower(c); };
-	String out = *slow_unbox<String>(s);
-	std::transform(out.begin(), out.end(), out.begin(), to_lower_byte);
-	return box(out);
-}
-
-static Atom string_to_list(Atom* first, Atom* last)
-{
-	String& s = *slow_unbox<String>(first[0]);
-	size_t start = last - first >= 2 ? static_cast<size_t>(slow_unbox<Number>(first[1])) : 0;
-	size_t end = last - first >= 3 ? static_cast<size_t>(slow_unbox<Number>(first[2])) : s.size();
-	JET_DIE_UNLESS(start <= end && end <= s.size(), "string->list: bad range");
-	Atom result = box(EmptyList{});
-	for (size_t i = end; i > start; --i)
-	{
-		result = cons(box(static_cast<Character>(static_cast<uint8_t>(s[i - 1]))), result);
-	}
-	return result;
-}
-
-static Atom list_to_string(Atom lst)
-{
-	String out;
-	for (Atom x = lst; !is_type<jet::Type::EmptyList>(x); x = cdr(x))
-	{
-		out += static_cast<char>(slow_unbox<Character>(car(x)));
-	}
-	return box(out);
-}
-
-static Atom string_to_vector(Atom* first, Atom* last)
-{
-	String& s = *slow_unbox<String>(first[0]);
-	size_t start = last - first >= 2 ? static_cast<size_t>(slow_unbox<Number>(first[1])) : 0;
-	size_t end = last - first >= 3 ? static_cast<size_t>(slow_unbox<Number>(first[2])) : s.size();
-	JET_DIE_UNLESS(start <= end && end <= s.size(), "string->vector: bad range");
-	Vec v;
-	v.reserve(end - start);
-	for (size_t i = start; i < end; ++i)
-	{
-		v.push_back(box(static_cast<Character>(static_cast<uint8_t>(s[i]))));
-	}
-	return box(v);
-}
-
-static Atom vector_to_string(Atom* first, Atom* last)
-{
-	Vec& v = *slow_unbox<Vec>(first[0]);
-	size_t start = last - first >= 2 ? static_cast<size_t>(slow_unbox<Number>(first[1])) : 0;
-	size_t end = last - first >= 3 ? static_cast<size_t>(slow_unbox<Number>(first[2])) : v.size();
-	JET_DIE_UNLESS(start <= end && end <= v.size(), "vector->string: bad range");
-	String out;
-	out.reserve(end - start);
-	for (size_t i = start; i < end; ++i)
-	{
-		out += static_cast<char>(slow_unbox<Character>(v[i]));
-	}
-	return box(out);
-}
-
 static Atom string_to_number(Atom* first, Atom* last)
 {
 	String& s = *slow_unbox<String>(first[0]);
@@ -1217,17 +1131,6 @@ void init_strings(Env& e)
 	e.bind("string<=?", make_prim<string_folding_pred<std::less_equal<String>>>(at_least(2)));
 	e.bind("string>?", make_prim<string_folding_pred<std::greater<String>>>(at_least(2)));
 	e.bind("string>=?", make_prim<string_folding_pred<std::greater_equal<String>>>(at_least(2)));
-	e.bind("string-ci=?", make_prim<string_folding_pred<str_ci_eq>>(at_least(2)));
-	e.bind("string-ci<?", make_prim<string_folding_pred<str_ci_lt>>(at_least(2)));
-	e.bind("string-ci<=?", make_prim<string_folding_pred<str_ci_le>>(at_least(2)));
-	e.bind("string-ci>?", make_prim<string_folding_pred<str_ci_gt>>(at_least(2)));
-	e.bind("string-ci>=?", make_prim<string_folding_pred<str_ci_ge>>(at_least(2)));
-	e.bind("string-upcase", make_prim<string_upcase>());
-	e.bind("string-downcase", make_prim<string_downcase>());
-	e.bind("string->list", make_prim<string_to_list>(at_least(1)));
-	e.bind("list->string", make_prim<list_to_string>());
-	e.bind("string->vector", make_prim<string_to_vector>(at_least(1)));
-	e.bind("vector->string", make_prim<vector_to_string>(at_least(1)));
 	e.bind("string->number", make_prim<string_to_number>(at_least(1)));
 	e.bind("number->string", make_prim<number_to_string>(at_least(1)));
 }
