@@ -1943,13 +1943,10 @@ static Atom hashmap_lookup(Struct* instance, Atom key)
 	return map->entry(it->second).value;
 }
 
-static void hashset_insert(Struct* instance, Atom key, Atom value)
+static void hashset_insert_key(HashSet* set, const TableKey& key)
 {
-	JET_DIE_UNLESS(value.bits == box(true).bits, "setf!: a hashset element can only be set to #t");
-	HashSet* set = static_cast<HashSet*>(instance);
-	TableKey table_key = make_key(key);
 	size_t position = set->last;
-	auto [it, inserted] = set->index.try_emplace(table_key, position);
+	auto [it, inserted] = set->index.try_emplace(key, position);
 	if (!inserted)
 	{
 		return;
@@ -1960,9 +1957,16 @@ static void hashset_insert(Struct* instance, Atom key, Atom value)
 	{
 		set->live_words.push_back(0);
 	}
-	set->entries.push_back(table_key);
+	set->entries.push_back(key);
 	set_bit(&set->live_words[word - set->first / 64], position % 64);
 	++set->last;
+}
+
+static void hashset_insert(Struct* instance, Atom key, Atom value)
+{
+	JET_DIE_UNLESS(value.bits == box(true).bits, "setf!: a hashset element can only be set to #t");
+	HashSet* set = static_cast<HashSet*>(instance);
+	hashset_insert_key(set, make_key(key));
 }
 
 static void hashmap_insert(Struct* instance, Atom key, Atom value)
@@ -2223,10 +2227,12 @@ JET_PRESERVE_NONE static void hashset_stf_handler(VM_OP_PARAMS)
 		JET_MUSTTAIL return hashset_stf_bad_value(VM_OP_ARGS);
 	}
 	HashSet* set = static_cast<HashSet*>(unbox<Struct>(callee));
-	if (hashset_find_fast(set, frame_regs[op->key]) != FastFind::Found) [[unlikely]]
+	std::optional<FastKey> key = make_fast_key(frame_regs[op->key]);
+	if (!key) [[unlikely]]
 	{
 		JET_MUSTTAIL return hashset_stf_slow(VM_OP_ARGS);
 	}
+	hashset_insert_key(set, key->key);
 	DISPATCH();
 }
 
@@ -2270,10 +2276,12 @@ JET_PRESERVE_NONE static void hashset_resolved_stfk_handler(VM_OP_PARAMS)
 		JET_MUSTTAIL return hashset_resolved_stfk_bad_value(VM_OP_ARGS);
 	}
 	HashSet* set = static_cast<HashSet*>(unbox<Struct>(object));
-	if (hashset_find_fast(set, s.constants[op->key_idx]) != FastFind::Found) [[unlikely]]
+	std::optional<FastKey> key = make_fast_key(s.constants[op->key_idx]);
+	if (!key) [[unlikely]]
 	{
 		JET_MUSTTAIL return hashset_resolved_stfk_slow(VM_OP_ARGS);
 	}
+	hashset_insert_key(set, key->key);
 	pc += sizeof(*op);
 	JET_PROFILE_FIELD_DISPATCH(Opcode::stfk, profile_field_receiver(object), true);
 	DISPATCH();
