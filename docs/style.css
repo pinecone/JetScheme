@@ -724,8 +724,10 @@ footer {
   }
 
   .acquire {
-    justify-self: start;
+    justify-self: stretch;
+    width: auto;
     margin-top: var(--sp-4);
+    font-size: clamp(var(--fs-micro), 3.4vw, var(--fs-small));
   }
 }
 
@@ -759,12 +761,12 @@ footer {
 
   .scale-mark-python .scale-name,
   .scale-mark-python .scale-mult {
-    transform: translateX(calc(0rem - var(--sp-2)));
+    transform: translateX(calc(0rem - var(--sp-4)));
   }
 
   .scale-mark-lua .scale-name,
   .scale-mark-lua .scale-mult {
-    transform: translateX(var(--sp-2));
+    transform: translateX(var(--sp-4));
   }
 
   /* too narrow for end caps on the axis -- the left one would reach the
