@@ -394,20 +394,21 @@ static const StructOps vector_cursor_struct_ops = {
 	print_cursor,
 };
 
-static bool equal_hashset_cursor(EqualContext&, Struct* first, Struct* second, EqualRecur)
+template <typename Entry>
+static bool equal_table_cursor(EqualContext&, Struct* first, Struct* second, EqualRecur)
 {
-	HashSetCursor* a = static_cast<HashSetCursor*>(first);
-	HashSetCursor* b = static_cast<HashSetCursor*>(second);
+	TableCursor<Entry>* a = static_cast<TableCursor<Entry>*>(first);
+	TableCursor<Entry>* b = static_cast<TableCursor<Entry>*>(second);
 	if (!is_eq(a->target, b->target))
 	{
 		return false;
 	}
-	if (!a->set || !b->set)
+	if (!a->table || !b->table)
 	{
-		return a->set == b->set;
+		return a->table == b->table;
 	}
-	size_t a_position = std::clamp(a->set->cursor_positions[a->slot], a->set->first, a->set->last);
-	size_t b_position = std::clamp(b->set->cursor_positions[b->slot], b->set->first, b->set->last);
+	size_t a_position = std::clamp(a->table->cursor_positions[a->slot], a->table->first, a->table->last);
+	size_t b_position = std::clamp(b->table->cursor_positions[b->slot], b->table->first, b->table->last);
 	return a_position == b_position;
 }
 
@@ -416,34 +417,17 @@ static const StructOps hashset_cursor_struct_ops = {
 	private_cursor_constructor,
 	{},
 	struct_destructor<HashSetCursor>(),
-	equal_hashset_cursor,
+	equal_table_cursor<TableKey>,
 	print_cursor,
 	print_cursor,
 };
-
-static bool equal_hashmap_cursor(EqualContext&, Struct* first, Struct* second, EqualRecur)
-{
-	HashMapCursor* a = static_cast<HashMapCursor*>(first);
-	HashMapCursor* b = static_cast<HashMapCursor*>(second);
-	if (!is_eq(a->target, b->target))
-	{
-		return false;
-	}
-	if (!a->map || !b->map)
-	{
-		return a->map == b->map;
-	}
-	size_t a_position = std::clamp(a->map->cursor_positions[a->slot], a->map->first, a->map->last);
-	size_t b_position = std::clamp(b->map->cursor_positions[b->slot], b->map->first, b->map->last);
-	return a_position == b_position;
-}
 
 static const StructOps hashmap_cursor_struct_ops = {
 	StructKind::Cursor,
 	private_cursor_constructor,
 	{},
 	struct_destructor<HashMapCursor>(),
-	equal_hashmap_cursor,
+	equal_table_cursor<HashMapEntry>,
 	print_cursor,
 	print_cursor,
 };
@@ -1945,21 +1929,7 @@ static Atom hashmap_lookup(Struct* instance, Atom key)
 
 static void hashset_insert_key(HashSet* set, const TableKey& key)
 {
-	size_t position = set->last;
-	auto [it, inserted] = set->index.try_emplace(key, position);
-	if (!inserted)
-	{
-		return;
-	}
-
-	size_t word = position / 64;
-	if (word == set->first / 64 + set->live_words.size())
-	{
-		set->live_words.push_back(0);
-	}
-	set->entries.push_back(key);
-	set_bit(&set->live_words[word - set->first / 64], position % 64);
-	++set->last;
+	set->try_insert(key);
 }
 
 static void hashset_insert(Struct* instance, Atom key, Atom value)
@@ -1972,60 +1942,10 @@ static void hashset_insert(Struct* instance, Atom key, Atom value)
 static void hashmap_insert(Struct* instance, Atom key, Atom value)
 {
 	HashMap* map = static_cast<HashMap*>(instance);
-	TableKey table_key = make_key(key);
-	size_t position = map->last;
-	auto [it, inserted] = map->index.try_emplace(table_key, position);
+	auto [position, inserted] = map->try_insert({make_key(key), value});
 	if (!inserted)
 	{
-		map->entry(it->second).value = value;
-		return;
-	}
-
-	size_t word = position / 64;
-	if (word == map->first / 64 + map->live_words.size())
-	{
-		map->live_words.push_back(0);
-	}
-	map->entries.push_back({table_key, value});
-	set_bit(&map->live_words[word - map->first / 64], position % 64);
-	++map->last;
-}
-
-static void hashset_trim(HashSet& set)
-{
-	size_t old_last = set.last;
-	while (set.first < set.last && !set.is_live(set.first))
-	{
-		set.entries.pop_front();
-		++set.first;
-		if (set.first % 64 == 0)
-		{
-			set.live_words.pop_front();
-		}
-	}
-	while (set.first < set.last && !set.is_live(set.last - 1))
-	{
-		set.entries.pop_back();
-		--set.last;
-	}
-	if (set.first == set.last)
-	{
-		set.live_words.clear();
-	}
-	else
-	{
-		size_t final_word = (set.last - 1) / 64;
-		while (set.first / 64 + set.live_words.size() - 1 > final_word)
-		{
-			set.live_words.pop_back();
-		}
-	}
-	if (set.last < old_last)
-	{
-		for (size_t& position : set.cursor_positions)
-		{
-			position = std::min(position, set.last);
-		}
+		map->entry(position).value = value;
 	}
 }
 
@@ -2042,56 +1962,9 @@ static Atom hashset_unset(Atom object, Atom key)
 	Struct* instance = slow_unbox<Struct>(object);
 	JET_DIE_UNLESS(instance->type->kind() == StructKind::HashSet,
 	               "hashset-unset!: expected a hashset");
-	HashSet& set = *static_cast<HashSet*>(instance);
-	auto it = set.index.find(make_key(key));
-	if (it == set.index.end())
-	{
-		return {};
-	}
-	size_t position = it->second;
-	set.index.erase(it);
-	clear_bit(&set.live_words[position / 64 - set.first / 64], position % 64);
-	set.entry(position) = {};
-	hashset_trim(set);
+	HashSet* set = static_cast<HashSet*>(instance);
+	set->erase(make_key(key));
 	return {};
-}
-
-static void hashmap_trim(HashMap& map)
-{
-	size_t old_last = map.last;
-	while (map.first < map.last && !map.is_live(map.first))
-	{
-		map.entries.pop_front();
-		++map.first;
-		if (map.first % 64 == 0)
-		{
-			map.live_words.pop_front();
-		}
-	}
-	while (map.first < map.last && !map.is_live(map.last - 1))
-	{
-		map.entries.pop_back();
-		--map.last;
-	}
-	if (map.first == map.last)
-	{
-		map.live_words.clear();
-	}
-	else
-	{
-		size_t final_word = (map.last - 1) / 64;
-		while (map.first / 64 + map.live_words.size() - 1 > final_word)
-		{
-			map.live_words.pop_back();
-		}
-	}
-	if (map.last < old_last)
-	{
-		for (size_t& position : map.cursor_positions)
-		{
-			position = std::min(position, map.last);
-		}
-	}
 }
 
 static Atom hashmap_unset(Atom object, Atom key)
@@ -2099,17 +1972,8 @@ static Atom hashmap_unset(Atom object, Atom key)
 	Struct* instance = slow_unbox<Struct>(object);
 	JET_DIE_UNLESS(instance->type->kind() == StructKind::HashMap,
 	               "hashmap-unset!: expected a hashmap");
-	HashMap& map = *static_cast<HashMap*>(instance);
-	auto it = map.index.find(make_key(key));
-	if (it == map.index.end())
-	{
-		return {};
-	}
-	size_t position = it->second;
-	map.index.erase(it);
-	clear_bit(&map.live_words[position / 64 - map.first / 64], position % 64);
-	map.entry(position) = {};
-	hashmap_trim(map);
+	HashMap* map = static_cast<HashMap*>(instance);
+	map->erase(make_key(key));
 	return {};
 }
 

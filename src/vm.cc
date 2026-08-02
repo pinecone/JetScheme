@@ -863,11 +863,11 @@ JET_PRESERVE_NONE static void hashset_cursor_next1(VM_OP_PARAMS)
 {
 	OP_iter_next1* op = reinterpret_cast<OP_iter_next1*>(pc - sizeof(OP_iter_next1));
 	HashSetCursor* cursor = static_cast<HashSetCursor*>(unbox<Struct>(callee));
-	if (!cursor->set) [[unlikely]]
+	if (!cursor->table) [[unlikely]]
 	{
 		JET_MUSTTAIL return die_iter_exhausted(VM_OP_ARGS);
 	}
-	HashSet& set = *cursor->set;
+	HashSet& set = *cursor->table;
 	size_t first = set.first;
 	size_t last = set.last;
 	size_t& cursor_position = set.cursor_positions[cursor->slot];
@@ -902,11 +902,11 @@ JET_PRESERVE_NONE static void hashmap_cursor_next2(VM_OP_PARAMS)
 {
 	OP_iter_next2* op = reinterpret_cast<OP_iter_next2*>(pc - sizeof(OP_iter_next2));
 	HashMapCursor* cursor = static_cast<HashMapCursor*>(unbox<Struct>(callee));
-	if (!cursor->map) [[unlikely]]
+	if (!cursor->table) [[unlikely]]
 	{
 		JET_MUSTTAIL return die_iter_exhausted(VM_OP_ARGS);
 	}
-	HashMap& map = *cursor->map;
+	HashMap& map = *cursor->table;
 	size_t first = map.first;
 	size_t last = map.last;
 	size_t& cursor_position = map.cursor_positions[cursor->slot];
