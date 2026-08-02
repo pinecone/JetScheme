@@ -87,9 +87,47 @@ inline void set_bit(uint64_t* bits, size_t i)
 	bits[i / 64] |= 1ULL << (i % 64);
 }
 
+inline void set_bits(uint64_t* bits, size_t start, size_t n)
+{
+	size_t word = start / 64;
+	size_t offset = start % 64;
+	size_t head = 64 - offset;
+	if (n <= head) [[likely]]
+	{
+		bits[word] |= (n == 64 ? ~0ULL : (1ULL << n) - 1) << offset;
+		return;
+	}
+	bits[word] |= ~0ULL << offset;
+	for (size_t rest = n - head; rest != 0;)
+	{
+		size_t take = rest < 64 ? rest : 64;
+		bits[++word] |= take == 64 ? ~0ULL : (1ULL << take) - 1;
+		rest -= take;
+	}
+}
+
 inline void clear_bit(uint64_t* bits, size_t i)
 {
 	bits[i / 64] &= ~(1ULL << (i % 64));
+}
+
+inline void clear_bits(uint64_t* bits, size_t start, size_t n)
+{
+	size_t word = start / 64;
+	size_t offset = start % 64;
+	size_t head = 64 - offset;
+	if (n <= head) [[likely]]
+	{
+		bits[word] &= ~((n == 64 ? ~0ULL : (1ULL << n) - 1) << offset);
+		return;
+	}
+	bits[word] &= ~(~0ULL << offset);
+	for (size_t rest = n - head; rest != 0;)
+	{
+		size_t take = rest < 64 ? rest : 64;
+		bits[++word] &= take == 64 ? 0ULL : ~((1ULL << take) - 1);
+		rest -= take;
+	}
 }
 
 inline bool test_bit(const uint64_t* bits, size_t i)
@@ -163,10 +201,7 @@ struct Gc
 		}
 		freelist[tag][n] = *static_cast<void**>(mem);
 		uint32_t start = static_cast<uint32_t>((static_cast<char*>(mem) - arena_base) / CELL_SIZE);
-		for (size_t i = 0; i < n; ++i)
-		{
-			set_bit(live_bits, start + i);
-		}
+		set_bits(live_bits, start, n);
 		*objects_end++ = {start, static_cast<uint32_t>(n), destructor_id, static_cast<uint8_t>(tag)};
 		++alloc_since_gc;
 		return mem;

@@ -184,10 +184,7 @@ void* Gc::alloc_slow(size_t n, int tag, uint16_t destructor_id)
 		mem = arena_base + static_cast<size_t>(start) * CELL_SIZE;
 	}
 
-	for (size_t i = 0; i < n; ++i)
-	{
-		set_bit(live_bits, start + i);
-	}
+	set_bits(live_bits, start, n);
 
 	if (objects_end == objects_cap)
 	{
@@ -347,10 +344,7 @@ void Gc::sweep()
 		{
 			void* obj = arena_base + static_cast<size_t>(e->cell_idx) * CELL_SIZE;
 			destroy_object(*e, obj, struct_destructor_table);
-			for (uint32_t k = 0; k < e->n_cells; ++k)
-			{
-				clear_bit(live_bits, e->cell_idx + k);
-			}
+			clear_bits(live_bits, e->cell_idx, e->n_cells);
 			if (e->n_cells < Gc::N_BUCKETS)
 			{
 				*static_cast<void**>(obj) = freelist[e->tag][e->n_cells];
