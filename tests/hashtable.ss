@@ -5,12 +5,14 @@
 (define empty-set (hashset))
 ($check (hashmap? empty-map))
 ($check (hashset? empty-set))
+($check (= 0 (hashset-length empty-set)))
 
 (define m (hashmap 'a 1 'b 2))
 ($check (= 1 (ref m 'a)))
 ($check (= 2 (ref m 'b)))
 
 (define s (hashset 'a 'b))
+($check (= 2 (hashset-length s)))
 ($check (ref s 'a))
 ($check (not (ref s 'c)))
 
@@ -25,6 +27,7 @@
 ;; Duplicate keys collapse; for a map the last value wins.
 ($check (= 3 (ref (hashmap 'k 1 'k 2 'k 3) 'k)))
 ($check (ref (hashset 'k 'k) 'k))
+($check (= 1 (hashset-length (hashset 'k 'k))))
 
 ;; setf! inserts and overwrites.
 (define counters (hashmap))
@@ -43,9 +46,11 @@
 ($check (ref removable-set 'kept))
 ($check (ref removable-set 'removed))
 (hashset-unset! removable-set 'removed)
+($check (= 1 (hashset-length removable-set)))
 ($check (ref removable-set 'kept))
 ($check (not (ref removable-set 'removed)))
 (setf! removable-set 'removed #t)
+($check (= 2 (hashset-length removable-set)))
 ($check (ref removable-set 'removed))
 
 ;; #f is a storable value, distinct from absence.

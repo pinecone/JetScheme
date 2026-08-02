@@ -2029,6 +2029,14 @@ static void hashset_trim(HashSet& set)
 	}
 }
 
+static Number hashset_length(Atom object)
+{
+	Struct* instance = slow_unbox<Struct>(object);
+	JET_DIE_UNLESS(instance->type->kind() == StructKind::HashSet,
+	               "hashset-length: expected a hashset");
+	return static_cast<Number>(static_cast<HashSet*>(instance)->index.size());
+}
+
 static Atom hashset_unset(Atom object, Atom key)
 {
 	Struct* instance = slow_unbox<Struct>(object);
@@ -2581,6 +2589,7 @@ void init_structs(Env& e)
 	HashMapCursor::type_atom = hashmap_cursor_type;
 	e.bind("hashset?", make_prim<is_kind<StructKind::HashSet>>());
 	e.bind("hashmap?", make_prim<is_kind<StructKind::HashMap>>());
+	e.bind("hashset-length", make_prim<hashset_length>());
 	e.bind("hashset-unset!", make_prim<hashset_unset>());
 	e.bind("hashmap-unset!", make_prim<hashmap_unset>());
 	e.bind("struct", make_prim<struct_ctor>());

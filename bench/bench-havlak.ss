@@ -17,15 +17,7 @@
 (define loop-graph (struct 'loop-graph '(root loops)))
 (define union-node (struct 'union-node '(parent block number loop)))
 (define finder
-  (struct 'finder
-          '(cfg loops non-back non-back-count back number header kind last nodes)))
-
-(define (hashset-add! set key)
-  (if (ref set key)
-      #f
-      (begin
-        (setf! set key #t)
-        #t)))
+  (struct 'finder '(cfg loops non-back back number header kind last nodes)))
 
 (define (make-cfg) (cfg (vector) #f))
 
@@ -90,8 +82,7 @@
   (calculate-loop! (ref graph 'root) 0))
 
 (define (make-finder graph loops)
-  (finder graph loops (vector) (vector) (vector) (hashmap)
-          (vector) (vector) (vector) (vector)))
+  (finder graph loops (vector) (vector) (hashmap) (vector) (vector) (vector) (vector)))
 
 (define (find-set state number)
   (let find ((current number) (path '()))
@@ -128,7 +119,6 @@
          (blocks (ref graph 'blocks))
          (size (vector-length blocks))
          (non-back (make-vector size #f))
-         (non-back-count (make-vector size 0))
          (back (make-vector size #f))
          (numbers (hashmap))
          (headers (make-vector size 0))
@@ -136,7 +126,6 @@
          (lasts (make-vector size 0))
          (nodes (make-vector size #f)))
     (setf! state 'non-back non-back)
-    (setf! state 'non-back-count non-back-count)
     (setf! state 'back back)
     (setf! state 'number numbers)
     (setf! state 'header headers)
@@ -165,8 +154,7 @@
                           (if (not (= v UNVISITED))
                               (if (and (<= w v) (<= v (ref lasts w)))
                                   (vector-push! (ref back w) v)
-                                  (if (hashset-add! (ref non-back w) v)
-                                      (setf! non-back-count w (+ (ref non-back-count w) 1)))))
+                                  (setf! (ref non-back w) v #t)))
                           (edges (+ i 1)))))))
             (identify (+ w 1)))))
 
@@ -195,7 +183,7 @@
                         (let* ((x (ref pool at))
                                (x-number (ref (ref nodes x) 'number))
                                (pred-set (ref non-back x-number)))
-                          (if (> (ref non-back-count x-number) MAX-NON-BACK-PREDS)
+                          (if (> (hashset-length pred-set) MAX-NON-BACK-PREDS)
                               (begin (displayn "too many non-back predecessors") (exit 1)))
                           (let visit-preds ((cursor (%iter pred-set)))
                             (%iter-next! cursor (pred)
@@ -205,9 +193,7 @@
                                               (<= root-number (ref lasts w))))
                                     (begin
                                       (setf! kinds w IRREDUCIBLE)
-                                      (if (hashset-add! (ref non-back w) root-number)
-                                          (setf! non-back-count w
-                                                 (+ (ref non-back-count w) 1))))
+                                      (setf! (ref non-back w) root-number #t))
                                     (if (and (not (= root w))
                                              (not (ref pool-ids root)))
                                         (begin

@@ -279,6 +279,7 @@
 (define hashmap (%prim "hashmap"))
 (define hashset? (%prim "hashset?"))
 (define hashmap? (%prim "hashmap?"))
+(define hashset-length (%prim "hashset-length"))
 (define hashset-unset! (%prim "hashset-unset!"))
 (define hashmap-unset! (%prim "hashmap-unset!"))
 
