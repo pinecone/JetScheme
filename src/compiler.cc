@@ -58,6 +58,7 @@ enum class TokenKind : uint8_t
 	Let,
 	LetStar,
 	Letrec,
+	LetEc,
 	Begin,
 	When,
 	Unless,
@@ -195,6 +196,8 @@ struct UpvalueRef
 
 using ExprId = uint32_t;
 constexpr ExprId NO_EXPR = ~uint32_t{0};
+
+constexpr std::string_view RESET_PRIM = "%reset";
 
 enum class ExprKind : uint8_t
 {
@@ -885,6 +888,7 @@ namespace
 				{"let*",    TokenKind::LetStar},
 				{"letrec",  TokenKind::Letrec},
 				{"letrec*", TokenKind::Letrec},
+				{"let/ec",  TokenKind::LetEc},
 				{"begin",   TokenKind::Begin},
 				{"when",    TokenKind::When},
 				{"unless",  TokenKind::Unless},
@@ -1238,6 +1242,8 @@ namespace
 					return parse_let_star(loc);
 				case TokenKind::Letrec:
 					return parse_let_form(loc, ExprKind::Letrec);
+				case TokenKind::LetEc:
+					return parse_let_ec(loc);
 				case TokenKind::Begin:
 					return parse_begin(loc);
 				case TokenKind::When:
@@ -1474,6 +1480,58 @@ namespace
 			}
 			expect(TokenKind::RParen);
 
+			Expr* e = make_expr(ExprKind::Call, loc);
+			e->call.proc = proc;
+			e->call.args = make_slice(args);
+			return e;
+		}
+
+		// (let/ec k ((a v) ...) body ...)
+		//   ==> (%reset (lambda (k) (let ((a v) ...) body ...)))
+		// The body must be a real lambda: `reset` gives it a frame of its own, so tail
+		// calls inside it reuse that frame instead of the one holding the escape.
+		Expr* parse_let_ec(SourceLoc loc)
+		{
+			advance();
+
+			std::string_view escape_name = expect_identifier("let/ec");
+			expect(TokenKind::LParen);
+
+			std::vector<std::string_view> names;
+			std::vector<Expr*> vals;
+			while (peek().kind != TokenKind::RParen)
+			{
+				expect(TokenKind::LParen);
+				names.push_back(expect_identifier("let/ec binding"));
+				vals.push_back(parse_expr());
+				expect(TokenKind::RParen);
+			}
+			expect(TokenKind::RParen);
+
+			std::vector<Expr*> body;
+			while (peek().kind != TokenKind::RParen)
+			{
+				body.push_back(parse_expr());
+			}
+			expect(TokenKind::RParen);
+
+			Expr* inner = make_expr(ExprKind::Let, loc);
+			inner->let.names = make_string_slice(names);
+			inner->let.vals = make_slice(vals);
+			inner->let.body = make_slice(body);
+
+			std::vector<std::string_view> params{escape_name};
+			std::vector<Expr*> lambda_body{inner};
+			Expr* lam = make_expr(ExprKind::Lambda, loc);
+			lam->lambda.params = make_string_slice(params);
+			lam->lambda.is_variadic = false;
+			lam->lambda.lambda_name = "let/ec";
+			lam->lambda.body = make_slice(lambda_body);
+
+			Expr* proc = make_expr(ExprKind::PrimRef, loc);
+			proc->prim_ref.name = RESET_PRIM;
+
+			std::vector<Expr*> args{lam};
 			Expr* e = make_expr(ExprKind::Call, loc);
 			e->call.proc = proc;
 			e->call.args = make_slice(args);
@@ -1844,6 +1902,7 @@ namespace
 				case TokenKind::Let:
 				case TokenKind::LetStar:
 				case TokenKind::Letrec:
+				case TokenKind::LetEc:
 				case TokenKind::Begin:
 				case TokenKind::When:
 				case TokenKind::Unless:
@@ -3542,6 +3601,15 @@ void Compiler::select_call_op(Expr* expr, Expr* current)
 	Expr* proc = expr->call.proc;
 	OpSelection& sel = selected_ops_[expr->id].emplace();
 	sel.op = Opcode::call;
+
+	if (proc->kind == ExprKind::PrimRef && proc->prim_ref.name == RESET_PRIM)
+	{
+		JET_DIE_UNLESS(expr->call.args.size() == 1, "%d:%d: %.*s expects exactly one argument",
+		               expr->loc.line, expr->loc.col, static_cast<int>(RESET_PRIM.size()),
+		               RESET_PRIM.data());
+		sel.op = Opcode::reset;
+		return;
+	}
 
 	if (!flags_.specialize_ops)
 	{
@@ -5257,6 +5325,18 @@ namespace
 			LirInst i = inst(sel.op);
 			switch (sel.op)
 			{
+				case Opcode::reset:
+				{
+					// Two slots for one argument: slot 0 roots the escape, slot 1 carries the
+					// body closure in, the escape as its argument, and the result out.
+					uint16_t w = alloc_window(2);
+					uint16_t result = static_cast<uint16_t>(w + 1);
+					emit_to_reg(expr->call.args[0], result);
+					i.u.call.w = w;
+					i.u.call.nargs = 1;
+					emit(i);
+					return result;
+				}
 				case Opcode::recur:
 				{
 					std::vector<uint16_t> src_reg(nargs, UINT16_MAX);
@@ -5408,6 +5488,7 @@ namespace
 				case Opcode::cdu_0:
 				case Opcode::cds_0:
 				case Opcode::recur:
+				case Opcode::reset:
 					return true;
 				default:
 					return false;
@@ -5966,6 +6047,15 @@ namespace
 				{
 					emit_opcode(bc, Opcode::apply);
 					OP_apply op{};
+					op.w = i.u.call.w;
+					emit_operand(bc, op);
+					break;
+				}
+
+				case Opcode::reset:
+				{
+					emit_opcode(bc, Opcode::reset);
+					OP_reset op{};
 					op.w = i.u.call.w;
 					emit_operand(bc, op);
 					break;

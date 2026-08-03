@@ -1597,6 +1597,39 @@ static Atom make_cursor(VmState& s, Atom target)
 	return Atom::make_tagged(jet_tag::struct_, shape->iter(s, target));
 }
 
+JET_PRESERVE_NONE static void private_escape_constructor(VM_OP_PARAMS)
+{
+	JET_DIE("escape continuations are created by let/ec, not by calling their type");
+}
+
+static bool equal_escape(EqualContext&, Struct* first, Struct* second, EqualRecur)
+{
+	return first == second;
+}
+
+static void print_escape(Struct*, std::string& out)
+{
+	out += "#<escape>";
+}
+
+static const StructOps escape_ops = {
+	StructKind::Escape,
+	private_escape_constructor,
+	{},
+	struct_destructor<Escape>(),
+	equal_escape,
+	print_escape,
+	print_escape,
+};
+
+void init_escapes(VmState& s)
+{
+	static const std::string escape_name = "%escape";
+	Atom escape_type = make_struct_type(s, box(&escape_name), {}, exactly(0), escape_ops);
+	s.env.bind("%escape", escape_type);
+	Escape::type_atom = escape_type;
+}
+
 static Atom struct_ctor(VmState& s, Atom name, Atom names_list)
 {
 	type_check(name, jet::Type::Symbol);
@@ -2409,6 +2442,7 @@ void init_primitives(VmState& s)
 	init_strings(s);
 	init_chars(s);
 	init_structs(s);
+	init_escapes(s);
 	e.bind("ref", make_prim<slow_ref_field>(s));
 	e.bind("%iter", make_prim<make_cursor>(s));
 	e.bind("boolean?", make_prim<is_type<jet::Type::Boolean>>(s));

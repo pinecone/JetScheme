@@ -320,6 +320,8 @@ void Gc::mark_object(void* ptr, int tag)
 				case StructKind::Cursor:
 					static_cast<Cursor*>(s)->trace(*this);
 					break;
+				case StructKind::Escape:
+					break;
 			}
 			break;
 		}
@@ -673,6 +675,19 @@ inline Arity struct_arity(StructType* t)
 	return t->arity();
 }
 
+JET_PRESERVE_NONE static void escape_stub(VM_OP_PARAMS);
+
+static bool is_escape(Atom callee)
+{
+	return is_type<jet::Type::Struct>(callee) && unbox<Struct>(callee)->type->kind() == StructKind::Escape;
+}
+
+JET_NOINLINE JET_PRESERVE_NONE static void die_not_callable(VM_OP_PARAMS)
+{
+	std::string_view name = type_name(callee.type());
+	JET_DIE("cannot call <%.*s>", static_cast<int>(name.size()), name.data());
+}
+
 template <bool is_tail>
 JET_NOINLINE JET_PRESERVE_NONE static void slow_call(VM_OP_PARAMS)
 {
@@ -689,6 +704,12 @@ JET_NOINLINE JET_PRESERVE_NONE static void slow_call(VM_OP_PARAMS)
 			JET_MUSTTAIL return fast_call_lambda_notail(VM_OP_ARGS);
 		}
 	}
+	else if (is_type<jet::Type::Primitive>(callee))
+	{
+		Prim* p = unbox<Prim>(callee);
+		check_arity(p->arity, stack_top - args);
+		JET_MUSTTAIL return p->stub(VM_OP_ARGS);
+	}
 	else if (is_type<jet::Type::StructType>(callee))
 	{
 		StructType* t = unbox<StructType>(callee);
@@ -698,9 +719,12 @@ JET_NOINLINE JET_PRESERVE_NONE static void slow_call(VM_OP_PARAMS)
 	}
 	else
 	{
-		Prim* p = slow_unbox<Prim>(callee);
-		check_arity(p->arity, stack_top - args);
-		JET_MUSTTAIL return p->stub(VM_OP_ARGS);
+		if (!is_escape(callee)) [[unlikely]]
+		{
+			JET_MUSTTAIL return die_not_callable(VM_OP_ARGS);
+		}
+		check_arity(exactly(1), static_cast<size_t>(stack_top - args));
+		JET_MUSTTAIL return escape_stub(VM_OP_ARGS);
 	}
 }
 
@@ -1339,6 +1363,12 @@ JET_NOINLINE static VmOp resolve_call_stub(Atom callee, size_t nargs, bool tail)
 		check_arity(la->arity, nargs);
 		return tail ? &fast_call_lambda_tail : &fast_call_lambda_notail;
 	}
+	if (is_type<jet::Type::Primitive>(callee))
+	{
+		Prim* p = unbox<Prim>(callee);
+		check_arity(p->arity, nargs);
+		return p->stub;
+	}
 	if (is_type<jet::Type::StructType>(callee))
 	{
 		StructType* t = unbox<StructType>(callee);
@@ -1346,9 +1376,12 @@ JET_NOINLINE static VmOp resolve_call_stub(Atom callee, size_t nargs, bool tail)
 		check_arity(a, nargs);
 		return t->ops().constructor;
 	}
-	Prim* p = slow_unbox<Prim>(callee);
-	check_arity(p->arity, nargs);
-	return p->stub;
+	if (!is_escape(callee)) [[unlikely]]
+	{
+		return &die_not_callable;
+	}
+	check_arity(exactly(1), nargs);
+	return &escape_stub;
 }
 
 static bool is_fixed_arity_lambda(Atom callee)
@@ -1605,6 +1638,62 @@ JET_PRESERVE_NONE static void op_call_impl(VM_OP_PARAMS)
 
 static constexpr auto& op_call = op_call_impl<false>;
 static constexpr auto& op_tcall = op_call_impl<true>;
+
+JET_PRESERVE_NONE static void op_reset(VM_OP_PARAMS)
+{
+	JET_GC_CHECK();
+	OP_reset* op = reinterpret_cast<OP_reset*>(pc);
+	pc += sizeof(*op);
+	JET_DIE_UNLESS(is_type<jet::Type::StructType>(Escape::type_atom), "escape type is not initialized");
+	StructType* type = unbox<StructType>(Escape::type_atom);
+	void* mem = s.gc.alloc(sizeof(Escape), jet_tag::struct_, type->destructor_id());
+	uint32_t n_frames = static_cast<uint32_t>(s.frames.size());
+	uint16_t result_reg = static_cast<uint16_t>(op->w + 1);
+	Escape* escape = new (mem) Escape{type, pc, n_frames, result_reg};
+	VmOp retk = dispatch_table[static_cast<int>(Opcode::retk)];
+	Struct* operand = escape;
+	std::memcpy(escape->retk_code, &retk, sizeof(retk));
+	escape->retk_code[VM_OP_SLOT_SIZE] = static_cast<uint8_t>(Opcode::retk);
+	std::memcpy(escape->retk_code + OPCODE_SIZE, &operand, sizeof(operand));
+
+	Atom* window = frame_regs + op->w;
+	callee = window[1];
+	Atom escape_atom = Atom::make_tagged(jet_tag::struct_, escape);
+	// window[0] is the escape's only root: the body's frame starts at window[1].
+	window[0] = escape_atom;
+	window[1] = escape_atom;
+	args = window + 1;
+	stack_top = args + 1;
+	frame->code = escape->retk_code;
+	JET_MUSTTAIL return slow_call_notail(VM_OP_ARGS);
+}
+
+JET_PRESERVE_NONE static void op_retk(VM_OP_PARAMS)
+{
+	Struct* operand = nullptr;
+	std::memcpy(&operand, pc, sizeof(operand));
+	Escape* escape = static_cast<Escape*>(operand);
+	frame->code = escape->resume_pc;
+	pc = escape->resume_pc;
+	DISPATCH();
+}
+
+JET_NOINLINE JET_PRESERVE_NONE static void escape_stub(VM_OP_PARAMS)
+{
+	Escape* escape = static_cast<Escape*>(unbox<Struct>(callee));
+	JET_DIE_UNLESS(escape->n_frames <= s.frames.size()
+	               && s.frames.begin()[escape->n_frames - 1].code == escape->retk_code,
+	               "escape used outside the extent of its let/ec");
+	Atom value = args[0];
+	s.frames.truncate(escape->n_frames);
+	frame = &s.frames.back();
+	frame->code = escape->resume_pc;
+	frame_regs = stack_base + frame->base;
+	stack_top = stack_base + frame->top;
+	frame_regs[escape->dst] = value;
+	pc = escape->resume_pc;
+	DISPATCH();
+}
 
 JET_NOINLINE JET_PRESERVE_NONE static void slow_recur(VM_OP_PARAMS)
 {

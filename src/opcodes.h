@@ -7,6 +7,8 @@
 #include <cstddef>
 #include <cstdint>
 
+struct Struct;
+
 #define JET_REPLICATE_N 8
 #define JET_REPLICATE(X, name, disp)                                                                        \
 	X(name##_0, disp "_0") X(name##_1, disp "_1") X(name##_2, disp "_2") X(name##_3, disp "_3")              \
@@ -72,7 +74,9 @@
 	X(ldf,                 "ldf")                                                                            \
 	X(stf,                 "stf")                                                                            \
 	X(ldfk,                "ldfk")                                                                           \
-	X(stfk,                "stfk")
+	X(stfk,                "stfk")                                                                           \
+	X(reset,               "reset")                                                                          \
+	X(retk,                "retk")
 
 enum class Opcode : uint8_t
 {
@@ -182,6 +186,17 @@ struct OP_apply
 {
 	uint16_t w;
 };
+struct OP_reset
+{
+	uint16_t w;
+};
+
+// Never emitted into a code stream: retk lives in an Escape's inline buffer.
+struct OP_retk
+{
+	Struct* escape;
+};
+
 struct OP_iter_next1
 {
 	uint16_t cursor;
@@ -325,6 +340,10 @@ inline size_t opcode_step(uint8_t op, const uint8_t* operands)
 			return OPCODE_SIZE + sizeof(OP_recur);
 		case Opcode::apply:
 			return OPCODE_SIZE + sizeof(OP_apply);
+		case Opcode::reset:
+			return OPCODE_SIZE + sizeof(OP_reset);
+		case Opcode::retk:
+			return OPCODE_SIZE + sizeof(OP_retk);
 		case Opcode::iter_next1:
 			return OPCODE_SIZE + sizeof(OP_iter_next1);
 		case Opcode::iter_next2:

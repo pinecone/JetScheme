@@ -427,6 +427,7 @@ public:
 	Frame& push_unchecked() { return storage_[active_++]; }
 
 	void pop() { --active_; }
+	void truncate(size_t n) { active_ = n; }
 	Frame& back() { return storage_[active_ - 1]; }
 	Frame* begin() { return storage_.data(); }
 	Frame* end() { return storage_.data() + active_; }

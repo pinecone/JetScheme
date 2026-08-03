@@ -89,6 +89,7 @@ enum class StructKind : uint8_t
 	HashSet,
 	HashMap,
 	Cursor,
+	Escape,
 };
 
 struct StructOps
@@ -158,6 +159,24 @@ struct Struct
 	Struct(const Struct&) = delete;
 	Struct& operator=(const Struct&) = delete;
 };
+
+struct Escape : Struct
+{
+	inline static Atom type_atom{};
+
+	Code* resume_pc;
+	uint32_t n_frames;
+	uint16_t dst;
+
+	// One instruction, [handler][tag][Escape*], installed as the return address of
+	// frame n_frames - 1 for exactly as long as the extent lives.
+	Code retk_code[OPCODE_SIZE + sizeof(Struct*)];
+
+	Escape(StructType* type_, Code* resume_pc_, uint32_t n_frames_, uint16_t dst_)
+		: Struct{type_}, resume_pc{resume_pc_}, n_frames{n_frames_}, dst{dst_}, retk_code{} {}
+};
+
+void init_escapes(VmState& s);
 
 struct CursorOps
 {
