@@ -71,7 +71,7 @@ DEPS := $(ALL_OBJ:.o=.d)
 
 .PHONY: all release debug profile all-variants \
 				test test-debug test-profile \
-				ab-cross-bench format format-check clean
+				ab-cross-bench format format-check clean tags
 .DEFAULT_GOAL := all
 
 all: $(JET_BIN)
@@ -113,6 +113,12 @@ format-check:
 
 clean:
 	rm -rf $(BUILD)
+
+# Sorted tag file so readtags can binary-search (O(log n)) instead of
+# scanning linearly. --sort=yes is ctags' default, but we pass it
+# explicitly since correctness here depends on it.
+tags: | $(BUILD)
+	ctags --sort=yes -f $(BUILD)/TAGS -R $(SRC)
 
 $(JET_BIN): $(ALL_OBJ) | $(BUILD)
 	$(CXX) $(LDFLAGS) -o $@ $^
