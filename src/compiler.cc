@@ -1310,7 +1310,8 @@ namespace
 
 			if (peek().kind == TokenKind::LParen)
 			{
-				// Shorthand: (define (f args...) body...) → (define f (lambda (args...) body...)).
+				// (define (f arg ...) body ...)
+				//   ==> (define f (lambda (arg ...) body ...))
 				advance();
 				std::string_view name = expect_identifier("define");
 
@@ -1577,8 +1578,8 @@ namespace
 				return e;
 			}
 
-			// Named let: (let f ((x v) ...) body...)
-			//   ==>  (letrec ((f (lambda (x ...) body...))) (f v ...))
+			// Named let: (let f ((x v) ...) body ...)
+			//   ==> (letrec ((f (lambda (x ...) body ...))) (f v ...))
 			Expr* lam = make_expr(ExprKind::Lambda, loc);
 			lam->lambda.params = make_string_slice(names);
 			lam->lambda.is_variadic = false;
@@ -1603,10 +1604,11 @@ namespace
 			return e;
 		}
 
+		// (let* ((x v) binding ...) body ...)
+		//   ==> (let ((x v)) (let* (binding ...) body ...))
+		// (let* () body ...) ==> (let () body ...)
 		Expr* parse_let_star(SourceLoc loc)
 		{
-			// (let* ((a v1) (b v2) ...) body...) →
-			//   (let ((a v1)) (let ((b v2)) ... body ...))
 			advance();
 			expect(TokenKind::LParen);
 
@@ -1771,6 +1773,9 @@ namespace
 			return e;
 		}
 
+		// (include "path")
+		//   ==> (begin form ...) over the forms parsed out of path
+		// The included text gets its own file_id, so error positions name that file.
 		Expr* parse_include(SourceLoc loc)
 		{
 			advance();
@@ -1836,6 +1841,7 @@ namespace
 			return e;
 		}
 
+		// ($file) ==> "the path of the file being parsed"
 		Expr* parse_dollar_file(SourceLoc loc)
 		{
 			advance();
@@ -1854,6 +1860,7 @@ namespace
 			return e;
 		}
 
+		// ($line) ==> the line of the form, ($col) ==> its column
 		Expr* parse_dollar_loc_field(SourceLoc loc, int value)
 		{
 			advance();
@@ -1861,9 +1868,9 @@ namespace
 			return make_number_lit(value, loc);
 		}
 
+		// ($check expr) ==> (%check expr "file" line col)
 		Expr* parse_dollar_check(SourceLoc loc)
 		{
-			// ($check expr) → (%check expr "file" line col).
 			advance();
 			Expr* test = parse_expr();
 			expect(TokenKind::RParen);
@@ -2139,6 +2146,8 @@ namespace
 			}
 		}
 
+		// #(v ...) ==> (vector v ...), one call per HASH_FORMS entry
+		// A splice among the elements makes it (apply vector <elements built as a list>).
 		Expr* parse_hash_form(int depth)
 		{
 			const HashForm* form = find_hash_form(peek().text);
@@ -2168,6 +2177,9 @@ namespace
 			return make_call(loc, form->constructor, item_values(items));
 		}
 
+		// `t ==> the code that rebuilds t, where ,e evaluates e and ,@e splices it in.
+		// Only depth 1 evaluates: a nested quasiquote raises the depth, and its own
+		// unquotes are rebuilt as data.
 		Expr* parse_quasiquote(int depth)
 		{
 			Token& tok = peek();
@@ -2209,7 +2221,8 @@ namespace
 			}
 		}
 
-		// '(a b c) → (list a b c), '(a . b) → (cons a b).
+		// '(d ...) ==> (list d ...)
+		// '(d . t) ==> (cons d 't)
 		Expr* parse_quoted_list()
 		{
 			SourceLoc loc = peek().loc;
@@ -2435,8 +2448,8 @@ Expr* Compiler::expand(Expr* expr)
 		case ExprKind::When:
 		case ExprKind::Unless:
 		{
-			// (when test body...) -> (if test (begin body...))
-			// (unless test body...) -> (if test <void> (begin body...))
+			// (when test body ...)   ==> (if test (begin body ...))
+			// (unless test body ...) ==> (if test <void> (begin body ...))
 			bool is_when = expr->kind == ExprKind::When;
 			Expr* test = expand(is_when ? expr->when.test : expr->unless.test);
 			Expr* begin_e = make_expr(ExprKind::Begin, expr->loc);
@@ -2452,6 +2465,9 @@ Expr* Compiler::expand(Expr* expr)
 
 		case ExprKind::And:
 		{
+			// (and e1 e ...)
+			//   ==> (if e1 (and e ...) #f)
+			// (and) is #t and (and e) is e.
 			Slice<Expr*>& exprs = expr->and_.exprs;
 			if (exprs.empty())
 			{
@@ -2476,6 +2492,10 @@ Expr* Compiler::expand(Expr* expr)
 
 		case ExprKind::Or:
 		{
+			// (or e1 e ...)
+			//   ==> (let ((t e1)) (if t t (or e ...)))
+			// (or) is #f and (or e) is e. The temp returns a true test value without
+			// evaluating e1 twice.
 			Slice<Expr*>& exprs = expr->or_.exprs;
 			if (exprs.empty())
 			{
@@ -2486,7 +2506,6 @@ Expr* Compiler::expand(Expr* expr)
 				return expand(exprs[0]);
 			}
 
-			// Build right-to-left: (let ((t expr[i])) (if t t rest))
 			Expr* result = expand(exprs[exprs.size() - 1]);
 			for (int i = exprs.size() - 2; i >= 0; --i)
 			{
@@ -2512,6 +2531,10 @@ Expr* Compiler::expand(Expr* expr)
 
 		case ExprKind::Cond:
 		{
+			// (cond (test body) clause ...)
+			//   ==> (if test body (cond clause ...))
+			// (cond (else body)) ==> body. (cond) is <void>, and so is falling off the
+			// last clause with no else.
 			Slice<Expr*>& clauses = expr->cond.clauses;
 			if (clauses.empty())
 			{
@@ -2574,6 +2597,7 @@ Expr* Compiler::expand_begin(Expr* expr)
 	return expr;
 }
 
+// (define x e) ==> (set! x e), with x collected into names for the caller to bind
 Expr* Compiler::rewrite_define_in(Expr* expr, OrderedNameSet& names)
 {
 	if (expr->kind == ExprKind::Define)
@@ -2597,6 +2621,10 @@ Expr* Compiler::rewrite_define_in(Expr* expr, OrderedNameSet& names)
 	return expr;
 }
 
+// form ... (define x e) form ...
+//   ==> (let ((x #f)) form ... (set! x e) form ...)
+// One let binds every name defined in the body, and running each set! in place
+// of its define gives the body letrec* semantics.
 Slice<Expr*> Compiler::hoist_defines_in_body(Slice<Expr*> body, SourceLoc loc)
 {
 	OrderedNameSet names;
@@ -2611,8 +2639,6 @@ Slice<Expr*> Compiler::hoist_defines_in_body(Slice<Expr*> body, SourceLoc loc)
 
 	uint32_t n = static_cast<uint32_t>(names.ordered.size());
 
-	// #f sentinels + the in-place set!s left by rewrite_define_in give the body
-	// letrec* semantics.
 	Expr** vals = arena.alloc_array<Expr*>(n);
 	for (uint32_t i = 0; i < n; ++i)
 	{
@@ -2629,11 +2655,11 @@ Slice<Expr*> Compiler::hoist_defines_in_body(Slice<Expr*> body, SourceLoc loc)
 
 Expr* Compiler::expand_letrec(Expr* expr)
 {
-	// (letrec ((x1 e1) ... (xn en)) body...)
+	// (letrec ((x e) ...) body ...)
 	//   ==>
-	// (let ((x1 #f) ... (xn #f))
-	//   (set! x1 e1) ... (set! xn en)
-	//   body...)
+	// (let ((x #f) ...)
+	//   (set! x e) ...
+	//   body ...)
 	// Sequential set!s give letrec* semantics, which is what almost all uses
 	// of letrec actually want and matches what we accept for both keywords.
 	uint32_t n = expr->let.names.size();
