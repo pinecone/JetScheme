@@ -9,9 +9,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <map>
 #include <memory>
-#include <optional>
 #include <string>
 #include <string_view>
 #include <sys/mman.h>
@@ -28,70 +26,6 @@ static constexpr std::array<GcDestructor, jet_tag::TAG_MAX> gc_destructor_table 
 	return table;
 }();
 static VmOp dispatch_table[256];
-
-struct SpanPool
-{
-	using Sizes = std::multimap<size_t, size_t>;
-
-	struct Span
-	{
-		size_t size;
-		Sizes::iterator size_it;
-	};
-
-	std::map<size_t, Span> addresses;
-	Sizes sizes;
-
-	std::optional<size_t> take(size_t size)
-	{
-		Sizes::iterator size_it = sizes.lower_bound(size);
-		if (size_it == sizes.end())
-		{
-			return std::nullopt;
-		}
-		size_t start = size_it->second;
-		auto address_it = addresses.find(start);
-		JET_DIE_UNLESS(address_it != addresses.end(), "gc: missing free span");
-		size_t available = address_it->second.size;
-		sizes.erase(size_it);
-		addresses.erase(address_it);
-		if (available > size)
-		{
-			insert(start + size, available - size);
-		}
-		return start;
-	}
-
-	void insert(size_t start, size_t size)
-	{
-		auto next = addresses.lower_bound(start);
-		if (next != addresses.begin())
-		{
-			auto previous = std::prev(next);
-			JET_DIE_UNLESS(previous->first + previous->second.size <= start,
-			               "gc: overlapping free spans");
-			if (previous->first + previous->second.size == start)
-			{
-				start = previous->first;
-				size += previous->second.size;
-				sizes.erase(previous->second.size_it);
-				addresses.erase(previous);
-			}
-		}
-		if (next != addresses.end())
-		{
-			JET_DIE_UNLESS(start + size <= next->first, "gc: overlapping free spans");
-			if (start + size == next->first)
-			{
-				size += next->second.size;
-				sizes.erase(next->second.size_it);
-				addresses.erase(next);
-			}
-		}
-		Sizes::iterator size_it = sizes.emplace(size, start);
-		addresses.emplace(start, Span{size, size_it});
-	}
-};
 
 uint16_t Gc::register_struct_destructor(StructDestructor destructor)
 {
@@ -112,17 +46,17 @@ uint16_t Gc::register_struct_destructor(StructDestructor destructor)
 }
 
 JET_ALWAYS_INLINE static void destroy_object(
-	const Gc::ObjEntry& entry, void* object, const StructDestructor* struct_destructor_table)
+	uint8_t tag, uint16_t destructor_id, void* object, const StructDestructor* struct_destructor_table)
 {
-	if (entry.tag == jet_tag::struct_)
+	if (tag == jet_tag::struct_)
 	{
-		if (StructDestructor destructor = struct_destructor_table[entry.destructor_id]; destructor)
+		if (StructDestructor destructor = struct_destructor_table[destructor_id]; destructor)
 		{
 			destructor(static_cast<Struct*>(object));
 		}
 		return;
 	}
-	if (GcDestructor destructor = gc_destructor_table[entry.tag]; destructor)
+	if (GcDestructor destructor = gc_destructor_table[tag]; destructor)
 	{
 		destructor(object);
 	}
@@ -130,7 +64,6 @@ JET_ALWAYS_INLINE static void destroy_object(
 
 Gc::Gc()
 {
-	spans = new SpanPool{};
 	void* p = ::mmap(nullptr, ARENA_SIZE, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
 	JET_DIE_UNLESS(p != MAP_FAILED, "gc: mmap %zu bytes failed", ARENA_SIZE);
 	arena_base = static_cast<char*>(p);
@@ -151,10 +84,14 @@ Gc::~Gc()
 	for (ObjEntry* e = objects; e != objects_end; ++e)
 	{
 		void* object = arena_base + static_cast<size_t>(e->cell_idx) * CELL_SIZE;
-		destroy_object(*e, object, struct_destructor_table);
+		destroy_object(e->tag, e->destructor_id, object, struct_destructor_table);
+	}
+	for (const auto& [object, entry] : huge)
+	{
+		destroy_object(entry.tag, entry.destructor_id, object, struct_destructor_table);
+		std::free(object);
 	}
 	::free(objects);
-	delete spans;
 	::munmap(arena_base, ARENA_SIZE);
 	::munmap(live_bits, BITMAP_WORDS * sizeof(uint64_t));
 	::munmap(mark_bits, BITMAP_WORDS * sizeof(uint64_t));
@@ -162,18 +99,18 @@ Gc::~Gc()
 
 void* Gc::alloc_slow(size_t n, int tag, uint16_t destructor_id)
 {
+	if (n >= N_BUCKETS) [[unlikely]]
+	{
+		return alloc_huge(n, tag, destructor_id);
+	}
+
 	void* mem;
 	uint32_t start;
 
-	if (n < N_BUCKETS && freelist[tag][n])
+	if (freelist[tag][n])
 	{
 		mem = freelist[tag][n];
 		freelist[tag][n] = *static_cast<void**>(mem);
-		start = static_cast<uint32_t>((static_cast<char*>(mem) - arena_base) / CELL_SIZE);
-	}
-	else if (n >= N_BUCKETS)
-	{
-		mem = alloc_large(n);
 		start = static_cast<uint32_t>((static_cast<char*>(mem) - arena_base) / CELL_SIZE);
 	}
 	else
@@ -195,35 +132,12 @@ void* Gc::alloc_slow(size_t n, int tag, uint16_t destructor_id)
 	return mem;
 }
 
-void* Gc::alloc_large(size_t n)
+void* Gc::alloc_huge(size_t n, int tag, uint16_t destructor_id)
 {
-	std::optional<size_t> recycled = spans->take(n);
-	if (recycled)
-	{
-		return arena_base + *recycled * CELL_SIZE;
-	}
-	JET_DIE_UNLESS(bump_cells + n <= TOTAL_CELLS, "gc: arena exhausted");
-	void* mem = arena_base + bump_cells * CELL_SIZE;
-	bump_cells += n;
+	void* mem = checked_malloc(n * CELL_SIZE);
+	huge.emplace(mem, HugeEntry{static_cast<uint32_t>(n), destructor_id, static_cast<uint8_t>(tag), false});
+	++alloc_since_gc;
 	return mem;
-}
-
-void Gc::free_large(void* mem, size_t n)
-{
-	size_t start = static_cast<size_t>((static_cast<char*>(mem) - arena_base) / CELL_SIZE);
-	spans->insert(start, n);
-}
-
-void* Gc::alloc_raw_large(size_t bytes)
-{
-	size_t n = (bytes + Gc::CELL_SIZE - 1) / Gc::CELL_SIZE;
-	return alloc_large(n);
-}
-
-void Gc::free_raw_large(void* mem, size_t bytes)
-{
-	size_t n = (bytes + Gc::CELL_SIZE - 1) / Gc::CELL_SIZE;
-	free_large(mem, n);
 }
 
 void Gc::grow_objects()
@@ -247,6 +161,11 @@ void Gc::mark_atom(uint64_t bits)
 	}
 
 	size_t cell = (static_cast<char*>(a.as_ptr()) - arena_base) / CELL_SIZE;
+	if (cell >= TOTAL_CELLS) [[unlikely]]
+	{
+		mark_huge(a.as_ptr());
+		return;
+	}
 	if (!test_bit(live_bits, cell))
 	{
 		return;
@@ -258,6 +177,19 @@ void Gc::mark_atom(uint64_t bits)
 
 	set_bit(mark_bits, cell);
 	mark_object(a.as_ptr(), a.tag());
+}
+
+// Traces by the recorded tag, never the referring Atom's: malloc can hand a freed huge
+// object's address to one of another type, and a stale stack slot may still name it.
+void Gc::mark_huge(void* ptr)
+{
+	auto entry = huge.find(ptr);
+	if (entry == huge.end() || entry->second.marked)
+	{
+		return;
+	}
+	entry->second.marked = true;
+	mark_object(ptr, entry->second.tag);
 }
 
 void Gc::mark_lambda(Lambda* la)
@@ -346,22 +278,29 @@ void Gc::sweep()
 		else
 		{
 			void* obj = arena_base + static_cast<size_t>(e->cell_idx) * CELL_SIZE;
-			destroy_object(*e, obj, struct_destructor_table);
+			destroy_object(e->tag, e->destructor_id, obj, struct_destructor_table);
 			clear_bits(live_bits, e->cell_idx, e->n_cells);
-			if (e->n_cells < Gc::N_BUCKETS)
-			{
-				*static_cast<void**>(obj) = freelist[e->tag][e->n_cells];
-				freelist[e->tag][e->n_cells] = obj;
-			}
-			else
-			{
-				free_large(obj, e->n_cells);
-			}
+			*static_cast<void**>(obj) = freelist[e->tag][e->n_cells];
+			freelist[e->tag][e->n_cells] = obj;
 		}
 	}
 	objects_end = out;
 
-	size_t next = HEAP_GROWTH_FACTOR * (objects_end - objects);
+	for (auto entry = huge.begin(); entry != huge.end();)
+	{
+		if (entry->second.marked)
+		{
+			entry->second.marked = false;
+			++entry;
+			continue;
+		}
+		destroy_object(entry->second.tag, entry->second.destructor_id, entry->first,
+		               struct_destructor_table);
+		std::free(entry->first);
+		entry = huge.erase(entry);
+	}
+
+	size_t next = HEAP_GROWTH_FACTOR * (objects_end - objects + huge.size());
 	alloc_since_gc = 0;
 	gc_threshold = next < MIN_GC_THRESHOLD ? MIN_GC_THRESHOLD : static_cast<uint32_t>(next);
 }

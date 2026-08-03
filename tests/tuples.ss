@@ -65,3 +65,16 @@
 (define spliced (list 2 3))
 ($check (equal? (tuple 1 2 3) `#tuple(1 ,(first spliced) ,(second spliced))))
 ($check (equal? (tuple 1 2 3) `#tuple(1 ,@spliced)))
+
+;; Tuples wider than the arena's size classes are allocated off-heap and must
+;; survive collections that recycle their neighbours.
+;; TODO: the width below is based on current jet allocator behaviour.
+;; jet should expose the allocator configuration at runtime so this
+;; test can derive actual limits and stay meaningful.
+(define (span n acc) (if (= n 0) acc (span (- n 1) (cons n acc))))
+(define wide (apply tuple (span 2000 '())))
+(define (churn n) (when (> n 0) (apply tuple (span 2000 '())) (churn (- n 1))))
+(churn 200)
+($check (= (ref wide 0) 1))
+($check (= (ref wide 1999) 2000))
+($check (equal? wide (apply tuple (span 2000 '()))))

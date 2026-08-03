@@ -7,8 +7,10 @@
 #include "atom.h"
 #include "debug.h"
 #include "opcodes.h"
+#include <ankerl/unordered_dense.h>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <new>
 #include <string>
@@ -135,7 +137,12 @@ inline bool test_bit(const uint64_t* bits, size_t i)
 	return (bits[i / 64] >> (i % 64)) & 1ULL;
 }
 
-struct SpanPool;
+inline void* checked_malloc(size_t bytes)
+{
+	void* mem = std::malloc(bytes);
+	JET_DIE_UNLESS(mem != nullptr, "gc: out of memory allocating %zu bytes", bytes);
+	return mem;
+}
 
 struct Gc
 {
@@ -148,11 +155,20 @@ struct Gc
 	};
 	static_assert(sizeof(ObjEntry) == 12);
 
+	struct HugeEntry
+	{
+		uint32_t n_cells;
+		uint16_t destructor_id;
+		uint8_t tag;
+		bool marked;
+	};
+
 	static constexpr size_t CELL_SIZE = 16;
 	static constexpr size_t ARENA_SIZE = 1ULL << 30;
 	static constexpr size_t TOTAL_CELLS = ARENA_SIZE / CELL_SIZE;
 	static constexpr size_t BITMAP_WORDS = TOTAL_CELLS / 64;
 	static constexpr size_t N_BUCKETS = 256;
+	static constexpr size_t MAX_BUCKET_BYTES = (N_BUCKETS - 1) * CELL_SIZE;
 
 	// Allocations permitted per live object before the next collection. GC work per
 	// allocation falls as 1 + 2/k, while the arena high-water mark grows as (1+k)*live.
@@ -171,7 +187,7 @@ struct Gc
 	std::vector<StructDestructor> struct_destructors{nullptr};
 	void* freelist[jet_tag::TAG_MAX][N_BUCKETS] = {};
 	void* raw_freelist[N_BUCKETS] = {};
-	SpanPool* spans = nullptr;
+	ankerl::unordered_dense::map<void*, HugeEntry> huge;
 
 	Gc();
 	~Gc();
@@ -181,10 +197,8 @@ struct Gc
 
 	uint16_t register_struct_destructor(StructDestructor destructor);
 	JET_NOINLINE void* alloc_slow(size_t n, int tag, uint16_t destructor_id);
-	JET_NOINLINE JET_COLD void* alloc_large(size_t n);
-	JET_NOINLINE JET_COLD void free_large(void* mem, size_t n);
-	JET_NOINLINE JET_COLD void* alloc_raw_large(size_t bytes);
-	JET_NOINLINE JET_COLD void free_raw_large(void* mem, size_t bytes);
+	JET_NOINLINE JET_COLD void* alloc_huge(size_t n, int tag, uint16_t destructor_id);
+	JET_NOINLINE JET_COLD void mark_huge(void* ptr);
 	JET_NOINLINE void grow_objects();
 	void sweep();
 	void mark_atom(uint64_t bits);
@@ -223,9 +237,9 @@ struct Gc
 
 	JET_ALWAYS_INLINE void* alloc_raw(size_t bytes)
 	{
-		if (bytes > (N_BUCKETS - 1) * CELL_SIZE) [[unlikely]]
+		if (bytes > MAX_BUCKET_BYTES) [[unlikely]]
 		{
-			return alloc_raw_large(bytes);
+			return checked_malloc(bytes);
 		}
 		size_t n = (bytes + CELL_SIZE - 1) / CELL_SIZE;
 		return alloc_raw_small(n);
@@ -239,9 +253,9 @@ struct Gc
 
 	JET_ALWAYS_INLINE void free_raw(void* mem, size_t bytes)
 	{
-		if (bytes > (N_BUCKETS - 1) * CELL_SIZE) [[unlikely]]
+		if (bytes > MAX_BUCKET_BYTES) [[unlikely]]
 		{
-			free_raw_large(mem, bytes);
+			std::free(mem);
 			return;
 		}
 		size_t n = (bytes + CELL_SIZE - 1) / CELL_SIZE;
