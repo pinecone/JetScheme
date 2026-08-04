@@ -177,6 +177,7 @@ struct Gc
 
 	uint32_t alloc_since_gc = 0;
 	uint32_t gc_threshold = 256;
+	uint32_t epoch = 0;
 	char* arena_base;
 	size_t bump_cells = 0;
 	ObjEntry* objects = nullptr;
@@ -534,9 +535,6 @@ static_assert(sizeof(VmOp) == VM_OP_SLOT_SIZE);
 
 #define VM_OP_ARGS s, frame, pc, stack_top, callee, args, stack_base, frame_regs
 
-JET_PRESERVE_NONE void field_ldfk_miss(VM_OP_PARAMS);
-JET_PRESERVE_NONE void field_stfk_miss(VM_OP_PARAMS);
-
 void collect(VmState& s);
 
 struct ObjShape
@@ -545,8 +543,6 @@ struct ObjShape
 	VmOp stf_handler;
 	VmOp ldfk_handler;
 	VmOp stfk_handler;
-	VmOp resolved_ldfk_handler;
-	VmOp resolved_stfk_handler;
 	Atom (*slow_ref)(Atom, Atom);
 	Cursor* (*iter)(VmState&, Atom);
 };
@@ -568,7 +564,7 @@ extern ObjShape g_shape_by_tag[jet_tag::HEAP_END];
 	{                                                                                                        \
 		if (s.gc.should_collect()) [[unlikely]]                                                             \
 		{                                                                                                    \
-			JET_MUSTTAIL return gc_then_dispatch(VM_OP_ARGS);                                               \
+			JET_MUSTTAIL return op_gc_slow(VM_OP_ARGS);                                                     \
 		}                                                                                                    \
 	} while (0)
 

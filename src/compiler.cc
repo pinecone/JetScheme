@@ -605,7 +605,7 @@ struct Compiler
 		{
 			struct { uint16_t addr; } var;     // register / upvalue idx of ref/set
 			struct { uint16_t upvalue_idx; } call_ic_slot;
-			struct { uint16_t idx; } call_ic_direct;
+			struct { uint16_t idx; } call_ic_atom;
 		} u;
 	};
 	std::vector<std::optional<OpSelection>> selected_ops_;
@@ -3642,10 +3642,9 @@ void Compiler::select_call_op(Expr* expr, Expr* current)
 		return;
 	}
 
-	// Self-tail-call: recur.
 	if (is_self_tail_call(expr, current))
 	{
-		sel.op = Opcode::recur;
+		sel.op = Opcode::call_self_tail;
 		return;
 	}
 
@@ -3695,7 +3694,7 @@ void Compiler::select_call_op(Expr* expr, Expr* current)
 		    !get(lb.reassigned_after_init, proc_binding.breadth)
 		    && get(lb.bound_init, proc_binding.breadth) == current)
 		{
-			sel.op = Opcode::cds_0;
+			sel.op = Opcode::call_self_0;
 			return;
 		}
 	}
@@ -3708,7 +3707,7 @@ void Compiler::select_call_op(Expr* expr, Expr* current)
 		std::optional<uint16_t> found = find_upvalue(current, proc_binding.lambda,
 		                                             static_cast<uint32_t>(proc_binding.breadth));
 		JET_DIE_UNLESS(found, "codegen: cacheable call missing upvalue entry");
-		sel.op = Opcode::cs_0;
+		sel.op = Opcode::call_upval_slot_0;
 		sel.u.call_ic_slot.upvalue_idx = *found;
 		return;
 	}
@@ -3718,16 +3717,16 @@ void Compiler::select_call_op(Expr* expr, Expr* current)
 	{
 		if (proc_binding.lambda == current)
 		{
-			sel.op = Opcode::cdl_0;
-			sel.u.call_ic_direct.idx = static_cast<uint16_t>(proc_binding.breadth);
+			sel.op = Opcode::call_local_0;
+			sel.u.call_ic_atom.idx = static_cast<uint16_t>(proc_binding.breadth);
 		}
 		else
 		{
 			std::optional<uint16_t> found = find_upvalue(current, proc_binding.lambda,
 			                                             static_cast<uint32_t>(proc_binding.breadth));
 			JET_DIE_UNLESS(found, "codegen: cacheable call missing upvalue entry");
-			sel.op = Opcode::cdu_0;
-			sel.u.call_ic_direct.idx = *found;
+			sel.op = Opcode::call_upval_0;
+			sel.u.call_ic_atom.idx = *found;
 		}
 	}
 }
@@ -4753,8 +4752,8 @@ namespace
 			struct { uint16_t src; } ret;                            // retv
 			struct { uint32_t id; uint16_t src; } label;             // label; if_false/skip target
 			struct { uint32_t id; uint16_t a; uint16_t b; } if_cmp;  // if_eq..if_ltk; rk holds the pool idx in b
-			// One payload for every call op: call/tcall read callee, cs/cst
-			// read upvalue_idx, cdl/cdu read idx, cds/recur/apply only w+nargs.
+			// One payload for every call op: call/tcall read callee, call_upval_slot
+			// reads upvalue_idx, call_local/call_upval read idx, the rest only w+nargs.
 			struct { uint16_t w; uint16_t nargs; uint16_t callee; uint16_t upvalue_idx; uint16_t idx; } call;
 			struct { uint16_t dst; uint16_t pool_idx; uint16_t first_capture; uint16_t n_captures; } closure;
 			struct { uint16_t dst; uint16_t a; uint16_t b; } arith;  // rr; rk holds the pool idx in b
@@ -4802,12 +4801,12 @@ namespace
 		// Windows allocated ahead of their call site by argument sinking, keyed by
 		// the Call expr id.
 		std::unordered_map<uint32_t, uint16_t> call_windows{};
-		struct RecurSave
+		struct SelfTailSave
 		{
 			uint16_t target;
 			uint16_t temp;
 		};
-		std::unordered_map<uint32_t, RecurSave> recur_saves{};
+		std::unordered_map<uint32_t, SelfTailSave> self_tail_saves{};
 
 		LirLambda& current_lambda()
 		{
@@ -5148,9 +5147,9 @@ namespace
 			{
 				sel.u.var.addr = alias(sel.u.var.addr);
 			}
-			else if (sel.op == Opcode::cdl_0)
+			else if (sel.op == Opcode::call_local_0)
 			{
-				sel.u.call_ic_direct.idx = alias(sel.u.call_ic_direct.idx);
+				sel.u.call_ic_atom.idx = alias(sel.u.call_ic_atom.idx);
 			}
 			return sel;
 		}
@@ -5219,14 +5218,14 @@ namespace
 			return sel.op == Opcode::mov && sel.u.var.addr == r;
 		}
 
-		std::optional<uint16_t> window_slot(Expr* e, uint16_t home, bool allow_recur = false)
+		std::optional<uint16_t> window_slot(Expr* e, uint16_t home, bool allow_self_tail = false)
 		{
 			if (e->kind != ExprKind::Call)
 			{
 				return std::nullopt;
 			}
 			Compiler::OpSelection sel = selection(e, "Call");
-			if (!is_call_shaped(sel.op) || (sel.op == Opcode::recur && !allow_recur))
+			if (!is_call_shaped(sel.op) || (sel.op == Opcode::call_self_tail && !allow_self_tail))
 			{
 				return std::nullopt;
 			}
@@ -5234,7 +5233,7 @@ namespace
 			{
 				if (is_plain_reg_ref(e->call.args[i], home))
 				{
-					if (sel.op == Opcode::recur)
+					if (sel.op == Opcode::call_self_tail)
 					{
 						for (uint32_t j = 0; j < e->call.args.size(); ++j)
 						{
@@ -5242,7 +5241,7 @@ namespace
 							{
 								uint16_t temp = alloc_reg();
 								emit_mov(temp, static_cast<uint16_t>(i));
-								recur_saves.emplace(e->id, RecurSave{static_cast<uint16_t>(i), temp});
+								self_tail_saves.emplace(e->id, SelfTailSave{static_cast<uint16_t>(i), temp});
 								break;
 							}
 						}
@@ -5281,7 +5280,7 @@ namespace
 					{
 						continue;
 					}
-					else if (is_call_shaped(sel.op) && sel.op != Opcode::recur)
+					else if (is_call_shaped(sel.op) && sel.op != Opcode::call_self_tail)
 					{
 						current_lambda().reg_alias[home] = emit_call(val, sel);
 						continue;
@@ -5363,14 +5362,14 @@ namespace
 					emit(i);
 					return result;
 				}
-				case Opcode::recur:
+				case Opcode::call_self_tail:
 				{
 					std::vector<uint16_t> src_reg(nargs, UINT16_MAX);
 					for (uint16_t k = 0; k < nargs; ++k)
 					{
 						if (Expr* arg = expr->call.args[k]; arg->kind == ExprKind::VarRef)
 						{
-							if (Compiler::OpSelection arg_sel = selection(arg, "recur arg");
+							if (Compiler::OpSelection arg_sel = selection(arg, "self tail call arg");
 							    arg_sel.op == Opcode::mov)
 							{
 								src_reg[k] = arg_sel.u.var.addr;
@@ -5378,8 +5377,8 @@ namespace
 						}
 					}
 					std::unordered_map<uint16_t, uint16_t> saved;
-					if (auto early_save = recur_saves.find(expr->id);
-					    early_save != recur_saves.end())
+					if (auto early_save = self_tail_saves.find(expr->id);
+					    early_save != self_tail_saves.end())
 					{
 						saved[early_save->second.target] = early_save->second.temp;
 					}
@@ -5415,19 +5414,19 @@ namespace
 					emit(i);
 					return 0;
 				}
-				case Opcode::cs_0:
-					i.op = tail ? Opcode::cst_0 : Opcode::cs_0;
+				case Opcode::call_upval_slot_0:
+					i.op = tail ? Opcode::call_upval_slot_tail_0 : Opcode::call_upval_slot_0;
 					i.u.call.upvalue_idx = sel.u.call_ic_slot.upvalue_idx;
 					break;
-				case Opcode::cdl_0:
-					i.op = tail ? Opcode::cdlt_0 : Opcode::cdl_0;
-					i.u.call.idx = sel.u.call_ic_direct.idx;
+				case Opcode::call_local_0:
+					i.op = tail ? Opcode::call_local_tail_0 : Opcode::call_local_0;
+					i.u.call.idx = sel.u.call_ic_atom.idx;
 					break;
-				case Opcode::cdu_0:
-					i.op = tail ? Opcode::cdut_0 : Opcode::cdu_0;
-					i.u.call.idx = sel.u.call_ic_direct.idx;
+				case Opcode::call_upval_0:
+					i.op = tail ? Opcode::call_upval_tail_0 : Opcode::call_upval_0;
+					i.u.call.idx = sel.u.call_ic_atom.idx;
 					break;
-				case Opcode::cds_0:
+				case Opcode::call_self_0:
 					JET_DIE_WHEN(tail, "%d:%d: codegen: self direct call in tail position escaped recur",
 					             expr->loc.line, expr->loc.col);
 					break;
@@ -5509,11 +5508,11 @@ namespace
 			switch (op)
 			{
 				case Opcode::call:
-				case Opcode::cs_0:
-				case Opcode::cdl_0:
-				case Opcode::cdu_0:
-				case Opcode::cds_0:
-				case Opcode::recur:
+				case Opcode::call_upval_slot_0:
+				case Opcode::call_local_0:
+				case Opcode::call_upval_0:
+				case Opcode::call_self_0:
+				case Opcode::call_self_tail:
 				case Opcode::reset:
 					return true;
 				default:
@@ -5765,13 +5764,13 @@ namespace
 
 		// Rotate among JET_REPLICATE_N variants so distinct call sites
 		// land on distinct asm dispatch tails (Ertl & Gregg 2003).
-		size_t v_cs = 0;
-		size_t v_cst = 0;
-		size_t v_cdl = 0;
-		size_t v_cdlt = 0;
-		size_t v_cdu = 0;
-		size_t v_cdut = 0;
-		size_t v_cds = 0;
+		size_t v_cus = 0;
+		size_t v_cust = 0;
+		size_t v_cl = 0;
+		size_t v_clt = 0;
+		size_t v_cu = 0;
+		size_t v_cut = 0;
+		size_t v_cself = 0;
 
 		static size_t encoded_size(const LirInst& i)
 		{
@@ -6059,10 +6058,10 @@ namespace
 					break;
 				}
 
-				case Opcode::recur:
+				case Opcode::call_self_tail:
 				{
-					emit_opcode(bc, Opcode::recur);
-					OP_recur op{};
+					emit_opcode(bc, Opcode::call_self_tail);
+					OP_call_self_tail op{};
 					op.w = i.u.call.w;
 					op.nargs = i.u.call.nargs;
 					emit_operand(bc, op);
@@ -6112,11 +6111,11 @@ namespace
 					break;
 				}
 
-				case Opcode::cs_0:
-				case Opcode::cst_0:
+				case Opcode::call_upval_slot_0:
+				case Opcode::call_upval_slot_tail_0:
 				{
-					emit_replicated(bc, i.op, i.op == Opcode::cst_0 ? v_cst : v_cs);
-					OP_cs op{};
+					emit_replicated(bc, i.op, i.op == Opcode::call_upval_slot_tail_0 ? v_cust : v_cus);
+					OP_call_slot op{};
 					op.w = i.u.call.w;
 					op.upvalue_idx = i.u.call.upvalue_idx;
 					op.nargs = i.u.call.nargs;
@@ -6124,20 +6123,20 @@ namespace
 					break;
 				}
 
-				case Opcode::cdl_0:
-				case Opcode::cdlt_0:
-				case Opcode::cdu_0:
-				case Opcode::cdut_0:
+				case Opcode::call_local_0:
+				case Opcode::call_local_tail_0:
+				case Opcode::call_upval_0:
+				case Opcode::call_upval_tail_0:
 				{
-					size_t& counter = i.op == Opcode::cdl_0
-					                  ? v_cdl
-					                  : i.op == Opcode::cdlt_0
-					                  ? v_cdlt
-					                  : i.op == Opcode::cdu_0
-					                  ? v_cdu
-					                  : v_cdut;
+					size_t& counter = i.op == Opcode::call_local_0
+					                  ? v_cl
+					                  : i.op == Opcode::call_local_tail_0
+					                  ? v_clt
+					                  : i.op == Opcode::call_upval_0
+					                  ? v_cu
+					                  : v_cut;
 					emit_replicated(bc, i.op, counter);
-					OP_cd op{};
+					OP_call_atom op{};
 					op.w = i.u.call.w;
 					op.idx = i.u.call.idx;
 					op.nargs = i.u.call.nargs;
@@ -6145,10 +6144,10 @@ namespace
 					break;
 				}
 
-				case Opcode::cds_0:
+				case Opcode::call_self_0:
 				{
-					emit_replicated(bc, i.op, v_cds);
-					OP_cds op{};
+					emit_replicated(bc, i.op, v_cself);
+					OP_call_self op{};
 					op.w = i.u.call.w;
 					op.nargs = i.u.call.nargs;
 					emit_operand(bc, op);

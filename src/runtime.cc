@@ -1470,7 +1470,7 @@ static void store_scheme_field(Struct* instance, uint64_t index, Atom value)
 	static_cast<SchemeStruct*>(instance)->values[index] = value;
 }
 
-static uint64_t resolve_tuple_ref(Struct* instance, Atom key)
+static uint64_t resolve_tuple_field(Struct* instance, Atom key)
 {
 	JET_DIE_UNLESS(is_positive_integer(key), "ref expects a non-negative integer index");
 	Tuple* tuple = static_cast<Tuple*>(instance);
@@ -1484,10 +1484,137 @@ static Atom load_tuple_field(Struct* instance, uint64_t index)
 	return static_cast<Tuple*>(instance)->elements[index];
 }
 
-JET_PRESERVE_NONE static void immutable_tuple_set(VM_OP_PARAMS)
+template <bool is_store, bool const_key>
+JET_NOINLINE JET_PRESERVE_NONE static void die_scheme_field(VM_OP_PARAMS)
 {
-	JET_DIE("tuple is immutable");
+	FieldOp<is_store, const_key>* op = reinterpret_cast<FieldOp<is_store, const_key>*>(pc);
+	Atom key = field_key<const_key>(s, op, frame_regs);
+	JET_DIE_UNLESS(is_type<jet::Type::Symbol>(key), "struct field access requires a symbol key");
+	die_struct_no_field(unbox<Struct>(frame_regs[op->obj])->type, unbox<Symbol>(key));
 }
+
+JET_ALWAYS_INLINE static bool cache_field_index(Struct* instance, Atom key, FieldIc& ic)
+{
+	JET_PROFILE_FIELD_KEY_MISS();
+	if (!is_type<jet::Type::Symbol>(key)) [[unlikely]]
+	{
+		return false;
+	}
+	int index = instance->type->find(key);
+	if (index < 0) [[unlikely]]
+	{
+		return false;
+	}
+	ic.cached_index = static_cast<uint64_t>(index);
+	ic.cached_key = key.bits;
+	return true;
+}
+
+template <bool const_key>
+JET_ALWAYS_INLINE static bool scheme_field_matches(Atom key, const FieldIc& ic)
+{
+	if constexpr (const_key)
+	{
+		return ic.cached_index != FIELD_IC_NONE;
+	}
+	else
+	{
+		return ic.cached_key == key.bits;
+	}
+}
+
+struct SchemeStructAccess
+{
+	static constexpr bool is_struct = true;
+
+	template <bool const_key>
+	JET_ALWAYS_INLINE static bool load_fast(VmState& s, FieldOp<false, const_key>* op, Atom* frame_regs)
+	{
+		if (!scheme_field_matches<const_key>(field_key<const_key>(s, op, frame_regs), op->ic)) [[unlikely]]
+		{
+			return false;
+		}
+		frame_regs[op->dst] = load_scheme_field(unbox<Struct>(frame_regs[op->obj]), op->ic.cached_index);
+		return true;
+	}
+
+	template <bool const_key>
+	JET_NOINLINE JET_PRESERVE_NONE static void op_load_slow(VM_OP_PARAMS)
+	{
+		FieldOp<false, const_key>* op = reinterpret_cast<FieldOp<false, const_key>*>(pc);
+		Struct* instance = unbox<Struct>(frame_regs[op->obj]);
+		if (!cache_field_index(instance, field_key<const_key>(s, op, frame_regs), op->ic)) [[unlikely]]
+		{
+			JET_MUSTTAIL return die_scheme_field<false, const_key>(VM_OP_ARGS);
+		}
+		frame_regs[op->dst] = load_scheme_field(instance, op->ic.cached_index);
+		pc += sizeof(*op);
+		DISPATCH();
+	}
+
+	template <bool const_key>
+	JET_ALWAYS_INLINE static bool store_fast(VmState& s, FieldOp<true, const_key>* op, Atom* frame_regs)
+	{
+		if (!scheme_field_matches<const_key>(field_key<const_key>(s, op, frame_regs), op->ic)) [[unlikely]]
+		{
+			return false;
+		}
+		store_scheme_field(unbox<Struct>(frame_regs[op->obj]), op->ic.cached_index, frame_regs[op->val]);
+		return true;
+	}
+
+	template <bool const_key>
+	JET_NOINLINE JET_PRESERVE_NONE static void op_store_slow(VM_OP_PARAMS)
+	{
+		FieldOp<true, const_key>* op = reinterpret_cast<FieldOp<true, const_key>*>(pc);
+		Struct* instance = unbox<Struct>(frame_regs[op->obj]);
+		if (!cache_field_index(instance, field_key<const_key>(s, op, frame_regs), op->ic)) [[unlikely]]
+		{
+			JET_MUSTTAIL return die_scheme_field<true, const_key>(VM_OP_ARGS);
+		}
+		store_scheme_field(instance, op->ic.cached_index, frame_regs[op->val]);
+		pc += sizeof(*op);
+		DISPATCH();
+	}
+};
+
+struct TupleAccess
+{
+	static constexpr bool is_struct = true;
+
+	template <bool const_key>
+	JET_ALWAYS_INLINE static bool load_fast(VmState& s, FieldOp<false, const_key>* op, Atom* frame_regs)
+	{
+		Tuple* tuple = static_cast<Tuple*>(unbox<Struct>(frame_regs[op->obj]));
+		size_t index;
+		Atom key = field_key<const_key>(s, op, frame_regs);
+		if (!index_of_key<const_key>(tuple->size, key, op->ic, index)) [[unlikely]]
+		{
+			return false;
+		}
+		frame_regs[op->dst] = tuple->elements[index];
+		return true;
+	}
+
+	template <bool const_key>
+	JET_NOINLINE JET_PRESERVE_NONE static void op_load_slow(VM_OP_PARAMS)
+	{
+		FieldOp<false, const_key>* op = reinterpret_cast<FieldOp<false, const_key>*>(pc);
+		die_field_index<false>(field_key<const_key>(s, op, frame_regs));
+	}
+
+	template <bool const_key>
+	JET_ALWAYS_INLINE static bool store_fast(VmState&, FieldOp<true, const_key>*, Atom*)
+	{
+		return false;
+	}
+
+	template <bool const_key>
+	JET_NOINLINE JET_PRESERVE_NONE static void op_store_slow(VM_OP_PARAMS)
+	{
+		JET_DIE("setf!: tuple is immutable");
+	}
+};
 
 static bool equal_scheme_struct(EqualContext&, Struct*, Struct*, EqualRecur)
 {
@@ -1544,16 +1671,7 @@ static void print_tuple(Struct* instance, std::string& out)
 static const StructOps scheme_struct_ops = {
 	StructKind::Scheme,
 	struct_constructor_handler<construct_scheme_struct>,
-	{
-		struct_ldf_handler<resolve_scheme_field, load_scheme_field>,
-		struct_stf_handler<resolve_scheme_field, store_scheme_field>,
-		struct_ldfk_handler<resolve_scheme_field, load_scheme_field>,
-		struct_stfk_handler<resolve_scheme_field, store_scheme_field>,
-		struct_resolved_ldfk_handler<load_scheme_field>,
-		struct_resolved_stfk_handler<store_scheme_field>,
-		struct_ref<resolve_scheme_field, load_scheme_field>,
-		nullptr,
-	},
+	make_field_shape<SchemeStructAccess>(struct_ref<resolve_scheme_field, load_scheme_field>, nullptr),
 	struct_destructor<SchemeStruct>(),
 	equal_scheme_struct,
 	print_scheme_struct<display_to>,
@@ -1563,16 +1681,7 @@ static const StructOps scheme_struct_ops = {
 static const StructOps tuple_ops = {
 	StructKind::Tuple,
 	struct_constructor_handler<construct_tuple>,
-	{
-		struct_ldf_handler<resolve_tuple_ref, load_tuple_field>,
-		immutable_tuple_set,
-		struct_ldfk_handler<resolve_tuple_ref, load_tuple_field>,
-		immutable_tuple_set,
-		struct_resolved_ldfk_handler<load_tuple_field>,
-		immutable_tuple_set,
-		struct_ref<resolve_tuple_ref, load_tuple_field>,
-		nullptr,
-	},
+	make_field_shape<TupleAccess>(struct_ref<resolve_tuple_field, load_tuple_field>, nullptr),
 	struct_destructor<Tuple>(),
 	equal_tuple,
 	print_tuple<display_to>,
@@ -1931,284 +2040,113 @@ static Atom table_ref(Atom object, Atom key)
 	return Lookup(unbox<Struct>(object), key);
 }
 
-template <auto Lookup>
-JET_PRESERVE_NONE static void table_ldf_handler(VM_OP_PARAMS)
+struct HashSetAccess
 {
-	OP_ldf* op = reinterpret_cast<OP_ldf*>(pc - sizeof(OP_ldf));
-	frame_regs[op->dst] = Lookup(unbox<Struct>(callee), frame_regs[op->key]);
-	DISPATCH();
-}
+	static constexpr bool is_struct = true;
 
-template <auto Store>
-JET_PRESERVE_NONE static void table_stf_handler(VM_OP_PARAMS)
-{
-	OP_stf* op = reinterpret_cast<OP_stf*>(pc - sizeof(OP_stf));
-	Store(unbox<Struct>(callee), frame_regs[op->key], frame_regs[op->val]);
-	DISPATCH();
-}
-
-template <auto Lookup>
-JET_PRESERVE_NONE static void table_resolved_ldfk_handler(VM_OP_PARAMS)
-{
-	OP_ldfk* op = reinterpret_cast<OP_ldfk*>(pc);
-	Atom object = frame_regs[op->obj];
-	if (!object.tag_is<jet_tag::struct_>() ||
-	    op->ic.ic_dispatch_key != reinterpret_cast<uint64_t>(unbox<Struct>(object)->type)) [[unlikely]]
+	template <bool const_key>
+	JET_ALWAYS_INLINE static bool load_fast(VmState& s, FieldOp<false, const_key>* op, Atom* frame_regs)
 	{
-		JET_MUSTTAIL return field_ldfk_miss(VM_OP_ARGS);
+		HashSet* set = static_cast<HashSet*>(unbox<Struct>(frame_regs[op->obj]));
+		FastFind found = hashset_find_fast(set, field_key<const_key>(s, op, frame_regs));
+		if (found == FastFind::Unsupported) [[unlikely]]
+		{
+			return false;
+		}
+		frame_regs[op->dst] = box(found == FastFind::Found);
+		return true;
 	}
-	frame_regs[op->dst] = Lookup(unbox<Struct>(object), s.constants[op->key_idx]);
-	pc += sizeof(*op);
-	JET_PROFILE_FIELD_DISPATCH(Opcode::ldfk, profile_field_receiver(object), true);
-	DISPATCH();
-}
 
-template <auto Store>
-JET_PRESERVE_NONE static void table_resolved_stfk_handler(VM_OP_PARAMS)
-{
-	OP_stfk* op = reinterpret_cast<OP_stfk*>(pc);
-	Atom object = frame_regs[op->obj];
-	if (!object.tag_is<jet_tag::struct_>() ||
-	    op->ic.ic_dispatch_key != reinterpret_cast<uint64_t>(unbox<Struct>(object)->type)) [[unlikely]]
+	template <bool const_key>
+	JET_NOINLINE JET_PRESERVE_NONE static void op_load_slow(VM_OP_PARAMS)
 	{
-		JET_MUSTTAIL return field_stfk_miss(VM_OP_ARGS);
+		FieldOp<false, const_key>* op = reinterpret_cast<FieldOp<false, const_key>*>(pc);
+		HashSet* set = static_cast<HashSet*>(unbox<Struct>(frame_regs[op->obj]));
+		frame_regs[op->dst] = hashset_lookup(set, field_key<const_key>(s, op, frame_regs));
+		pc += sizeof(*op);
+		DISPATCH();
 	}
-	Store(unbox<Struct>(object), s.constants[op->key_idx], frame_regs[op->val]);
-	pc += sizeof(*op);
-	JET_PROFILE_FIELD_DISPATCH(Opcode::stfk, profile_field_receiver(object), true);
-	DISPATCH();
-}
 
-template <auto Lookup>
-JET_PRESERVE_NONE static void table_ldfk_handler(VM_OP_PARAMS)
-{
-	OP_ldfk* op = reinterpret_cast<OP_ldfk*>(pc - sizeof(OP_ldfk));
-	Struct* instance = unbox<Struct>(callee);
-	VmOp resolved = instance->type->ops().shape.resolved_ldfk_handler;
-	std::memcpy(reinterpret_cast<Code*>(op) - OPCODE_SIZE, &resolved, sizeof(resolved));
-	frame_regs[op->dst] = Lookup(instance, s.constants[op->key_idx]);
-	DISPATCH();
-}
-
-template <auto Store>
-JET_PRESERVE_NONE static void table_stfk_handler(VM_OP_PARAMS)
-{
-	OP_stfk* op = reinterpret_cast<OP_stfk*>(pc - sizeof(OP_stfk));
-	Struct* instance = unbox<Struct>(callee);
-	VmOp resolved = instance->type->ops().shape.resolved_stfk_handler;
-	std::memcpy(reinterpret_cast<Code*>(op) - OPCODE_SIZE, &resolved, sizeof(resolved));
-	Store(instance, s.constants[op->key_idx], frame_regs[op->val]);
-	DISPATCH();
-}
-
-JET_NOINLINE JET_PRESERVE_NONE static void hashset_ldf_slow(VM_OP_PARAMS)
-{
-	JET_MUSTTAIL return table_ldf_handler<hashset_lookup>(VM_OP_ARGS);
-}
-
-JET_NOINLINE JET_PRESERVE_NONE static void hashset_stf_slow(VM_OP_PARAMS)
-{
-	JET_MUSTTAIL return table_stf_handler<hashset_insert>(VM_OP_ARGS);
-}
-
-JET_NOINLINE JET_PRESERVE_NONE static void hashset_resolved_ldfk_slow(VM_OP_PARAMS)
-{
-	JET_MUSTTAIL return table_resolved_ldfk_handler<hashset_lookup>(VM_OP_ARGS);
-}
-
-JET_NOINLINE JET_PRESERVE_NONE static void hashset_resolved_stfk_slow(VM_OP_PARAMS)
-{
-	JET_MUSTTAIL return table_resolved_stfk_handler<hashset_insert>(VM_OP_ARGS);
-}
-
-JET_PRESERVE_NONE static void hashset_ldf_handler(VM_OP_PARAMS)
-{
-	OP_ldf* op = reinterpret_cast<OP_ldf*>(pc - sizeof(OP_ldf));
-	HashSet* set = static_cast<HashSet*>(unbox<Struct>(callee));
-	FastFind found = hashset_find_fast(set, frame_regs[op->key]);
-	if (found == FastFind::Unsupported) [[unlikely]]
+	template <bool const_key>
+	JET_ALWAYS_INLINE static bool store_fast(VmState& s, FieldOp<true, const_key>* op, Atom* frame_regs)
 	{
-		JET_MUSTTAIL return hashset_ldf_slow(VM_OP_ARGS);
+		if (frame_regs[op->val].bits != box(true).bits) [[unlikely]]
+		{
+			return false;
+		}
+		HashSet* set = static_cast<HashSet*>(unbox<Struct>(frame_regs[op->obj]));
+		std::optional<FastKey> fast_key = make_fast_key(field_key<const_key>(s, op, frame_regs));
+		if (!fast_key) [[unlikely]]
+		{
+			return false;
+		}
+		hashset_insert_key(set, fast_key->key);
+		return true;
 	}
-	frame_regs[op->dst] = box(found == FastFind::Found);
-	DISPATCH();
-}
 
-JET_NOINLINE JET_PRESERVE_NONE static void hashset_stf_bad_value(VM_OP_PARAMS)
-{
-	JET_DIE("setf!: a hashset element can only be set to #t");
-}
+	template <bool const_key>
+	JET_NOINLINE JET_PRESERVE_NONE static void op_store_slow(VM_OP_PARAMS)
+	{
+		FieldOp<true, const_key>* op = reinterpret_cast<FieldOp<true, const_key>*>(pc);
+		HashSet* set = static_cast<HashSet*>(unbox<Struct>(frame_regs[op->obj]));
+		hashset_insert(set, field_key<const_key>(s, op, frame_regs), frame_regs[op->val]);
+		pc += sizeof(*op);
+		DISPATCH();
+	}
+};
 
-JET_PRESERVE_NONE static void hashset_stf_handler(VM_OP_PARAMS)
+struct HashMapAccess
 {
-	OP_stf* op = reinterpret_cast<OP_stf*>(pc - sizeof(OP_stf));
-	if (frame_regs[op->val].bits != box(true).bits) [[unlikely]]
-	{
-		JET_MUSTTAIL return hashset_stf_bad_value(VM_OP_ARGS);
-	}
-	HashSet* set = static_cast<HashSet*>(unbox<Struct>(callee));
-	std::optional<FastKey> key = make_fast_key(frame_regs[op->key]);
-	if (!key) [[unlikely]]
-	{
-		JET_MUSTTAIL return hashset_stf_slow(VM_OP_ARGS);
-	}
-	hashset_insert_key(set, key->key);
-	DISPATCH();
-}
+	static constexpr bool is_struct = true;
 
-JET_PRESERVE_NONE static void hashset_resolved_ldfk_handler(VM_OP_PARAMS)
-{
-	OP_ldfk* op = reinterpret_cast<OP_ldfk*>(pc);
-	Atom object = frame_regs[op->obj];
-	if (!object.tag_is<jet_tag::struct_>() ||
-	    op->ic.ic_dispatch_key != reinterpret_cast<uint64_t>(unbox<Struct>(object)->type)) [[unlikely]]
+	template <bool const_key>
+	JET_ALWAYS_INLINE static bool load_fast(VmState& s, FieldOp<false, const_key>* op, Atom* frame_regs)
 	{
-		JET_MUSTTAIL return field_ldfk_miss(VM_OP_ARGS);
+		HashMap* map = static_cast<HashMap*>(unbox<Struct>(frame_regs[op->obj]));
+		size_t position;
+		if (hashmap_find_fast(map, field_key<const_key>(s, op, frame_regs), position) != FastFind::Found)
+		[[unlikely]]
+		{
+			return false;
+		}
+		frame_regs[op->dst] = map->entry(position).value;
+		return true;
 	}
-	HashSet* set = static_cast<HashSet*>(unbox<Struct>(object));
-	FastFind found = hashset_find_fast(set, s.constants[op->key_idx]);
-	if (found == FastFind::Unsupported) [[unlikely]]
-	{
-		JET_MUSTTAIL return hashset_resolved_ldfk_slow(VM_OP_ARGS);
-	}
-	frame_regs[op->dst] = box(found == FastFind::Found);
-	pc += sizeof(*op);
-	JET_PROFILE_FIELD_DISPATCH(Opcode::ldfk, profile_field_receiver(object), true);
-	DISPATCH();
-}
 
-JET_NOINLINE JET_PRESERVE_NONE static void hashset_resolved_stfk_bad_value(VM_OP_PARAMS)
-{
-	JET_DIE("setf!: a hashset element can only be set to #t");
-}
+	template <bool const_key>
+	JET_NOINLINE JET_PRESERVE_NONE static void op_load_slow(VM_OP_PARAMS)
+	{
+		FieldOp<false, const_key>* op = reinterpret_cast<FieldOp<false, const_key>*>(pc);
+		HashMap* map = static_cast<HashMap*>(unbox<Struct>(frame_regs[op->obj]));
+		frame_regs[op->dst] = hashmap_lookup(map, field_key<const_key>(s, op, frame_regs));
+		pc += sizeof(*op);
+		DISPATCH();
+	}
 
-JET_PRESERVE_NONE static void hashset_resolved_stfk_handler(VM_OP_PARAMS)
-{
-	OP_stfk* op = reinterpret_cast<OP_stfk*>(pc);
-	Atom object = frame_regs[op->obj];
-	if (!object.tag_is<jet_tag::struct_>() ||
-	    op->ic.ic_dispatch_key != reinterpret_cast<uint64_t>(unbox<Struct>(object)->type)) [[unlikely]]
+	template <bool const_key>
+	JET_ALWAYS_INLINE static bool store_fast(VmState& s, FieldOp<true, const_key>* op, Atom* frame_regs)
 	{
-		JET_MUSTTAIL return field_stfk_miss(VM_OP_ARGS);
+		HashMap* map = static_cast<HashMap*>(unbox<Struct>(frame_regs[op->obj]));
+		size_t position;
+		if (hashmap_find_fast(map, field_key<const_key>(s, op, frame_regs), position) != FastFind::Found)
+		[[unlikely]]
+		{
+			return false;
+		}
+		map->entry(position).value = frame_regs[op->val];
+		return true;
 	}
-	if (frame_regs[op->val].bits != box(true).bits) [[unlikely]]
-	{
-		JET_MUSTTAIL return hashset_resolved_stfk_bad_value(VM_OP_ARGS);
-	}
-	HashSet* set = static_cast<HashSet*>(unbox<Struct>(object));
-	std::optional<FastKey> key = make_fast_key(s.constants[op->key_idx]);
-	if (!key) [[unlikely]]
-	{
-		JET_MUSTTAIL return hashset_resolved_stfk_slow(VM_OP_ARGS);
-	}
-	hashset_insert_key(set, key->key);
-	pc += sizeof(*op);
-	JET_PROFILE_FIELD_DISPATCH(Opcode::stfk, profile_field_receiver(object), true);
-	DISPATCH();
-}
 
-JET_NOINLINE JET_PRESERVE_NONE static void hashmap_ldf_slow(VM_OP_PARAMS)
-{
-	JET_MUSTTAIL return table_ldf_handler<hashmap_lookup>(VM_OP_ARGS);
-}
-
-JET_NOINLINE JET_PRESERVE_NONE static void hashmap_ldf_missing(VM_OP_PARAMS)
-{
-	JET_DIE("ref: key not found in hashmap");
-}
-
-JET_NOINLINE JET_PRESERVE_NONE static void hashmap_stf_slow(VM_OP_PARAMS)
-{
-	JET_MUSTTAIL return table_stf_handler<hashmap_insert>(VM_OP_ARGS);
-}
-
-JET_NOINLINE JET_PRESERVE_NONE static void hashmap_resolved_ldfk_slow(VM_OP_PARAMS)
-{
-	JET_MUSTTAIL return table_resolved_ldfk_handler<hashmap_lookup>(VM_OP_ARGS);
-}
-
-JET_NOINLINE JET_PRESERVE_NONE static void hashmap_resolved_stfk_slow(VM_OP_PARAMS)
-{
-	JET_MUSTTAIL return table_resolved_stfk_handler<hashmap_insert>(VM_OP_ARGS);
-}
-
-JET_PRESERVE_NONE static void hashmap_ldf_handler(VM_OP_PARAMS)
-{
-	OP_ldf* op = reinterpret_cast<OP_ldf*>(pc - sizeof(OP_ldf));
-	HashMap* map = static_cast<HashMap*>(unbox<Struct>(callee));
-	size_t position;
-	FastFind found = hashmap_find_fast(map, frame_regs[op->key], position);
-	if (found == FastFind::Unsupported) [[unlikely]]
+	template <bool const_key>
+	JET_NOINLINE JET_PRESERVE_NONE static void op_store_slow(VM_OP_PARAMS)
 	{
-		JET_MUSTTAIL return hashmap_ldf_slow(VM_OP_ARGS);
+		FieldOp<true, const_key>* op = reinterpret_cast<FieldOp<true, const_key>*>(pc);
+		HashMap* map = static_cast<HashMap*>(unbox<Struct>(frame_regs[op->obj]));
+		hashmap_insert(map, field_key<const_key>(s, op, frame_regs), frame_regs[op->val]);
+		pc += sizeof(*op);
+		DISPATCH();
 	}
-	if (found == FastFind::Missing) [[unlikely]]
-	{
-		JET_MUSTTAIL return hashmap_ldf_missing(VM_OP_ARGS);
-	}
-	frame_regs[op->dst] = map->entry(position).value;
-	DISPATCH();
-}
-
-JET_PRESERVE_NONE static void hashmap_stf_handler(VM_OP_PARAMS)
-{
-	OP_stf* op = reinterpret_cast<OP_stf*>(pc - sizeof(OP_stf));
-	HashMap* map = static_cast<HashMap*>(unbox<Struct>(callee));
-	size_t position;
-	if (hashmap_find_fast(map, frame_regs[op->key], position) != FastFind::Found) [[unlikely]]
-	{
-		JET_MUSTTAIL return hashmap_stf_slow(VM_OP_ARGS);
-	}
-	map->entry(position).value = frame_regs[op->val];
-	DISPATCH();
-}
-
-JET_PRESERVE_NONE static void hashmap_resolved_ldfk_handler(VM_OP_PARAMS)
-{
-	OP_ldfk* op = reinterpret_cast<OP_ldfk*>(pc);
-	Atom object = frame_regs[op->obj];
-	if (!object.tag_is<jet_tag::struct_>() ||
-	    op->ic.ic_dispatch_key != reinterpret_cast<uint64_t>(unbox<Struct>(object)->type)) [[unlikely]]
-	{
-		JET_MUSTTAIL return field_ldfk_miss(VM_OP_ARGS);
-	}
-	HashMap* map = static_cast<HashMap*>(unbox<Struct>(object));
-	size_t position;
-	FastFind found = hashmap_find_fast(map, s.constants[op->key_idx], position);
-	if (found == FastFind::Unsupported) [[unlikely]]
-	{
-		JET_MUSTTAIL return hashmap_resolved_ldfk_slow(VM_OP_ARGS);
-	}
-	if (found == FastFind::Missing) [[unlikely]]
-	{
-		JET_MUSTTAIL return hashmap_ldf_missing(VM_OP_ARGS);
-	}
-	frame_regs[op->dst] = map->entry(position).value;
-	pc += sizeof(*op);
-	JET_PROFILE_FIELD_DISPATCH(Opcode::ldfk, profile_field_receiver(object), true);
-	DISPATCH();
-}
-
-JET_PRESERVE_NONE static void hashmap_resolved_stfk_handler(VM_OP_PARAMS)
-{
-	OP_stfk* op = reinterpret_cast<OP_stfk*>(pc);
-	Atom object = frame_regs[op->obj];
-	if (!object.tag_is<jet_tag::struct_>() ||
-	    op->ic.ic_dispatch_key != reinterpret_cast<uint64_t>(unbox<Struct>(object)->type)) [[unlikely]]
-	{
-		JET_MUSTTAIL return field_stfk_miss(VM_OP_ARGS);
-	}
-	HashMap* map = static_cast<HashMap*>(unbox<Struct>(object));
-	size_t position;
-	if (hashmap_find_fast(map, s.constants[op->key_idx], position) != FastFind::Found) [[unlikely]]
-	{
-		JET_MUSTTAIL return hashmap_resolved_stfk_slow(VM_OP_ARGS);
-	}
-	map->entry(position).value = frame_regs[op->val];
-	pc += sizeof(*op);
-	JET_PROFILE_FIELD_DISPATCH(Opcode::stfk, profile_field_receiver(object), true);
-	DISPATCH();
-}
+};
 
 static Struct* construct_hashset(VmState& s, StructType* type, Atom* first, Atom* last)
 {
@@ -2308,16 +2246,7 @@ static void print_hashmap(Struct* instance, std::string& out)
 static const StructOps hashset_ops = {
 	StructKind::HashSet,
 	struct_constructor_handler<construct_hashset>,
-	{
-		hashset_ldf_handler,
-		hashset_stf_handler,
-		table_ldfk_handler<hashset_lookup>,
-		table_stfk_handler<hashset_insert>,
-		hashset_resolved_ldfk_handler,
-		hashset_resolved_stfk_handler,
-		table_ref<hashset_lookup>,
-		hashset_cursor_make,
-	},
+	make_field_shape<HashSetAccess>(table_ref<hashset_lookup>, make_hashset_cursor),
 	struct_destructor<HashSet>(),
 	equal_hashset,
 	print_hashset<display_to>,
@@ -2327,16 +2256,7 @@ static const StructOps hashset_ops = {
 static const StructOps hashmap_ops = {
 	StructKind::HashMap,
 	struct_constructor_handler<construct_hashmap>,
-	{
-		hashmap_ldf_handler,
-		hashmap_stf_handler,
-		table_ldfk_handler<hashmap_lookup>,
-		table_stfk_handler<hashmap_insert>,
-		hashmap_resolved_ldfk_handler,
-		hashmap_resolved_stfk_handler,
-		table_ref<hashmap_lookup>,
-		hashmap_cursor_make,
-	},
+	make_field_shape<HashMapAccess>(table_ref<hashmap_lookup>, make_hashmap_cursor),
 	struct_destructor<HashMap>(),
 	equal_hashmap,
 	print_hashmap<display_to>,

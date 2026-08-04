@@ -266,6 +266,7 @@ void Gc::mark_object(void* ptr, int tag)
 
 void Gc::sweep()
 {
+	++epoch;
 	const StructDestructor* struct_destructor_table = struct_destructors.data();
 	ObjEntry* out = objects;
 	for (ObjEntry* e = objects; e != objects_end; ++e)
@@ -473,7 +474,7 @@ constexpr size_t STACK_CAPACITY = 1 << 20;
 constexpr size_t STACK_SLACK = 4096;
 
 template <bool is_tail>
-JET_NOINLINE JET_PRESERVE_NONE static void slow_call_lambda(VM_OP_PARAMS)
+JET_NOINLINE JET_PRESERVE_NONE static void op_enter_lambda_slow(VM_OP_PARAMS)
 {
 	auto&& pack_args_to_list = [&s](Atom* first, Atom* last) -> Atom
 	{
@@ -544,26 +545,39 @@ JET_NOINLINE JET_PRESERVE_NONE static void slow_call_lambda(VM_OP_PARAMS)
 	DISPATCH();
 }
 
-template <bool is_tail>
-JET_PRESERVE_NONE static void fast_call_lambda(VM_OP_PARAMS)
+template <bool is_tail, class Ic = void>
+JET_ALWAYS_INLINE JET_PRESERVE_NONE static void op_enter_lambda_fast(VM_OP_PARAMS)
 {
 	JET_PROFILE_LAMBDA;
 	Lambda& la = *unbox<Lambda>(callee);
-	size_t nargs = static_cast<size_t>(stack_top - args);
-	if (is_nary(la.arity) || (is_tail && nargs > 16)) [[unlikely]]
+	Code* code;
+	size_t n_locals;
+	if constexpr (std::is_void_v<Ic>)
 	{
-		JET_MUSTTAIL return slow_call_lambda<is_tail>(VM_OP_ARGS);
+		size_t nargs = static_cast<size_t>(stack_top - args);
+		if (is_nary(la.arity) || (is_tail && nargs > 16)) [[unlikely]]
+		{
+			JET_MUSTTAIL return op_enter_lambda_slow<is_tail>(VM_OP_ARGS);
+		}
+		code = la.code;
+		n_locals = la.n_locals;
+	}
+	else
+	{
+		const Ic* op = reinterpret_cast<const Ic*>(pc - sizeof(Ic));
+		code = reinterpret_cast<Code*>(op->ic_code);
+		n_locals = op->ic_n_locals;
 	}
 	size_t base = is_tail ? frame->base : static_cast<size_t>(args - stack_base);
-	if (stack_base + base + la.n_locals > s.stack_watermark) [[unlikely]]
+	if (stack_base + base + n_locals > s.stack_watermark) [[unlikely]]
 	{
-		JET_MUSTTAIL return slow_call_lambda<is_tail>(VM_OP_ARGS);
+		JET_MUSTTAIL return op_enter_lambda_slow<is_tail>(VM_OP_ARGS);
 	}
 	Atom* dst = stack_base + base;
 
 	if constexpr (is_tail)
 	{
-		switch (nargs)
+		switch (stack_top - args)
 		{
 			case 0: break;
 			case 1: std::memmove(dst, args, 1 * sizeof(Atom)); break;
@@ -583,38 +597,35 @@ JET_PRESERVE_NONE static void fast_call_lambda(VM_OP_PARAMS)
 			case 15: std::memmove(dst, args, 15 * sizeof(Atom)); break;
 			case 16: std::memmove(dst, args, 16 * sizeof(Atom)); break;
 		}
-		frame->code = la.code;
+		frame->code = code;
 		frame->closure = &la;
-		frame->top = base + la.n_locals;
+		frame->top = base + n_locals;
 	}
 	else
 	{
 		if (!s.frames.can_push()) [[unlikely]]
 		{
-			JET_MUSTTAIL return slow_call_lambda<false>(VM_OP_ARGS);
+			JET_MUSTTAIL return op_enter_lambda_slow<false>(VM_OP_ARGS);
 		}
 		frame = &s.frames.push_unchecked();
-		frame->code = la.code;
+		frame->code = code;
 		frame->closure = &la;
 		frame->base = base;
-		frame->top = base + la.n_locals;
+		frame->top = base + n_locals;
 	}
 	frame_regs = stack_base + base;
 
-	stack_top = stack_base + base + la.n_locals;
-	pc = la.code;
+	stack_top = stack_base + base + n_locals;
+	pc = code;
 	DISPATCH();
 }
-
-static constexpr auto& fast_call_lambda_tail = fast_call_lambda<true>;
-static constexpr auto& fast_call_lambda_notail = fast_call_lambda<false>;
 
 inline Arity struct_arity(StructType* t)
 {
 	return t->arity();
 }
 
-JET_PRESERVE_NONE static void escape_stub(VM_OP_PARAMS);
+JET_PRESERVE_NONE static void op_enter_escape(VM_OP_PARAMS);
 
 static bool is_escape(Atom callee)
 {
@@ -628,20 +639,13 @@ JET_NOINLINE JET_PRESERVE_NONE static void die_not_callable(VM_OP_PARAMS)
 }
 
 template <bool is_tail>
-JET_NOINLINE JET_PRESERVE_NONE static void slow_call(VM_OP_PARAMS)
+JET_NOINLINE JET_PRESERVE_NONE static void op_call_slow(VM_OP_PARAMS)
 {
 	if (is_type<jet::Type::Procedure>(callee))
 	{
 		Lambda* la = unbox<Lambda>(callee);
 		check_arity(la->arity, stack_top - args);
-		if constexpr (is_tail)
-		{
-			JET_MUSTTAIL return fast_call_lambda_tail(VM_OP_ARGS);
-		}
-		else
-		{
-			JET_MUSTTAIL return fast_call_lambda_notail(VM_OP_ARGS);
-		}
+		JET_MUSTTAIL return op_enter_lambda_fast<is_tail>(VM_OP_ARGS);
 	}
 	else if (is_type<jet::Type::Primitive>(callee))
 	{
@@ -663,216 +667,16 @@ JET_NOINLINE JET_PRESERVE_NONE static void slow_call(VM_OP_PARAMS)
 			JET_MUSTTAIL return die_not_callable(VM_OP_ARGS);
 		}
 		check_arity(exactly(1), static_cast<size_t>(stack_top - args));
-		JET_MUSTTAIL return escape_stub(VM_OP_ARGS);
+		JET_MUSTTAIL return op_enter_escape(VM_OP_ARGS);
 	}
 }
 
-static constexpr auto& slow_call_tail = slow_call<true>;
-static constexpr auto& slow_call_notail = slow_call<false>;
-
-JET_NOINLINE JET_PRESERVE_NONE static void gc_then_dispatch(VM_OP_PARAMS)
+JET_NOINLINE JET_PRESERVE_NONE static void op_gc_slow(VM_OP_PARAMS)
 {
 	s.stack_top = stack_top;
 	collect(s);
 	VmOp h = *reinterpret_cast<VmOp*>(pc - OPCODE_SIZE);
 	JET_MUSTTAIL return h(VM_OP_ARGS);
-}
-
-JET_NOINLINE JET_PRESERVE_NONE static void die_ref_bad_key(VM_OP_PARAMS)
-{
-	JET_DIE("ref expects a non-negative integer index");
-}
-
-JET_NOINLINE JET_PRESERVE_NONE static void die_ref_oob(VM_OP_PARAMS)
-{
-	JET_DIE("ref index out of bounds");
-}
-
-JET_NOINLINE JET_PRESERVE_NONE static void die_set_bad_key(VM_OP_PARAMS)
-{
-	JET_DIE("set!/ref expects a non-negative integer index");
-}
-
-JET_NOINLINE JET_PRESERVE_NONE static void die_set_oob(VM_OP_PARAMS)
-{
-	JET_DIE("set!/ref index out of bounds");
-}
-
-JET_NOINLINE JET_PRESERVE_NONE static void die_set_bad_value(VM_OP_PARAMS)
-{
-	JET_DIE("set!/ref: incompatible value type for receiver");
-}
-
-JET_NOINLINE JET_PRESERVE_NONE static void die_set_string_immutable(VM_OP_PARAMS)
-{
-	JET_DIE("set!/ref: strings are immutable");
-}
-
-template <typename T>
-static Atom container_load(T& c, size_t i)
-{
-	if constexpr (std::is_same_v<T, String>)
-	{
-		return box(static_cast<Character>(static_cast<uint8_t>(c[i])));
-	}
-	else if constexpr (std::is_same_v<T, ByteVector>)
-	{
-		return box(Number(c[i]));
-	}
-	else
-	{
-		return c[i];
-	}
-}
-
-template <typename T>
-JET_ALWAYS_INLINE static bool container_store(T& c, size_t i, Atom value)
-{
-	if constexpr (std::is_same_v<T, ByteVector>)
-	{
-		if (!is_type<jet::Type::Number>(value)) [[unlikely]]
-		{
-			return false;
-		}
-		Number n = unbox<Number>(value);
-		if (!is_integer(n) || n < 0 || n > 255) [[unlikely]]
-		{
-			return false;
-		}
-		c[i] = static_cast<uint8_t>(n);
-	}
-	else
-	{
-		c[i] = value;
-	}
-	return true;
-}
-
-// Register-ISA shape handlers recover their full operand struct via
-// pc - sizeof(OP_*): the dispatch opcode advanced pc past exactly one struct.
-
-template <typename T>
-JET_PRESERVE_NONE static void fast_ldf(VM_OP_PARAMS)
-{
-	OP_ldf* op = reinterpret_cast<OP_ldf*>(pc - sizeof(OP_ldf));
-	Atom key = frame_regs[op->key];
-	T& c = *unbox<T>(callee);
-
-	if (!is_type<jet::Type::Number>(key)) [[unlikely]]
-	{
-		JET_MUSTTAIL return die_ref_bad_key(VM_OP_ARGS);
-	}
-	Number n = unbox<Number>(key);
-	if (!is_integer(n) || n < 0) [[unlikely]]
-	{
-		JET_MUSTTAIL return die_ref_bad_key(VM_OP_ARGS);
-	}
-	size_t idx = static_cast<size_t>(n);
-	if (idx >= c.size()) [[unlikely]]
-	{
-		JET_MUSTTAIL return die_ref_oob(VM_OP_ARGS);
-	}
-	frame_regs[op->dst] = container_load(c, idx);
-	DISPATCH();
-}
-
-template <typename T>
-JET_PRESERVE_NONE static void fast_stf(VM_OP_PARAMS)
-{
-	OP_stf* op = reinterpret_cast<OP_stf*>(pc - sizeof(OP_stf));
-	Atom key = frame_regs[op->key];
-	Atom value = frame_regs[op->val];
-	T& c = *unbox<T>(callee);
-
-	if (!is_type<jet::Type::Number>(key)) [[unlikely]]
-	{
-		JET_MUSTTAIL return die_set_bad_key(VM_OP_ARGS);
-	}
-	Number n = unbox<Number>(key);
-	if (!is_integer(n) || n < 0) [[unlikely]]
-	{
-		JET_MUSTTAIL return die_set_bad_key(VM_OP_ARGS);
-	}
-	size_t idx = static_cast<size_t>(n);
-	if (idx >= c.size()) [[unlikely]]
-	{
-		JET_MUSTTAIL return die_set_oob(VM_OP_ARGS);
-	}
-	if (!container_store(c, idx, value)) [[unlikely]]
-	{
-		JET_MUSTTAIL return die_set_bad_value(VM_OP_ARGS);
-	}
-	DISPATCH();
-}
-
-template <typename T>
-JET_PRESERVE_NONE static void fast_ldfk(VM_OP_PARAMS)
-{
-	OP_ldfk* op = reinterpret_cast<OP_ldfk*>(pc - sizeof(OP_ldfk));
-	FieldIc* ic = &op->ic;
-	T& c = *unbox<T>(callee);
-	size_t idx = ic->ic_extra1;
-	if (idx < c.size()) [[likely]]
-	{
-		frame_regs[op->dst] = container_load(c, idx);
-		DISPATCH();
-	}
-	JET_PROFILE_FIELD_KEY_MISS();
-
-	Atom key = s.constants[op->key_idx];
-	if (!is_type<jet::Type::Number>(key)) [[unlikely]]
-	{
-		JET_MUSTTAIL return die_ref_bad_key(VM_OP_ARGS);
-	}
-	Number n = unbox<Number>(key);
-	if (!is_integer(n) || n < 0) [[unlikely]]
-	{
-		JET_MUSTTAIL return die_ref_bad_key(VM_OP_ARGS);
-	}
-	idx = static_cast<size_t>(n);
-	if (idx >= c.size()) [[unlikely]]
-	{
-		JET_MUSTTAIL return die_ref_oob(VM_OP_ARGS);
-	}
-	ic->ic_extra1 = idx;
-	frame_regs[op->dst] = container_load(c, idx);
-	DISPATCH();
-}
-
-template <typename T>
-JET_PRESERVE_NONE static void fast_stfk(VM_OP_PARAMS)
-{
-	OP_stfk* op = reinterpret_cast<OP_stfk*>(pc - sizeof(OP_stfk));
-	FieldIc* ic = &op->ic;
-	Atom value = frame_regs[op->val];
-	T& c = *unbox<T>(callee);
-	size_t idx = ic->ic_extra1;
-
-	if (idx >= c.size()) [[unlikely]]
-	{
-		JET_PROFILE_FIELD_KEY_MISS();
-		Atom key = s.constants[op->key_idx];
-		if (!is_type<jet::Type::Number>(key)) [[unlikely]]
-		{
-			JET_MUSTTAIL return die_set_bad_key(VM_OP_ARGS);
-		}
-		Number n = unbox<Number>(key);
-		if (!is_integer(n) || n < 0) [[unlikely]]
-		{
-			JET_MUSTTAIL return die_set_bad_key(VM_OP_ARGS);
-		}
-		idx = static_cast<size_t>(n);
-		if (idx >= c.size()) [[unlikely]]
-		{
-			JET_MUSTTAIL return die_set_oob(VM_OP_ARGS);
-		}
-		ic->ic_extra1 = idx;
-	}
-	if (!container_store(c, idx, value)) [[unlikely]]
-	{
-		JET_MUSTTAIL return die_set_bad_value(VM_OP_ARGS);
-	}
-	DISPATCH();
 }
 
 ObjShape g_shape_by_tag[jet_tag::HEAP_END] = {};
@@ -882,40 +686,130 @@ JET_NOINLINE JET_PRESERVE_NONE static void die_iter_exhausted(VM_OP_PARAMS)
 	JET_DIE("%%iter-next!: cursor is exhausted");
 }
 
-JET_PRESERVE_NONE static void vector_cursor_next1(VM_OP_PARAMS)
+JET_NOINLINE JET_PRESERVE_NONE static void die_iter_expected_cursor(VM_OP_PARAMS)
 {
-	OP_iter_next1* op = reinterpret_cast<OP_iter_next1*>(pc - sizeof(OP_iter_next1));
-	VectorCursor* cursor = static_cast<VectorCursor*>(unbox<Struct>(callee));
-	if (!cursor->vector) [[unlikely]]
-	{
-		JET_MUSTTAIL return die_iter_exhausted(VM_OP_ARGS);
-	}
-	Vec& vector = *cursor->vector;
-	size_t& cursor_index = vector.cursor_indices[cursor->slot];
-	size_t index = cursor_index;
-	size_t size = vector.size();
-	if (index < size) [[likely]]
-	{
-		Atom* data = vector.data();
-		cursor_index = index + 1;
-		frame_regs[op->dst] = data[index];
-		DISPATCH();
-	}
-	if (index == size)
-	{
-		cursor->detach();
-		pc += op->size;
-		DISPATCH();
-	}
-	JET_DIE("%%iter-next!: vector cursor index %zu exceeds size %zu", index, size);
+	JET_DIE("%%iter-next!: expected a cursor");
 }
 
+template <int outputs>
+JET_NOINLINE JET_PRESERVE_NONE static void die_iter_bad_outputs(VM_OP_PARAMS)
+{
+	JET_DIE("%%iter-next!: cursor does not supply %d outputs", outputs);
+}
+
+enum class IterResult
+{
+	Yielded,
+	Exhausted,
+	Invalid,
+};
+
+template <typename Op, int outputs>
+JET_PRESERVE_NONE static void op_iter_impl(VM_OP_PARAMS)
+{
+	Op* op = reinterpret_cast<Op*>(pc);
+	Atom value = frame_regs[op->cursor];
+	if (!value.tag_is<jet_tag::struct_>()
+	    || unbox<Struct>(value)->type->kind() != StructKind::Cursor) [[unlikely]]
+	{
+		JET_MUSTTAIL return die_iter_expected_cursor(VM_OP_ARGS);
+	}
+	Cursor* cursor = static_cast<Cursor*>(unbox<Struct>(value));
+	JET_PROFILE_IC_MISS(outputs == 1 ? Opcode::iter_next1 : Opcode::iter_next2);
+	VmOp handler = outputs == 1 ? cursor->ops->next1 : cursor->ops->next2;
+	if (!handler) [[unlikely]]
+	{
+		JET_MUSTTAIL return die_iter_bad_outputs<outputs>(VM_OP_ARGS);
+	}
+	// Each cursor StructType is held by a permanent Env binding (%vector-cursor,
+	// %hashset-cursor, %hashmap-cursor), so the type pointer outlives every cursor
+	// and cannot be recycled behind this key.
+	op->ic.dispatch_key = reinterpret_cast<uint64_t>(cursor->type);
+	std::memcpy(pc - OPCODE_SIZE, &handler, sizeof(handler));
+	JET_MUSTTAIL return handler(VM_OP_ARGS);
+}
+
+// Detaching unlinks the cursor from the container's parallel cursor arrays, which is
+// not call-free; it runs once per loop, so it stays out of the per-element handler.
+template <typename Access>
+JET_NOINLINE JET_PRESERVE_NONE static void op_iter_next_slow(VM_OP_PARAMS)
+{
+	typename Access::Op* op = reinterpret_cast<typename Access::Op*>(pc);
+	static_cast<typename Access::CursorType*>(unbox<Struct>(frame_regs[op->cursor]))->detach();
+	pc += sizeof(*op) + op->size;
+	DISPATCH();
+}
+
+template <typename Access>
+JET_PRESERVE_NONE static void op_iter_next_fast(VM_OP_PARAMS)
+{
+	using Op = typename Access::Op;
+	Op* op = reinterpret_cast<Op*>(pc);
+	Atom value = frame_regs[op->cursor];
+	if (!value.tag_is<jet_tag::struct_>()
+	    || op->ic.dispatch_key != reinterpret_cast<uint64_t>(unbox<Struct>(value)->type)) [[unlikely]]
+	{
+		JET_MUSTTAIL return op_iter_impl<Op, Access::outputs>(VM_OP_ARGS);
+	}
+	typename Access::CursorType* cursor = static_cast<typename Access::CursorType*>(unbox<Struct>(value));
+	IterResult result = Access::next_fast(op, frame_regs, cursor);
+	if (result == IterResult::Yielded) [[likely]]
+	{
+		pc += sizeof(*op);
+		DISPATCH();
+	}
+	if (result == IterResult::Exhausted)
+	{
+		JET_MUSTTAIL return op_iter_next_slow<Access>(VM_OP_ARGS);
+	}
+	JET_MUSTTAIL return Access::die(VM_OP_ARGS);
+}
+
+JET_NOINLINE JET_PRESERVE_NONE static void die_iter_vector_index(VM_OP_PARAMS)
+{
+	OP_iter_next1* op = reinterpret_cast<OP_iter_next1*>(pc);
+	VectorCursor* cursor = static_cast<VectorCursor*>(unbox<Struct>(frame_regs[op->cursor]));
+	if (!cursor->vector)
+	{
+		JET_DIE("%%iter-next!: cursor is exhausted");
+	}
+	JET_DIE("%%iter-next!: vector cursor index %zu exceeds size %zu",
+	        cursor->vector->cursor_indices[cursor->slot], cursor->vector->size());
+}
+
+struct VectorCursorAccess
+{
+	using Op = OP_iter_next1;
+	using CursorType = VectorCursor;
+	static constexpr int outputs = 1;
+	static constexpr VmOp die = die_iter_vector_index;
+
+	JET_ALWAYS_INLINE static IterResult next_fast(Op* op, Atom* frame_regs, VectorCursor* cursor)
+	{
+		if (!cursor->vector) [[unlikely]]
+		{
+			return IterResult::Invalid;
+		}
+		Vec& vector = *cursor->vector;
+		size_t& cursor_index = vector.cursor_indices[cursor->slot];
+		size_t index = cursor_index;
+		size_t size = vector.size();
+		if (index >= size) [[unlikely]]
+		{
+			return index == size ? IterResult::Exhausted : IterResult::Invalid;
+		}
+		cursor_index = index + 1;
+		frame_regs[op->dst] = vector.data()[index];
+		return IterResult::Yielded;
+	}
+};
+
 static const CursorOps vector_cursor_ops = {
-	vector_cursor_next1,
+	op_iter_next_fast<VectorCursorAccess>,
 	nullptr,
 };
 
-static Cursor* vector_cursor_make(VmState& s, Atom target)
+static Cursor* make_vector_cursor(VmState& s, Atom target)
 {
 	JET_DIE_UNLESS(is_type<jet::Type::StructType>(VectorCursor::type_atom),
 	               "vector cursor type is not initialized");
@@ -924,37 +818,38 @@ static Cursor* vector_cursor_make(VmState& s, Atom target)
 	return new (mem) VectorCursor{type, target, &vector_cursor_ops};
 }
 
-JET_PRESERVE_NONE static void hashset_cursor_next1(VM_OP_PARAMS)
+struct HashSetCursorAccess
 {
-	OP_iter_next1* op = reinterpret_cast<OP_iter_next1*>(pc - sizeof(OP_iter_next1));
-	HashSetCursor* cursor = static_cast<HashSetCursor*>(unbox<Struct>(callee));
-	if (!cursor->table) [[unlikely]]
+	using Op = OP_iter_next1;
+	using CursorType = HashSetCursor;
+	static constexpr int outputs = 1;
+	static constexpr VmOp die = die_iter_exhausted;
+
+	JET_ALWAYS_INLINE static IterResult next_fast(Op* op, Atom* frame_regs, HashSetCursor* cursor)
 	{
-		JET_MUSTTAIL return die_iter_exhausted(VM_OP_ARGS);
-	}
-	HashSet& set = *cursor->table;
-	size_t first = set.first;
-	size_t last = set.last;
-	size_t& cursor_position = set.cursor_positions[cursor->slot];
-	size_t position = set.next_live(cursor_position);
-	if (position < last)
-	{
-		const TableKey& entry = set.entries[position - first];
+		if (!cursor->table) [[unlikely]]
+		{
+			return IterResult::Invalid;
+		}
+		HashSet& set = *cursor->table;
+		size_t& cursor_position = set.cursor_positions[cursor->slot];
+		size_t position = set.next_live(cursor_position);
+		if (position >= set.last) [[unlikely]]
+		{
+			return IterResult::Exhausted;
+		}
 		cursor_position = position + 1;
-		frame_regs[op->dst] = entry.atom;
-		DISPATCH();
+		frame_regs[op->dst] = set.entries[position - set.first].atom;
+		return IterResult::Yielded;
 	}
-	cursor->detach();
-	pc += op->size;
-	DISPATCH();
-}
+};
 
 static const CursorOps hashset_cursor_ops = {
-	hashset_cursor_next1,
+	op_iter_next_fast<HashSetCursorAccess>,
 	nullptr,
 };
 
-Cursor* hashset_cursor_make(VmState& s, Atom target)
+Cursor* make_hashset_cursor(VmState& s, Atom target)
 {
 	JET_DIE_UNLESS(is_type<jet::Type::StructType>(HashSetCursor::type_atom),
 	               "hashset cursor type is not initialized");
@@ -963,38 +858,40 @@ Cursor* hashset_cursor_make(VmState& s, Atom target)
 	return new (mem) HashSetCursor{type, target, &hashset_cursor_ops};
 }
 
-JET_PRESERVE_NONE static void hashmap_cursor_next2(VM_OP_PARAMS)
+struct HashMapCursorAccess
 {
-	OP_iter_next2* op = reinterpret_cast<OP_iter_next2*>(pc - sizeof(OP_iter_next2));
-	HashMapCursor* cursor = static_cast<HashMapCursor*>(unbox<Struct>(callee));
-	if (!cursor->table) [[unlikely]]
+	using Op = OP_iter_next2;
+	using CursorType = HashMapCursor;
+	static constexpr int outputs = 2;
+	static constexpr VmOp die = die_iter_exhausted;
+
+	JET_ALWAYS_INLINE static IterResult next_fast(Op* op, Atom* frame_regs, HashMapCursor* cursor)
 	{
-		JET_MUSTTAIL return die_iter_exhausted(VM_OP_ARGS);
-	}
-	HashMap& map = *cursor->table;
-	size_t first = map.first;
-	size_t last = map.last;
-	size_t& cursor_position = map.cursor_positions[cursor->slot];
-	size_t position = map.next_live(cursor_position);
-	if (position < last)
-	{
-		const HashMapEntry& entry = map.entries[position - first];
+		if (!cursor->table) [[unlikely]]
+		{
+			return IterResult::Invalid;
+		}
+		HashMap& map = *cursor->table;
+		size_t& cursor_position = map.cursor_positions[cursor->slot];
+		size_t position = map.next_live(cursor_position);
+		if (position >= map.last) [[unlikely]]
+		{
+			return IterResult::Exhausted;
+		}
+		const HashMapEntry& entry = map.entries[position - map.first];
 		cursor_position = position + 1;
 		frame_regs[op->dst0] = entry.key.atom;
 		frame_regs[op->dst1] = entry.value;
-		DISPATCH();
+		return IterResult::Yielded;
 	}
-	cursor->detach();
-	pc += op->size;
-	DISPATCH();
-}
+};
 
 static const CursorOps hashmap_cursor_ops = {
 	nullptr,
-	hashmap_cursor_next2,
+	op_iter_next_fast<HashMapCursorAccess>,
 };
 
-Cursor* hashmap_cursor_make(VmState& s, Atom target)
+Cursor* make_hashmap_cursor(VmState& s, Atom target)
 {
 	JET_DIE_UNLESS(is_type<jet::Type::StructType>(HashMapCursor::type_atom),
 	               "hashmap cursor type is not initialized");
@@ -1009,44 +906,14 @@ namespace
 	{
 		shape_table_init_t()
 		{
-			g_shape_by_tag[jet_tag::vector] = {
-				fast_ldf<Vec>,
-				fast_stf<Vec>,
-				fast_ldfk<Vec>,
-				fast_stfk<Vec>,
-				nullptr,
-				nullptr,
-				vector_ref,
-				vector_cursor_make,
-			};
-			g_shape_by_tag[jet_tag::string] = {
-				fast_ldf<String>,
-				die_set_string_immutable,
-				fast_ldfk<String>,
-				die_set_string_immutable,
-				nullptr,
-				nullptr,
-				string_ref,
-				nullptr,
-			};
-			g_shape_by_tag[jet_tag::bytevector] = {
-				fast_ldf<ByteVector>,
-				fast_stf<ByteVector>,
-				fast_ldfk<ByteVector>,
-				fast_stfk<ByteVector>,
-				nullptr,
-				nullptr,
-				bytevector_u8_ref,
-				nullptr,
-			};
+			g_shape_by_tag[jet_tag::vector] =
+				make_field_shape<ContainerAccess<Vec>>(vector_ref, make_vector_cursor);
+			g_shape_by_tag[jet_tag::string] = make_field_shape<StringAccess>(string_ref, nullptr);
+			g_shape_by_tag[jet_tag::bytevector] =
+				make_field_shape<ContainerAccess<ByteVector>>(bytevector_u8_ref, nullptr);
 		}
 	} shape_table_init;
 } // namespace
-
-static uint16_t type_bits(Atom a)
-{
-	return static_cast<uint16_t>(a.bits >> 48);
-}
 
 #ifdef JET_PROFILE
 FieldReceiver profile_field_receiver(Atom object)
@@ -1072,6 +939,8 @@ FieldReceiver profile_field_receiver(Atom object)
 					return FieldReceiver::HashMap;
 				case StructKind::Cursor:
 					return FieldReceiver::Cursor;
+				case StructKind::Escape:
+					return FieldReceiver::Other;
 			}
 		default:
 			return FieldReceiver::Other;
@@ -1079,228 +948,68 @@ FieldReceiver profile_field_receiver(Atom object)
 }
 #endif
 
-static VmOp field_install_ldf(FieldIc* ic, Atom obj)
-{
-	const ObjShape* shape = shape_of(obj);
-	JET_DIE_UNLESS(shape && shape->ldf_handler, "ref: unsupported receiver type");
-	ic->ic_handler = reinterpret_cast<uint64_t>(shape->ldf_handler);
-	ic->ic_extra1 = ~static_cast<uint64_t>(0);
-	ic->ic_extra2 = ~static_cast<uint64_t>(0);
-	return shape->ldf_handler;
-}
+static constexpr auto& op_ldf = op_field_impl<false, false>;
+static constexpr auto& op_stf = op_field_impl<true, false>;
+static constexpr auto& op_ldfk = op_field_impl<false, true>;
+static constexpr auto& op_stfk = op_field_impl<true, true>;
 
-static VmOp field_install_stf(FieldIc* ic, Atom obj)
-{
-	const ObjShape* shape = shape_of(obj);
-	JET_DIE_UNLESS(shape && shape->stf_handler, "set!: unsupported receiver type");
-	ic->ic_handler = reinterpret_cast<uint64_t>(shape->stf_handler);
-	ic->ic_extra1 = ~static_cast<uint64_t>(0);
-	ic->ic_extra2 = ~static_cast<uint64_t>(0);
-	return shape->stf_handler;
-}
+static constexpr auto& op_iter_next1 = op_iter_impl<OP_iter_next1, 1>;
+static constexpr auto& op_iter_next2 = op_iter_impl<OP_iter_next2, 2>;
 
-static VmOp field_install_ldfk(FieldIc* ic, Atom obj)
-{
-	const ObjShape* shape = shape_of(obj);
-	JET_DIE_UNLESS(shape && shape->ldfk_handler, "ref: unsupported receiver type");
-	ic->ic_handler = reinterpret_cast<uint64_t>(shape->ldfk_handler);
-	ic->ic_extra1 = ~static_cast<uint64_t>(0);
-	return shape->ldfk_handler;
-}
-
-static VmOp field_install_stfk(FieldIc* ic, Atom obj)
-{
-	const ObjShape* shape = shape_of(obj);
-	JET_DIE_UNLESS(shape && shape->stfk_handler, "set!: unsupported receiver type");
-	ic->ic_handler = reinterpret_cast<uint64_t>(shape->stfk_handler);
-	ic->ic_extra1 = ~static_cast<uint64_t>(0);
-	return shape->stfk_handler;
-}
-
-enum class FieldDispatchKind
-{
-	Install,
-	Container,
-	Struct,
-};
-
-template<typename Op, Opcode opcode, auto InstallHandler, FieldDispatchKind kind>
-JET_PRESERVE_NONE static void op_field_reg(VM_OP_PARAMS)
-{
-	Op* op = reinterpret_cast<Op*>(pc);
-	Atom obj = frame_regs[op->obj];
-	bool hit = false;
-	if constexpr (kind == FieldDispatchKind::Container)
-	{
-		hit = op->ic.ic_dispatch_key == type_bits(obj);
-	}
-	else if constexpr (kind == FieldDispatchKind::Struct)
-	{
-		hit = obj.tag_is<jet_tag::struct_>() &&
-		      op->ic.ic_dispatch_key == reinterpret_cast<uint64_t>(unbox<Struct>(obj)->type);
-	}
-
-	if (!hit)
-	{
-		VmOp dispatch;
-		if (obj.tag_is<jet_tag::struct_>())
-		{
-			dispatch = op_field_reg<Op, opcode, InstallHandler, FieldDispatchKind::Struct>;
-			op->ic.ic_dispatch_key = reinterpret_cast<uint64_t>(unbox<Struct>(obj)->type);
-		}
-		else
-		{
-			dispatch = op_field_reg<Op, opcode, InstallHandler, FieldDispatchKind::Container>;
-			op->ic.ic_dispatch_key = type_bits(obj);
-		}
-		std::memcpy(pc - OPCODE_SIZE, &dispatch, sizeof(dispatch));
-	}
-
-	pc += sizeof(*op);
-	callee = obj;
-
-	JET_PROFILE_FIELD_DISPATCH(opcode, profile_field_receiver(obj), hit);
-	VmOp h = hit
-	         ? reinterpret_cast<VmOp>(op->ic.ic_handler)
-	         : InstallHandler(&op->ic, obj);
-	JET_MUSTTAIL return h(VM_OP_ARGS);
-}
-
-static constexpr auto& op_ldf =
-	op_field_reg<OP_ldf, Opcode::ldf, field_install_ldf, FieldDispatchKind::Install>;
-static constexpr auto& op_stf =
-	op_field_reg<OP_stf, Opcode::stf, field_install_stf, FieldDispatchKind::Install>;
-JET_PRESERVE_NONE void field_ldfk_miss(VM_OP_PARAMS)
-{
-	JET_MUSTTAIL return op_field_reg<OP_ldfk, Opcode::ldfk, field_install_ldfk, FieldDispatchKind::Install>(
-		VM_OP_ARGS);
-}
-
-JET_PRESERVE_NONE void field_stfk_miss(VM_OP_PARAMS)
-{
-	JET_MUSTTAIL return op_field_reg<OP_stfk, Opcode::stfk, field_install_stfk, FieldDispatchKind::Install>(
-		VM_OP_ARGS);
-}
-
-static constexpr auto& op_ldfk = field_ldfk_miss;
-static constexpr auto& op_stfk = field_stfk_miss;
-
-JET_NOINLINE JET_PRESERVE_NONE static void die_iter_expected_cursor(VM_OP_PARAMS)
-{
-	JET_DIE("%%iter-next!: expected a cursor");
-}
-
-template <int outputs>
-JET_NOINLINE JET_PRESERVE_NONE static void die_iter_bad_outputs(VM_OP_PARAMS)
-{
-	JET_DIE("%%iter-next!: cursor does not supply %d outputs", outputs);
-}
-
-enum class IterDispatchKind
-{
-	Install,
-	Cursor,
-};
-
-template <typename Op, int outputs, IterDispatchKind kind>
-JET_PRESERVE_NONE static void op_iter_next(VM_OP_PARAMS)
-{
-	Op* op = reinterpret_cast<Op*>(pc);
-	Atom value = frame_regs[op->cursor];
-	if constexpr (kind == IterDispatchKind::Cursor)
-	{
-		if (value.tag_is<jet_tag::struct_>()
-		    && op->ic.ic_dispatch_key == reinterpret_cast<uint64_t>(unbox<Struct>(value)->type)) [[likely]]
-		{
-			VmOp handler = reinterpret_cast<VmOp>(op->ic.ic_handler);
-			pc += sizeof(*op);
-			callee = value;
-			JET_MUSTTAIL return handler(VM_OP_ARGS);
-		}
-	}
-
-	if (!value.tag_is<jet_tag::struct_>()) [[unlikely]]
-	{
-		JET_MUSTTAIL return die_iter_expected_cursor(VM_OP_ARGS);
-	}
-	Struct* instance = unbox<Struct>(value);
-	if (instance->type->kind() != StructKind::Cursor) [[unlikely]]
-	{
-		JET_MUSTTAIL return die_iter_expected_cursor(VM_OP_ARGS);
-	}
-	Cursor* cursor = static_cast<Cursor*>(instance);
-	JET_PROFILE_IC_MISS(outputs == 1 ? Opcode::iter_next1 : Opcode::iter_next2);
-	VmOp handler = outputs == 1 ? cursor->ops->next1 : cursor->ops->next2;
-	if (!handler) [[unlikely]]
-	{
-		JET_MUSTTAIL return die_iter_bad_outputs<outputs>(VM_OP_ARGS);
-	}
-	op->ic.ic_dispatch_key = reinterpret_cast<uint64_t>(instance->type);
-	op->ic.ic_handler = reinterpret_cast<uint64_t>(handler);
-	VmOp dispatch = op_iter_next<Op, outputs, IterDispatchKind::Cursor>;
-	std::memcpy(pc - OPCODE_SIZE, &dispatch, sizeof(dispatch));
-	pc += sizeof(*op);
-	callee = value;
-	JET_MUSTTAIL return handler(VM_OP_ARGS);
-}
-
-static constexpr auto& op_iter_next1 = op_iter_next<OP_iter_next1, 1, IterDispatchKind::Install>;
-static constexpr auto& op_iter_next2 = op_iter_next<OP_iter_next2, 2, IterDispatchKind::Install>;
-
-JET_ALWAYS_INLINE static Atom sub_op(Atom a, Atom b)
+JET_ALWAYS_INLINE static Atom sub_atoms(Atom a, Atom b)
 {
 	JET_DIE_UNLESS(is_type<jet::Type::Number>(a) && is_type<jet::Type::Number>(b), "-: expected numbers");
 	return box<Number>(unbox<Number>(a) - unbox<Number>(b));
 }
-JET_ALWAYS_INLINE static Atom add_op(Atom a, Atom b)
+JET_ALWAYS_INLINE static Atom add_atoms(Atom a, Atom b)
 {
 	JET_DIE_UNLESS(is_type<jet::Type::Number>(a) && is_type<jet::Type::Number>(b), "+: expected numbers");
 	return box<Number>(unbox<Number>(a) + unbox<Number>(b));
 }
-JET_ALWAYS_INLINE static Atom mul_op(Atom a, Atom b)
+JET_ALWAYS_INLINE static Atom mul_atoms(Atom a, Atom b)
 {
 	JET_DIE_UNLESS(is_type<jet::Type::Number>(a) && is_type<jet::Type::Number>(b), "*: expected numbers");
 	return box<Number>(unbox<Number>(a) * unbox<Number>(b));
 }
-JET_ALWAYS_INLINE static Atom div_op(Atom a, Atom b)
+JET_ALWAYS_INLINE static Atom div_atoms(Atom a, Atom b)
 {
 	JET_DIE_UNLESS(is_type<jet::Type::Number>(a) && is_type<jet::Type::Number>(b), "/: expected numbers");
 	return box<Number>(unbox<Number>(a) / unbox<Number>(b));
 }
-JET_ALWAYS_INLINE static Atom numeq_op(Atom a, Atom b)
+JET_ALWAYS_INLINE static Atom numeq_atoms(Atom a, Atom b)
 {
 	JET_DIE_UNLESS(is_type<jet::Type::Number>(a) && is_type<jet::Type::Number>(b), "=: expected numbers");
 	return box(unbox<Number>(a) == unbox<Number>(b));
 }
-JET_ALWAYS_INLINE static Atom eq_op(Atom a, Atom b) { return box(is_eq(a, b)); }
-JET_ALWAYS_INLINE static Atom lt_op(Atom a, Atom b)
+JET_ALWAYS_INLINE static Atom eq_atoms(Atom a, Atom b) { return box(is_eq(a, b)); }
+JET_ALWAYS_INLINE static Atom lt_atoms(Atom a, Atom b)
 {
 	JET_DIE_UNLESS(is_type<jet::Type::Number>(a) && is_type<jet::Type::Number>(b), "<: expected numbers");
 	return box(unbox<Number>(a) < unbox<Number>(b));
 }
-JET_ALWAYS_INLINE static Atom le_op(Atom a, Atom b)
+JET_ALWAYS_INLINE static Atom le_atoms(Atom a, Atom b)
 {
 	JET_DIE_UNLESS(is_type<jet::Type::Number>(a) && is_type<jet::Type::Number>(b), "<=: expected numbers");
 	return box(unbox<Number>(a) <= unbox<Number>(b));
 }
-JET_ALWAYS_INLINE static Atom gt_op(Atom a, Atom b)
+JET_ALWAYS_INLINE static Atom gt_atoms(Atom a, Atom b)
 {
 	JET_DIE_UNLESS(is_type<jet::Type::Number>(a) && is_type<jet::Type::Number>(b), ">: expected numbers");
 	return box(unbox<Number>(a) > unbox<Number>(b));
 }
-JET_ALWAYS_INLINE static Atom ge_op(Atom a, Atom b)
+JET_ALWAYS_INLINE static Atom ge_atoms(Atom a, Atom b)
 {
 	JET_DIE_UNLESS(is_type<jet::Type::Number>(a) && is_type<jet::Type::Number>(b), ">=: expected numbers");
 	return box(unbox<Number>(a) >= unbox<Number>(b));
 }
 
-JET_NOINLINE static VmOp resolve_call_stub(Atom callee, size_t nargs, bool tail)
+JET_NOINLINE static VmOp resolve_callee(Atom callee, size_t nargs, bool tail)
 {
 	if (is_type<jet::Type::Procedure>(callee))
 	{
 		Lambda* la = unbox<Lambda>(callee);
 		check_arity(la->arity, nargs);
-		return tail ? &fast_call_lambda_tail : &fast_call_lambda_notail;
+		return tail ? &op_enter_lambda_fast<true> : &op_enter_lambda_fast<false>;
 	}
 	if (is_type<jet::Type::Primitive>(callee))
 	{
@@ -1320,12 +1029,7 @@ JET_NOINLINE static VmOp resolve_call_stub(Atom callee, size_t nargs, bool tail)
 		return &die_not_callable;
 	}
 	check_arity(exactly(1), nargs);
-	return &escape_stub;
-}
-
-static bool is_fixed_arity_lambda(Atom callee)
-{
-	return is_type<jet::Type::Procedure>(callee) && !is_nary(unbox<Lambda>(callee)->arity);
+	return &op_enter_escape;
 }
 
 JET_PRESERVE_NONE static void op_mov(VM_OP_PARAMS)
@@ -1449,23 +1153,23 @@ JET_PRESERVE_NONE static void op_binop_rk_impl(VM_OP_PARAMS)
 	DISPATCH();
 }
 
-static constexpr auto& op_add  = op_binop_rr_impl<add_op>;
-static constexpr auto& op_sub  = op_binop_rr_impl<sub_op>;
-static constexpr auto& op_mul  = op_binop_rr_impl<mul_op>;
-static constexpr auto& op_div  = op_binop_rr_impl<div_op>;
-static constexpr auto& op_numeq   = op_binop_rr_impl<numeq_op>;
-static constexpr auto& op_eq      = op_binop_rr_impl<eq_op>;
-static constexpr auto& op_lt   = op_binop_rr_impl<lt_op>;
-static constexpr auto& op_le   = op_binop_rr_impl<le_op>;
-static constexpr auto& op_gt   = op_binop_rr_impl<gt_op>;
-static constexpr auto& op_ge   = op_binop_rr_impl<ge_op>;
-static constexpr auto& op_addk = op_binop_rk_impl<add_op>;
-static constexpr auto& op_subk = op_binop_rk_impl<sub_op>;
-static constexpr auto& op_mulk = op_binop_rk_impl<mul_op>;
-static constexpr auto& op_divk = op_binop_rk_impl<div_op>;
-static constexpr auto& op_numeqk  = op_binop_rk_impl<numeq_op>;
-static constexpr auto& op_eqk     = op_binop_rk_impl<eq_op>;
-static constexpr auto& op_ltk  = op_binop_rk_impl<lt_op>;
+static constexpr auto& op_add  = op_binop_rr_impl<add_atoms>;
+static constexpr auto& op_sub  = op_binop_rr_impl<sub_atoms>;
+static constexpr auto& op_mul  = op_binop_rr_impl<mul_atoms>;
+static constexpr auto& op_div  = op_binop_rr_impl<div_atoms>;
+static constexpr auto& op_numeq   = op_binop_rr_impl<numeq_atoms>;
+static constexpr auto& op_eq      = op_binop_rr_impl<eq_atoms>;
+static constexpr auto& op_lt   = op_binop_rr_impl<lt_atoms>;
+static constexpr auto& op_le   = op_binop_rr_impl<le_atoms>;
+static constexpr auto& op_gt   = op_binop_rr_impl<gt_atoms>;
+static constexpr auto& op_ge   = op_binop_rr_impl<ge_atoms>;
+static constexpr auto& op_addk = op_binop_rk_impl<add_atoms>;
+static constexpr auto& op_subk = op_binop_rk_impl<sub_atoms>;
+static constexpr auto& op_mulk = op_binop_rk_impl<mul_atoms>;
+static constexpr auto& op_divk = op_binop_rk_impl<div_atoms>;
+static constexpr auto& op_numeqk  = op_binop_rk_impl<numeq_atoms>;
+static constexpr auto& op_eqk     = op_binop_rk_impl<eq_atoms>;
+static constexpr auto& op_ltk  = op_binop_rk_impl<lt_atoms>;
 
 JET_PRESERVE_NONE static void op_if_false(VM_OP_PARAMS)
 {
@@ -1502,15 +1206,15 @@ JET_PRESERVE_NONE static void op_if_cmp_rk_impl(VM_OP_PARAMS)
 	DISPATCH();
 }
 
-static constexpr auto& op_if_numeq  = op_if_cmp_rr_impl<numeq_op>;
-static constexpr auto& op_if_eq     = op_if_cmp_rr_impl<eq_op>;
-static constexpr auto& op_if_lt  = op_if_cmp_rr_impl<lt_op>;
-static constexpr auto& op_if_le  = op_if_cmp_rr_impl<le_op>;
-static constexpr auto& op_if_gt  = op_if_cmp_rr_impl<gt_op>;
-static constexpr auto& op_if_ge  = op_if_cmp_rr_impl<ge_op>;
-static constexpr auto& op_if_numeqk = op_if_cmp_rk_impl<numeq_op>;
-static constexpr auto& op_if_eqk    = op_if_cmp_rk_impl<eq_op>;
-static constexpr auto& op_if_ltk = op_if_cmp_rk_impl<lt_op>;
+static constexpr auto& op_if_numeq  = op_if_cmp_rr_impl<numeq_atoms>;
+static constexpr auto& op_if_eq     = op_if_cmp_rr_impl<eq_atoms>;
+static constexpr auto& op_if_lt  = op_if_cmp_rr_impl<lt_atoms>;
+static constexpr auto& op_if_le  = op_if_cmp_rr_impl<le_atoms>;
+static constexpr auto& op_if_gt  = op_if_cmp_rr_impl<gt_atoms>;
+static constexpr auto& op_if_ge  = op_if_cmp_rr_impl<ge_atoms>;
+static constexpr auto& op_if_numeqk = op_if_cmp_rk_impl<numeq_atoms>;
+static constexpr auto& op_if_eqk    = op_if_cmp_rk_impl<eq_atoms>;
+static constexpr auto& op_if_ltk = op_if_cmp_rk_impl<lt_atoms>;
 
 JET_PRESERVE_NONE static void op_retv(VM_OP_PARAMS)
 {
@@ -1565,14 +1269,7 @@ JET_PRESERVE_NONE static void op_call_impl(VM_OP_PARAMS)
 	pc += sizeof(*op);
 	callee = frame_regs[op->callee];
 	JET_CALL_WINDOW(op->w, op->nargs);
-	if constexpr (is_tail)
-	{
-		JET_MUSTTAIL return slow_call_tail(VM_OP_ARGS);
-	}
-	else
-	{
-		JET_MUSTTAIL return slow_call_notail(VM_OP_ARGS);
-	}
+	JET_MUSTTAIL return op_call_slow<is_tail>(VM_OP_ARGS);
 }
 
 static constexpr auto& op_call = op_call_impl<false>;
@@ -1604,7 +1301,7 @@ JET_PRESERVE_NONE static void op_reset(VM_OP_PARAMS)
 	args = window + 1;
 	stack_top = args + 1;
 	frame->code = escape->retk_code;
-	JET_MUSTTAIL return slow_call_notail(VM_OP_ARGS);
+	JET_MUSTTAIL return op_call_slow<false>(VM_OP_ARGS);
 }
 
 JET_PRESERVE_NONE static void op_retk(VM_OP_PARAMS)
@@ -1617,7 +1314,7 @@ JET_PRESERVE_NONE static void op_retk(VM_OP_PARAMS)
 	DISPATCH();
 }
 
-JET_NOINLINE JET_PRESERVE_NONE static void escape_stub(VM_OP_PARAMS)
+JET_NOINLINE JET_PRESERVE_NONE static void op_enter_escape(VM_OP_PARAMS)
 {
 	Escape* escape = static_cast<Escape*>(unbox<Struct>(callee));
 	JET_DIE_UNLESS(escape->n_frames <= s.frames.size()
@@ -1634,9 +1331,9 @@ JET_NOINLINE JET_PRESERVE_NONE static void escape_stub(VM_OP_PARAMS)
 	DISPATCH();
 }
 
-JET_NOINLINE JET_PRESERVE_NONE static void slow_recur(VM_OP_PARAMS)
+JET_NOINLINE JET_PRESERVE_NONE static void op_call_self_tail_slow(VM_OP_PARAMS)
 {
-	OP_recur* op = reinterpret_cast<OP_recur*>(pc);
+	OP_call_self_tail* op = reinterpret_cast<OP_call_self_tail*>(pc);
 	Lambda& la = *frame->closure;
 	Atom* dst = frame_regs;
 	Atom* src = frame_regs + op->w;
@@ -1654,11 +1351,11 @@ JET_NOINLINE JET_PRESERVE_NONE static void slow_recur(VM_OP_PARAMS)
 	DISPATCH();
 }
 
-JET_PRESERVE_NONE static void op_recur(VM_OP_PARAMS)
+JET_PRESERVE_NONE static void op_call_self_tail(VM_OP_PARAMS)
 {
-	if (OP_recur* op = reinterpret_cast<OP_recur*>(pc); op->w != 0)
+	if (OP_call_self_tail* op = reinterpret_cast<OP_call_self_tail*>(pc); op->w != 0)
 	{
-		JET_MUSTTAIL return slow_recur(VM_OP_ARGS);
+		JET_MUSTTAIL return op_call_self_tail_slow(VM_OP_ARGS);
 	}
 	pc = frame->closure->code;
 	DISPATCH();
@@ -1682,78 +1379,115 @@ JET_PRESERVE_NONE static void op_apply(VM_OP_PARAMS)
 		s.stack_watermark = stack_top;
 	}
 	frame->code = pc;
-	JET_MUSTTAIL return slow_call_notail(VM_OP_ARGS);
+	JET_MUSTTAIL return op_call_slow<false>(VM_OP_ARGS);
 }
 
-template <int N, bool is_tail, bool check_gc = true>
-JET_PRESERVE_NONE static void op_cs_impl(VM_OP_PARAMS);
+// Lambda is installed only for callees whose entry cannot allocate, so the GC check
+// belongs to Stub alone.
+enum class CalleeKind
+{
+	Lambda,
+	Stub
+};
+
+template <bool is_tail, class Ic>
+static bool cache_lambda_entry(VmState& s, Atom callee, Ic* op)
+{
+	if (!is_type<jet::Type::Procedure>(callee))
+	{
+		return false;
+	}
+	Lambda* la = unbox<Lambda>(callee);
+	if (is_nary(la->arity) || (is_tail && op->nargs > 16))
+	{
+		return false;
+	}
+	op->ic_code = reinterpret_cast<uint64_t>(la->code);
+	op->ic_n_locals = la->n_locals;
+	op->ic_epoch = s.gc.epoch;
+	return true;
+}
+
+template <int N, bool is_tail, CalleeKind kind = CalleeKind::Stub>
+JET_PRESERVE_NONE static void op_call_slot_impl(VM_OP_PARAMS);
 
 template <int N, bool is_tail>
-JET_NOINLINE JET_PRESERVE_NONE static void op_cs_miss(VM_OP_PARAMS)
+JET_NOINLINE JET_PRESERVE_NONE static void op_call_slot_slow(VM_OP_PARAMS)
 {
-	JET_PROFILE_IC_MISS(static_cast<uint8_t>(is_tail ? Opcode::cst_0 : Opcode::cs_0) + N);
-	OP_cs* op = reinterpret_cast<OP_cs*>(pc);
+	JET_PROFILE_IC_MISS(static_cast<uint8_t>(is_tail ? Opcode::call_upval_slot_tail_0
+	                                         : Opcode::call_upval_slot_0) + N);
+	OP_call_slot* op = reinterpret_cast<OP_call_slot*>(pc);
 	Slot* sl = unbox<Slot>(frame->closure->captures[op->upvalue_idx]);
 	callee = sl->value;
-	VmOp stub = resolve_call_stub(callee, op->nargs, is_tail);
+	VmOp stub = resolve_callee(callee, op->nargs, is_tail);
 	op->ic_slot = reinterpret_cast<uint64_t>(sl);
 	op->ic_atom = callee.bits;
-	op->ic_stub = reinterpret_cast<uint64_t>(stub);
 	op->ic_version = sl->version;
-	VmOp hit = is_fixed_arity_lambda(callee) ? op_cs_impl<N, is_tail, false>
-	           : op_cs_impl<N, is_tail, true>;
-	std::memcpy(reinterpret_cast<Code*>(op) - OPCODE_SIZE, &hit, sizeof(hit));
-	JET_MUSTTAIL return hit(VM_OP_ARGS);
+	VmOp fast = op_call_slot_impl<N, is_tail, CalleeKind::Lambda>;
+	if (!cache_lambda_entry<is_tail>(s, callee, op))
+	{
+		op->ic_stub = reinterpret_cast<uint64_t>(stub);
+		fast = op_call_slot_impl<N, is_tail, CalleeKind::Stub>;
+	}
+	std::memcpy(reinterpret_cast<Code*>(op) - OPCODE_SIZE, &fast, sizeof(fast));
+	JET_MUSTTAIL return fast(VM_OP_ARGS);
 }
 
-template <int N, bool is_tail, bool check_gc>
-JET_PRESERVE_NONE static void op_cs_impl(VM_OP_PARAMS)
+template <int N, bool is_tail, CalleeKind kind>
+JET_PRESERVE_NONE static void op_call_slot_impl(VM_OP_PARAMS)
 {
-	if constexpr (check_gc)
+	if constexpr (CalleeKind::Stub == kind)
 	{
 		JET_GC_CHECK();
 	}
-	OP_cs* op = reinterpret_cast<OP_cs*>(pc);
+	OP_call_slot* op = reinterpret_cast<OP_call_slot*>(pc);
 	if (Slot* sl = unbox<Slot>(frame->closure->captures[op->upvalue_idx]);
-	    op->ic_slot != reinterpret_cast<uint64_t>(sl) || op->ic_version != sl->version) [[unlikely]]
+	    op->ic_slot != reinterpret_cast<uint64_t>(sl) || op->ic_version != sl->version
+	    || (CalleeKind::Lambda == kind && op->ic_epoch != s.gc.epoch)) [[unlikely]]
 	{
-		JET_MUSTTAIL return op_cs_miss<N, is_tail>(VM_OP_ARGS);
+		JET_MUSTTAIL return op_call_slot_slow<N, is_tail>(VM_OP_ARGS);
 	}
 	pc += sizeof(*op);
 	callee = Atom::from_bits(op->ic_atom);
-	VmOp stub = reinterpret_cast<VmOp>(op->ic_stub);
 	JET_CALL_WINDOW(op->w, op->nargs);
-	JET_MUSTTAIL return stub(VM_OP_ARGS);
-}
-
-enum class CdKind
-{
-	Local,
-	Upvalue
-};
-
-template <bool is_tail, CdKind kind>
-static constexpr Opcode cd_base_opcode()
-{
-	if constexpr (kind == CdKind::Local)
+	if constexpr (CalleeKind::Lambda == kind)
 	{
-		return is_tail ? Opcode::cdlt_0 : Opcode::cdl_0;
+		JET_MUSTTAIL return op_enter_lambda_fast<is_tail, OP_call_slot>(VM_OP_ARGS);
 	}
 	else
 	{
-		return is_tail ? Opcode::cdut_0 : Opcode::cdu_0;
+		JET_MUSTTAIL return reinterpret_cast<VmOp>(op->ic_stub)(VM_OP_ARGS);
 	}
 }
 
-template <int N, bool is_tail, CdKind kind, bool check_gc = true>
-JET_PRESERVE_NONE static void op_cd_impl(VM_OP_PARAMS);
-
-template <int N, bool is_tail, CdKind kind>
-JET_NOINLINE JET_PRESERVE_NONE static void op_cd_miss(VM_OP_PARAMS)
+enum class CalleeSource
 {
-	JET_PROFILE_IC_MISS(static_cast<uint8_t>(cd_base_opcode<is_tail, kind>()) + N);
-	OP_cd* op = reinterpret_cast<OP_cd*>(pc);
-	if constexpr (kind == CdKind::Local)
+	Local,
+	Upval
+};
+
+template <bool is_tail, CalleeSource source>
+static constexpr Opcode call_atom_opcode()
+{
+	if constexpr (source == CalleeSource::Local)
+	{
+		return is_tail ? Opcode::call_local_tail_0 : Opcode::call_local_0;
+	}
+	else
+	{
+		return is_tail ? Opcode::call_upval_tail_0 : Opcode::call_upval_0;
+	}
+}
+
+template <int N, bool is_tail, CalleeSource source, CalleeKind kind = CalleeKind::Stub>
+JET_PRESERVE_NONE static void op_call_atom_impl(VM_OP_PARAMS);
+
+template <int N, bool is_tail, CalleeSource source>
+JET_NOINLINE JET_PRESERVE_NONE static void op_call_atom_slow(VM_OP_PARAMS)
+{
+	JET_PROFILE_IC_MISS(static_cast<uint8_t>(call_atom_opcode<is_tail, source>()) + N);
+	OP_call_atom* op = reinterpret_cast<OP_call_atom*>(pc);
+	if constexpr (source == CalleeSource::Local)
 	{
 		callee = frame_regs[op->idx];
 	}
@@ -1761,25 +1495,28 @@ JET_NOINLINE JET_PRESERVE_NONE static void op_cd_miss(VM_OP_PARAMS)
 	{
 		callee = frame->closure->captures[op->idx];
 	}
-	VmOp stub = resolve_call_stub(callee, op->nargs, is_tail);
+	VmOp stub = resolve_callee(callee, op->nargs, is_tail);
 	op->ic_atom = callee.bits;
-	op->ic_stub = reinterpret_cast<uint64_t>(stub);
-	VmOp hit = is_fixed_arity_lambda(callee) ? op_cd_impl<N, is_tail, kind, false>
-	           : op_cd_impl<N, is_tail, kind, true>;
-	std::memcpy(reinterpret_cast<Code*>(op) - OPCODE_SIZE, &hit, sizeof(hit));
-	JET_MUSTTAIL return hit(VM_OP_ARGS);
+	VmOp fast = op_call_atom_impl<N, is_tail, source, CalleeKind::Lambda>;
+	if (!cache_lambda_entry<is_tail>(s, callee, op))
+	{
+		op->ic_stub = reinterpret_cast<uint64_t>(stub);
+		fast = op_call_atom_impl<N, is_tail, source, CalleeKind::Stub>;
+	}
+	std::memcpy(reinterpret_cast<Code*>(op) - OPCODE_SIZE, &fast, sizeof(fast));
+	JET_MUSTTAIL return fast(VM_OP_ARGS);
 }
 
-template <int N, bool is_tail, CdKind kind, bool check_gc>
-JET_PRESERVE_NONE static void op_cd_impl(VM_OP_PARAMS)
+template <int N, bool is_tail, CalleeSource source, CalleeKind kind>
+JET_PRESERVE_NONE static void op_call_atom_impl(VM_OP_PARAMS)
 {
-	if constexpr (check_gc)
+	if constexpr (CalleeKind::Stub == kind)
 	{
 		JET_GC_CHECK();
 	}
-	OP_cd* op = reinterpret_cast<OP_cd*>(pc);
+	OP_call_atom* op = reinterpret_cast<OP_call_atom*>(pc);
 	Atom current{};
-	if constexpr (kind == CdKind::Local)
+	if constexpr (source == CalleeSource::Local)
 	{
 		current = frame_regs[op->idx];
 	}
@@ -1787,104 +1524,111 @@ JET_PRESERVE_NONE static void op_cd_impl(VM_OP_PARAMS)
 	{
 		current = frame->closure->captures[op->idx];
 	}
-	if (op->ic_atom != current.bits) [[unlikely]]
+	if (op->ic_atom != current.bits
+	    || (CalleeKind::Lambda == kind && op->ic_epoch != s.gc.epoch)) [[unlikely]]
 	{
-		JET_MUSTTAIL return op_cd_miss<N, is_tail, kind>(VM_OP_ARGS);
+		JET_MUSTTAIL return op_call_atom_slow<N, is_tail, source>(VM_OP_ARGS);
 	}
 	pc += sizeof(*op);
 	callee = current;
-	VmOp stub = reinterpret_cast<VmOp>(op->ic_stub);
 	JET_CALL_WINDOW(op->w, op->nargs);
-	JET_MUSTTAIL return stub(VM_OP_ARGS);
+	if constexpr (CalleeKind::Lambda == kind)
+	{
+		JET_MUSTTAIL return op_enter_lambda_fast<is_tail, OP_call_atom>(VM_OP_ARGS);
+	}
+	else
+	{
+		JET_MUSTTAIL return reinterpret_cast<VmOp>(op->ic_stub)(VM_OP_ARGS);
+	}
 }
 
-JET_PRESERVE_NONE static void op_cds_hit(VM_OP_PARAMS)
+JET_PRESERVE_NONE static void op_call_self_fast(VM_OP_PARAMS)
 {
 	JET_GC_CHECK();
-	OP_cds* op = reinterpret_cast<OP_cds*>(pc);
+	OP_call_self* op = reinterpret_cast<OP_call_self*>(pc);
 	pc += sizeof(*op);
 	callee = Atom::make_tagged(jet_tag::procedure, frame->closure);
 	JET_CALL_WINDOW(op->w, op->nargs);
-	JET_MUSTTAIL return fast_call_lambda_notail(VM_OP_ARGS);
+	JET_MUSTTAIL return op_enter_lambda_fast<false>(VM_OP_ARGS);
 }
 
 template <int N>
-JET_NOINLINE JET_PRESERVE_NONE static void op_cds_install(VM_OP_PARAMS)
+JET_NOINLINE JET_PRESERVE_NONE static void op_call_self_impl(VM_OP_PARAMS)
 {
 	JET_GC_CHECK();
-	JET_PROFILE_IC_MISS(static_cast<uint8_t>(Opcode::cds_0) + N);
-	OP_cds* op = reinterpret_cast<OP_cds*>(pc);
+	JET_PROFILE_IC_MISS(static_cast<uint8_t>(Opcode::call_self_0) + N);
+	OP_call_self* op = reinterpret_cast<OP_call_self*>(pc);
 	check_arity(frame->closure->arity, op->nargs);
-	VmOp hit = op_cds_hit;
-	std::memcpy(pc - OPCODE_SIZE, &hit, sizeof(hit));
+	VmOp fast = op_call_self_fast;
+	std::memcpy(pc - OPCODE_SIZE, &fast, sizeof(fast));
 	pc += sizeof(*op);
 	callee = Atom::make_tagged(jet_tag::procedure, frame->closure);
 	JET_CALL_WINDOW(op->w, op->nargs);
-	JET_MUSTTAIL return fast_call_lambda_notail(VM_OP_ARGS);
+	JET_MUSTTAIL return op_enter_lambda_fast<false>(VM_OP_ARGS);
 }
 
-static constexpr auto& op_cs_0 = op_cs_impl<0, false>;
-static constexpr auto& op_cs_1 = op_cs_impl<1, false>;
-static constexpr auto& op_cs_2 = op_cs_impl<2, false>;
-static constexpr auto& op_cs_3 = op_cs_impl<3, false>;
-static constexpr auto& op_cs_4 = op_cs_impl<4, false>;
-static constexpr auto& op_cs_5 = op_cs_impl<5, false>;
-static constexpr auto& op_cs_6 = op_cs_impl<6, false>;
-static constexpr auto& op_cs_7 = op_cs_impl<7, false>;
+static constexpr auto& op_call_upval_slot_0 = op_call_slot_impl<0, false>;
+static constexpr auto& op_call_upval_slot_1 = op_call_slot_impl<1, false>;
+static constexpr auto& op_call_upval_slot_2 = op_call_slot_impl<2, false>;
+static constexpr auto& op_call_upval_slot_3 = op_call_slot_impl<3, false>;
+static constexpr auto& op_call_upval_slot_4 = op_call_slot_impl<4, false>;
+static constexpr auto& op_call_upval_slot_5 = op_call_slot_impl<5, false>;
+static constexpr auto& op_call_upval_slot_6 = op_call_slot_impl<6, false>;
+static constexpr auto& op_call_upval_slot_7 = op_call_slot_impl<7, false>;
 
-static constexpr auto& op_cst_0 = op_cs_impl<0, true>;
-static constexpr auto& op_cst_1 = op_cs_impl<1, true>;
-static constexpr auto& op_cst_2 = op_cs_impl<2, true>;
-static constexpr auto& op_cst_3 = op_cs_impl<3, true>;
-static constexpr auto& op_cst_4 = op_cs_impl<4, true>;
-static constexpr auto& op_cst_5 = op_cs_impl<5, true>;
-static constexpr auto& op_cst_6 = op_cs_impl<6, true>;
-static constexpr auto& op_cst_7 = op_cs_impl<7, true>;
+static constexpr auto& op_call_upval_slot_tail_0 = op_call_slot_impl<0, true>;
+static constexpr auto& op_call_upval_slot_tail_1 = op_call_slot_impl<1, true>;
+static constexpr auto& op_call_upval_slot_tail_2 = op_call_slot_impl<2, true>;
+static constexpr auto& op_call_upval_slot_tail_3 = op_call_slot_impl<3, true>;
+static constexpr auto& op_call_upval_slot_tail_4 = op_call_slot_impl<4, true>;
+static constexpr auto& op_call_upval_slot_tail_5 = op_call_slot_impl<5, true>;
+static constexpr auto& op_call_upval_slot_tail_6 = op_call_slot_impl<6, true>;
+static constexpr auto& op_call_upval_slot_tail_7 = op_call_slot_impl<7, true>;
 
-static constexpr auto& op_cdl_0 = op_cd_impl<0, false, CdKind::Local>;
-static constexpr auto& op_cdl_1 = op_cd_impl<1, false, CdKind::Local>;
-static constexpr auto& op_cdl_2 = op_cd_impl<2, false, CdKind::Local>;
-static constexpr auto& op_cdl_3 = op_cd_impl<3, false, CdKind::Local>;
-static constexpr auto& op_cdl_4 = op_cd_impl<4, false, CdKind::Local>;
-static constexpr auto& op_cdl_5 = op_cd_impl<5, false, CdKind::Local>;
-static constexpr auto& op_cdl_6 = op_cd_impl<6, false, CdKind::Local>;
-static constexpr auto& op_cdl_7 = op_cd_impl<7, false, CdKind::Local>;
+static constexpr auto& op_call_local_0 = op_call_atom_impl<0, false, CalleeSource::Local>;
+static constexpr auto& op_call_local_1 = op_call_atom_impl<1, false, CalleeSource::Local>;
+static constexpr auto& op_call_local_2 = op_call_atom_impl<2, false, CalleeSource::Local>;
+static constexpr auto& op_call_local_3 = op_call_atom_impl<3, false, CalleeSource::Local>;
+static constexpr auto& op_call_local_4 = op_call_atom_impl<4, false, CalleeSource::Local>;
+static constexpr auto& op_call_local_5 = op_call_atom_impl<5, false, CalleeSource::Local>;
+static constexpr auto& op_call_local_6 = op_call_atom_impl<6, false, CalleeSource::Local>;
+static constexpr auto& op_call_local_7 = op_call_atom_impl<7, false, CalleeSource::Local>;
 
-static constexpr auto& op_cdlt_0 = op_cd_impl<0, true, CdKind::Local>;
-static constexpr auto& op_cdlt_1 = op_cd_impl<1, true, CdKind::Local>;
-static constexpr auto& op_cdlt_2 = op_cd_impl<2, true, CdKind::Local>;
-static constexpr auto& op_cdlt_3 = op_cd_impl<3, true, CdKind::Local>;
-static constexpr auto& op_cdlt_4 = op_cd_impl<4, true, CdKind::Local>;
-static constexpr auto& op_cdlt_5 = op_cd_impl<5, true, CdKind::Local>;
-static constexpr auto& op_cdlt_6 = op_cd_impl<6, true, CdKind::Local>;
-static constexpr auto& op_cdlt_7 = op_cd_impl<7, true, CdKind::Local>;
+static constexpr auto& op_call_local_tail_0 = op_call_atom_impl<0, true, CalleeSource::Local>;
+static constexpr auto& op_call_local_tail_1 = op_call_atom_impl<1, true, CalleeSource::Local>;
+static constexpr auto& op_call_local_tail_2 = op_call_atom_impl<2, true, CalleeSource::Local>;
+static constexpr auto& op_call_local_tail_3 = op_call_atom_impl<3, true, CalleeSource::Local>;
+static constexpr auto& op_call_local_tail_4 = op_call_atom_impl<4, true, CalleeSource::Local>;
+static constexpr auto& op_call_local_tail_5 = op_call_atom_impl<5, true, CalleeSource::Local>;
+static constexpr auto& op_call_local_tail_6 = op_call_atom_impl<6, true, CalleeSource::Local>;
+static constexpr auto& op_call_local_tail_7 = op_call_atom_impl<7, true, CalleeSource::Local>;
 
-static constexpr auto& op_cdu_0 = op_cd_impl<0, false, CdKind::Upvalue>;
-static constexpr auto& op_cdu_1 = op_cd_impl<1, false, CdKind::Upvalue>;
-static constexpr auto& op_cdu_2 = op_cd_impl<2, false, CdKind::Upvalue>;
-static constexpr auto& op_cdu_3 = op_cd_impl<3, false, CdKind::Upvalue>;
-static constexpr auto& op_cdu_4 = op_cd_impl<4, false, CdKind::Upvalue>;
-static constexpr auto& op_cdu_5 = op_cd_impl<5, false, CdKind::Upvalue>;
-static constexpr auto& op_cdu_6 = op_cd_impl<6, false, CdKind::Upvalue>;
-static constexpr auto& op_cdu_7 = op_cd_impl<7, false, CdKind::Upvalue>;
+static constexpr auto& op_call_upval_0 = op_call_atom_impl<0, false, CalleeSource::Upval>;
+static constexpr auto& op_call_upval_1 = op_call_atom_impl<1, false, CalleeSource::Upval>;
+static constexpr auto& op_call_upval_2 = op_call_atom_impl<2, false, CalleeSource::Upval>;
+static constexpr auto& op_call_upval_3 = op_call_atom_impl<3, false, CalleeSource::Upval>;
+static constexpr auto& op_call_upval_4 = op_call_atom_impl<4, false, CalleeSource::Upval>;
+static constexpr auto& op_call_upval_5 = op_call_atom_impl<5, false, CalleeSource::Upval>;
+static constexpr auto& op_call_upval_6 = op_call_atom_impl<6, false, CalleeSource::Upval>;
+static constexpr auto& op_call_upval_7 = op_call_atom_impl<7, false, CalleeSource::Upval>;
 
-static constexpr auto& op_cdut_0 = op_cd_impl<0, true, CdKind::Upvalue>;
-static constexpr auto& op_cdut_1 = op_cd_impl<1, true, CdKind::Upvalue>;
-static constexpr auto& op_cdut_2 = op_cd_impl<2, true, CdKind::Upvalue>;
-static constexpr auto& op_cdut_3 = op_cd_impl<3, true, CdKind::Upvalue>;
-static constexpr auto& op_cdut_4 = op_cd_impl<4, true, CdKind::Upvalue>;
-static constexpr auto& op_cdut_5 = op_cd_impl<5, true, CdKind::Upvalue>;
-static constexpr auto& op_cdut_6 = op_cd_impl<6, true, CdKind::Upvalue>;
-static constexpr auto& op_cdut_7 = op_cd_impl<7, true, CdKind::Upvalue>;
+static constexpr auto& op_call_upval_tail_0 = op_call_atom_impl<0, true, CalleeSource::Upval>;
+static constexpr auto& op_call_upval_tail_1 = op_call_atom_impl<1, true, CalleeSource::Upval>;
+static constexpr auto& op_call_upval_tail_2 = op_call_atom_impl<2, true, CalleeSource::Upval>;
+static constexpr auto& op_call_upval_tail_3 = op_call_atom_impl<3, true, CalleeSource::Upval>;
+static constexpr auto& op_call_upval_tail_4 = op_call_atom_impl<4, true, CalleeSource::Upval>;
+static constexpr auto& op_call_upval_tail_5 = op_call_atom_impl<5, true, CalleeSource::Upval>;
+static constexpr auto& op_call_upval_tail_6 = op_call_atom_impl<6, true, CalleeSource::Upval>;
+static constexpr auto& op_call_upval_tail_7 = op_call_atom_impl<7, true, CalleeSource::Upval>;
 
-static constexpr auto& op_cds_0 = op_cds_install<0>;
-static constexpr auto& op_cds_1 = op_cds_install<1>;
-static constexpr auto& op_cds_2 = op_cds_install<2>;
-static constexpr auto& op_cds_3 = op_cds_install<3>;
-static constexpr auto& op_cds_4 = op_cds_install<4>;
-static constexpr auto& op_cds_5 = op_cds_install<5>;
-static constexpr auto& op_cds_6 = op_cds_install<6>;
-static constexpr auto& op_cds_7 = op_cds_install<7>;
+static constexpr auto& op_call_self_0 = op_call_self_impl<0>;
+static constexpr auto& op_call_self_1 = op_call_self_impl<1>;
+static constexpr auto& op_call_self_2 = op_call_self_impl<2>;
+static constexpr auto& op_call_self_3 = op_call_self_impl<3>;
+static constexpr auto& op_call_self_4 = op_call_self_impl<4>;
+static constexpr auto& op_call_self_5 = op_call_self_impl<5>;
+static constexpr auto& op_call_self_6 = op_call_self_impl<6>;
+static constexpr auto& op_call_self_7 = op_call_self_impl<7>;
 
 void eval(VmState& vm, Frame& init_frame, Atom* constants, size_t n_constants, size_t initial_stack_size)
 {

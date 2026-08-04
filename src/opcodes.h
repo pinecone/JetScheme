@@ -58,19 +58,19 @@ struct Struct;
 	X(if_eqk,              "ifeqk")                                                                          \
 	X(if_ltk,              "ifltk")                                                                          \
 	X(retv,                "ret")                                                                            \
-	X(call,               "call")                                                                           \
+	X(call,                "call")                                                                           \
 	X(tcall,               "tcall")                                                                          \
-	X(recur,              "recur")                                                                          \
+	X(call_self_tail,      "cselft")                                                                         \
 	X(apply,              "apply")                                                                          \
 	X(iter_next1,          "iter1")                                                                          \
 	X(iter_next2,          "iter2")                                                                          \
-	JET_REPLICATE(X, cs,  "cs")                                                                              \
-	JET_REPLICATE(X, cst, "cst")                                                                             \
-	JET_REPLICATE(X, cdl,  "cdl")                                                                            \
-	JET_REPLICATE(X, cdlt, "cdlt")                                                                           \
-	JET_REPLICATE(X, cdu,  "cdu")                                                                            \
-	JET_REPLICATE(X, cdut, "cdut")                                                                           \
-	JET_REPLICATE(X, cds,  "cds")                                                                            \
+	JET_REPLICATE(X, call_local,           "cl")                                                             \
+	JET_REPLICATE(X, call_local_tail,      "clt")                                                            \
+	JET_REPLICATE(X, call_upval,           "cu")                                                             \
+	JET_REPLICATE(X, call_upval_tail,      "cut")                                                            \
+	JET_REPLICATE(X, call_upval_slot,      "cus")                                                            \
+	JET_REPLICATE(X, call_upval_slot_tail, "cust")                                                           \
+	JET_REPLICATE(X, call_self,            "cself")                                                          \
 	X(ldf,                 "ldf")                                                                            \
 	X(stf,                 "stf")                                                                            \
 	X(ldfk,                "ldfk")                                                                           \
@@ -104,10 +104,14 @@ struct OP_make_closure_capture
 
 struct FieldIc
 {
-	uint64_t ic_handler;
-	uint64_t ic_dispatch_key;
-	uint64_t ic_extra1;
-	uint64_t ic_extra2;
+	uint64_t dispatch_key;
+	uint64_t cached_index;
+	uint64_t cached_key;
+};
+
+struct IterIc
+{
+	uint64_t dispatch_key;
 };
 
 // Register ISA: every dst/src/a/b/w operand is a frame-relative slot index,
@@ -177,7 +181,7 @@ struct OP_call
 	uint16_t callee;
 	uint16_t nargs;
 };
-struct OP_recur
+struct OP_call_self_tail
 {
 	uint16_t w;
 	uint16_t nargs;
@@ -202,7 +206,7 @@ struct OP_iter_next1
 	uint16_t cursor;
 	uint16_t dst;
 	uint32_t size;
-	FieldIc ic;
+	IterIc ic;
 };
 struct OP_iter_next2
 {
@@ -210,27 +214,39 @@ struct OP_iter_next2
 	uint16_t dst0;
 	uint16_t dst1;
 	uint32_t size;
-	FieldIc ic;
+	IterIc ic;
 };
-struct OP_cs
+struct OP_call_slot
 {
 	uint16_t w;
 	uint16_t upvalue_idx;
 	uint16_t nargs;
+	uint16_t ic_n_locals;
+	uint32_t ic_epoch;
 	uint64_t ic_slot;
 	uint64_t ic_atom;
-	uint64_t ic_stub;
+	union
+	{
+		uint64_t ic_stub;
+		uint64_t ic_code;
+	};
 	uint64_t ic_version;
 };
-struct OP_cd
+struct OP_call_atom
 {
 	uint16_t w;
 	uint16_t idx;
 	uint16_t nargs;
+	uint16_t ic_n_locals;
+	uint32_t ic_epoch;
 	uint64_t ic_atom;
-	uint64_t ic_stub;
+	union
+	{
+		uint64_t ic_stub;
+		uint64_t ic_code;
+	};
 };
-struct OP_cds
+struct OP_call_self
 {
 	uint16_t w;
 	uint16_t nargs;
@@ -336,8 +352,8 @@ inline size_t opcode_step(uint8_t op, const uint8_t* operands)
 		case Opcode::call:
 		case Opcode::tcall:
 			return OPCODE_SIZE + sizeof(OP_call);
-		case Opcode::recur:
-			return OPCODE_SIZE + sizeof(OP_recur);
+		case Opcode::call_self_tail:
+			return OPCODE_SIZE + sizeof(OP_call_self_tail);
 		case Opcode::apply:
 			return OPCODE_SIZE + sizeof(OP_apply);
 		case Opcode::reset:
@@ -349,21 +365,21 @@ inline size_t opcode_step(uint8_t op, const uint8_t* operands)
 		case Opcode::iter_next2:
 			return OPCODE_SIZE + sizeof(OP_iter_next2);
 #define X(name, disp) case Opcode::name:
-			JET_REPLICATE(X, cs, "cs")
-			JET_REPLICATE(X, cst, "cst")
+			JET_REPLICATE(X, call_upval_slot, "cus")
+			JET_REPLICATE(X, call_upval_slot_tail, "cust")
 #undef X
-			return OPCODE_SIZE + sizeof(OP_cs);
+			return OPCODE_SIZE + sizeof(OP_call_slot);
 #define X(name, disp) case Opcode::name:
-			JET_REPLICATE(X, cdl, "cdl")
-			JET_REPLICATE(X, cdlt, "cdlt")
-			JET_REPLICATE(X, cdu, "cdu")
-			JET_REPLICATE(X, cdut, "cdut")
+			JET_REPLICATE(X, call_local, "cl")
+			JET_REPLICATE(X, call_local_tail, "clt")
+			JET_REPLICATE(X, call_upval, "cu")
+			JET_REPLICATE(X, call_upval_tail, "cut")
 #undef X
-			return OPCODE_SIZE + sizeof(OP_cd);
+			return OPCODE_SIZE + sizeof(OP_call_atom);
 #define X(name, disp) case Opcode::name:
-			JET_REPLICATE(X, cds, "cds")
+			JET_REPLICATE(X, call_self, "cself")
 #undef X
-			return OPCODE_SIZE + sizeof(OP_cds);
+			return OPCODE_SIZE + sizeof(OP_call_self);
 		case Opcode::ldf:
 			return OPCODE_SIZE + sizeof(OP_ldf);
 		case Opcode::stf:

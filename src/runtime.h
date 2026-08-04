@@ -12,6 +12,7 @@
 #include <bit>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -520,8 +521,8 @@ struct Table : Struct
 
 	Table(VmState& s, StructType* type)
 		: Struct{type}, index{GcAllocator<std::pair<TableKey, size_t>>{s}}, entries{GcAllocator<Entry>{s}},
-		live_words{GcAllocator<uint64_t>{s}}, cursors{GcAllocator<CursorType*>{s}},
-		cursor_positions{GcAllocator<size_t>{s}}
+	live_words{GcAllocator<uint64_t>{s}}, cursors{GcAllocator<CursorType*>{s}},
+	cursor_positions{GcAllocator<size_t>{s}}
 	{
 	}
 	~Table();
@@ -699,8 +700,8 @@ using HashSetCursor = TableCursor<TableKey>;
 using HashMap = Table<HashMapEntry>;
 using HashMapCursor = TableCursor<HashMapEntry>;
 
-Cursor* hashset_cursor_make(VmState& s, Atom target);
-Cursor* hashmap_cursor_make(VmState& s, Atom target);
+Cursor* make_hashset_cursor(VmState& s, Atom target);
+Cursor* make_hashmap_cursor(VmState& s, Atom target);
 
 inline bool operator==(Struct& a, Struct& b)
 {
@@ -734,124 +735,6 @@ JET_PRESERVE_NONE void struct_constructor_handler(VM_OP_PARAMS)
 	Struct* instance = Construct(s, type, args, stack_top);
 	*args = Atom::make_tagged(jet_tag::struct_, instance);
 	stack_top = stack_base + frame->top;
-	DISPATCH();
-}
-
-template <auto Resolve, auto Load>
-JET_PRESERVE_NONE void struct_ldf_handler(VM_OP_PARAMS)
-{
-	OP_ldf* op = reinterpret_cast<OP_ldf*>(pc - sizeof(OP_ldf));
-	FieldIc* ic = &op->ic;
-	Atom key = frame_regs[op->key];
-	Struct* instance = unbox<Struct>(callee);
-
-	if (ic->ic_extra2 == key.bits) [[likely]]
-	{
-		frame_regs[op->dst] = Load(instance, ic->ic_extra1);
-		DISPATCH();
-	}
-	JET_PROFILE_FIELD_KEY_MISS();
-	ic->ic_extra1 = Resolve(instance, key);
-	ic->ic_extra2 = key.bits;
-	frame_regs[op->dst] = Load(instance, ic->ic_extra1);
-	DISPATCH();
-}
-
-template <auto Resolve, auto Store>
-JET_PRESERVE_NONE void struct_stf_handler(VM_OP_PARAMS)
-{
-	OP_stf* op = reinterpret_cast<OP_stf*>(pc - sizeof(OP_stf));
-	FieldIc* ic = &op->ic;
-	Atom key = frame_regs[op->key];
-	Atom value = frame_regs[op->val];
-	Struct* instance = unbox<Struct>(callee);
-
-	if (ic->ic_extra2 == key.bits) [[likely]]
-	{
-		Store(instance, ic->ic_extra1, value);
-		DISPATCH();
-	}
-	JET_PROFILE_FIELD_KEY_MISS();
-	ic->ic_extra1 = Resolve(instance, key);
-	ic->ic_extra2 = key.bits;
-	Store(instance, ic->ic_extra1, value);
-	DISPATCH();
-}
-
-template <auto Load>
-JET_PRESERVE_NONE void struct_resolved_ldfk_handler(VM_OP_PARAMS)
-{
-	OP_ldfk* op = reinterpret_cast<OP_ldfk*>(pc);
-	Atom object = frame_regs[op->obj];
-	if (!object.tag_is<jet_tag::struct_>() ||
-	    op->ic.ic_dispatch_key != reinterpret_cast<uint64_t>(unbox<Struct>(object)->type)) [[unlikely]]
-	{
-		JET_MUSTTAIL return field_ldfk_miss(VM_OP_ARGS);
-	}
-
-	Struct* instance = unbox<Struct>(object);
-	frame_regs[op->dst] = Load(instance, op->ic.ic_extra1);
-	pc += sizeof(*op);
-	JET_PROFILE_FIELD_DISPATCH(Opcode::ldfk, profile_field_receiver(object), true);
-	DISPATCH();
-}
-
-template <auto Store>
-JET_PRESERVE_NONE void struct_resolved_stfk_handler(VM_OP_PARAMS)
-{
-	OP_stfk* op = reinterpret_cast<OP_stfk*>(pc);
-	Atom object = frame_regs[op->obj];
-	if (!object.tag_is<jet_tag::struct_>() ||
-	    op->ic.ic_dispatch_key != reinterpret_cast<uint64_t>(unbox<Struct>(object)->type)) [[unlikely]]
-	{
-		JET_MUSTTAIL return field_stfk_miss(VM_OP_ARGS);
-	}
-
-	Struct* instance = unbox<Struct>(object);
-	Store(instance, op->ic.ic_extra1, frame_regs[op->val]);
-	pc += sizeof(*op);
-	JET_PROFILE_FIELD_DISPATCH(Opcode::stfk, profile_field_receiver(object), true);
-	DISPATCH();
-}
-
-template <auto Resolve, auto Load>
-JET_PRESERVE_NONE void struct_ldfk_handler(VM_OP_PARAMS)
-{
-	OP_ldfk* op = reinterpret_cast<OP_ldfk*>(pc - sizeof(OP_ldfk));
-	FieldIc* ic = &op->ic;
-	Struct* instance = unbox<Struct>(callee);
-
-	if (ic->ic_extra1 != ~static_cast<uint64_t>(0)) [[likely]]
-	{
-		frame_regs[op->dst] = Load(instance, ic->ic_extra1);
-		DISPATCH();
-	}
-	JET_PROFILE_FIELD_KEY_MISS();
-	ic->ic_extra1 = Resolve(instance, s.constants[op->key_idx]);
-	VmOp resolved = instance->type->ops().shape.resolved_ldfk_handler;
-	std::memcpy(reinterpret_cast<Code*>(op) - OPCODE_SIZE, &resolved, sizeof(resolved));
-	frame_regs[op->dst] = Load(instance, ic->ic_extra1);
-	DISPATCH();
-}
-
-template <auto Resolve, auto Store>
-JET_PRESERVE_NONE void struct_stfk_handler(VM_OP_PARAMS)
-{
-	OP_stfk* op = reinterpret_cast<OP_stfk*>(pc - sizeof(OP_stfk));
-	FieldIc* ic = &op->ic;
-	Atom value = frame_regs[op->val];
-	Struct* instance = unbox<Struct>(callee);
-
-	if (ic->ic_extra1 != ~static_cast<uint64_t>(0)) [[likely]]
-	{
-		Store(instance, ic->ic_extra1, value);
-		DISPATCH();
-	}
-	JET_PROFILE_FIELD_KEY_MISS();
-	ic->ic_extra1 = Resolve(instance, s.constants[op->key_idx]);
-	VmOp resolved = instance->type->ops().shape.resolved_stfk_handler;
-	std::memcpy(reinterpret_cast<Code*>(op) - OPCODE_SIZE, &resolved, sizeof(resolved));
-	Store(instance, ic->ic_extra1, value);
 	DISPATCH();
 }
 
@@ -991,6 +874,279 @@ inline bool is_byte(Atom a)
 }
 
 void init_number(VmState& s);
+
+constexpr uint64_t FIELD_IC_NONE = ~static_cast<uint64_t>(0);
+
+template <bool is_store, bool const_key>
+using FieldOp = std::conditional_t<is_store, std::conditional_t<const_key, OP_stfk, OP_stf>,
+                                   std::conditional_t<const_key, OP_ldfk, OP_ldf>>;
+
+template <bool is_store, bool const_key>
+constexpr Opcode field_opcode = is_store ? (const_key ? Opcode::stfk : Opcode::stf)
+                                : (const_key ? Opcode::ldfk : Opcode::ldf);
+
+template <bool const_key, typename Op>
+JET_ALWAYS_INLINE inline Atom field_key(VmState& s, const Op* op, Atom* frame_regs)
+{
+	if constexpr (const_key)
+	{
+		return s.constants[op->key_idx];
+	}
+	else
+	{
+		return frame_regs[op->key];
+	}
+}
+
+template <bool is_store>
+[[noreturn]] JET_NOINLINE inline void die_field_index(Atom key)
+{
+	const char* op = is_store ? "setf!" : "ref";
+	if (!is_type<jet::Type::Number>(key))
+	{
+		JET_DIE("%s: expected a non-negative integer index", op);
+	}
+	Number n = unbox<Number>(key);
+	if (!is_integer(n) || n < 0)
+	{
+		JET_DIE("%s: expected a non-negative integer index", op);
+	}
+	JET_DIE("%s: index out of bounds", op);
+}
+
+template <bool const_key>
+JET_ALWAYS_INLINE inline bool index_of_key(size_t size, Atom key, FieldIc& ic, size_t& index)
+{
+	if constexpr (const_key)
+	{
+		if (ic.cached_index < size) [[likely]]
+		{
+			index = ic.cached_index;
+			return true;
+		}
+		JET_PROFILE_FIELD_KEY_MISS();
+	}
+	if (!is_type<jet::Type::Number>(key)) [[unlikely]]
+	{
+		return false;
+	}
+	Number n = unbox<Number>(key);
+	if (!is_integer(n) || n < 0) [[unlikely]]
+	{
+		return false;
+	}
+	index = static_cast<size_t>(n);
+	if (index >= size) [[unlikely]]
+	{
+		return false;
+	}
+	if constexpr (const_key)
+	{
+		ic.cached_index = index;
+	}
+	return true;
+}
+
+template <typename T>
+JET_ALWAYS_INLINE inline Atom container_load(T& container, size_t index)
+{
+	if constexpr (std::is_same_v<T, String>)
+	{
+		return box(static_cast<Character>(static_cast<uint8_t>(container[index])));
+	}
+	else if constexpr (std::is_same_v<T, ByteVector>)
+	{
+		return box(Number(container[index]));
+	}
+	else
+	{
+		return container[index];
+	}
+}
+
+template <typename T>
+JET_ALWAYS_INLINE inline bool container_store(T& container, size_t index, Atom value)
+{
+	if constexpr (std::is_same_v<T, ByteVector>)
+	{
+		if (!is_type<jet::Type::Number>(value)) [[unlikely]]
+		{
+			return false;
+		}
+		Number n = unbox<Number>(value);
+		if (!is_integer(n) || n < 0 || n > 255) [[unlikely]]
+		{
+			return false;
+		}
+		container[index] = static_cast<uint8_t>(n);
+	}
+	else
+	{
+		container[index] = value;
+	}
+	return true;
+}
+
+template <typename T>
+struct ContainerAccess
+{
+	static constexpr bool is_struct = false;
+
+	template <bool const_key>
+	JET_ALWAYS_INLINE static bool load_fast(VmState& s, FieldOp<false, const_key>* op, Atom* frame_regs)
+	{
+		T& container = *unbox<T>(frame_regs[op->obj]);
+		size_t index;
+		Atom key = field_key<const_key>(s, op, frame_regs);
+		if (!index_of_key<const_key>(container.size(), key, op->ic, index)) [[unlikely]]
+		{
+			return false;
+		}
+		frame_regs[op->dst] = container_load(container, index);
+		return true;
+	}
+
+	template <bool const_key>
+	JET_NOINLINE JET_PRESERVE_NONE static void op_load_slow(VM_OP_PARAMS)
+	{
+		FieldOp<false, const_key>* op = reinterpret_cast<FieldOp<false, const_key>*>(pc);
+		die_field_index<false>(field_key<const_key>(s, op, frame_regs));
+	}
+
+	template <bool const_key>
+	JET_ALWAYS_INLINE static bool store_fast(VmState& s, FieldOp<true, const_key>* op, Atom* frame_regs)
+	{
+		T& container = *unbox<T>(frame_regs[op->obj]);
+		size_t index;
+		Atom key = field_key<const_key>(s, op, frame_regs);
+		if (!index_of_key<const_key>(container.size(), key, op->ic, index)) [[unlikely]]
+		{
+			return false;
+		}
+		return container_store(container, index, frame_regs[op->val]);
+	}
+
+	template <bool const_key>
+	JET_NOINLINE JET_PRESERVE_NONE static void op_store_slow(VM_OP_PARAMS)
+	{
+		FieldOp<true, const_key>* op = reinterpret_cast<FieldOp<true, const_key>*>(pc);
+		T& container = *unbox<T>(frame_regs[op->obj]);
+		size_t index;
+		Atom key = field_key<const_key>(s, op, frame_regs);
+		if (!index_of_key<const_key>(container.size(), key, op->ic, index))
+		{
+			die_field_index<true>(key);
+		}
+		JET_DIE("setf!: expected a byte value");
+	}
+};
+
+struct StringAccess : ContainerAccess<String>
+{
+	template <bool const_key>
+	JET_ALWAYS_INLINE static bool store_fast(VmState&, FieldOp<true, const_key>*, Atom*)
+	{
+		return false;
+	}
+
+	template <bool const_key>
+	JET_NOINLINE JET_PRESERVE_NONE static void op_store_slow(VM_OP_PARAMS)
+	{
+		JET_DIE("setf!: strings are immutable");
+	}
+};
+
+template <typename Access>
+JET_ALWAYS_INLINE inline bool field_receiver_matches(Atom object, uint64_t dispatch_key)
+{
+	if constexpr (Access::is_struct)
+	{
+		return object.tag_is<jet_tag::struct_>() &&
+		       reinterpret_cast<uint64_t>(unbox<Struct>(object)->type) == dispatch_key;
+	}
+	else
+	{
+		return type_bits(object) == dispatch_key;
+	}
+}
+
+template <bool is_store>
+JET_NOINLINE JET_PRESERVE_NONE void die_field_receiver(VM_OP_PARAMS)
+{
+	JET_DIE("%s: unsupported receiver type", is_store ? "setf!" : "ref");
+}
+
+template <bool is_store, bool const_key>
+JET_PRESERVE_NONE void op_field_impl(VM_OP_PARAMS);
+
+template <typename Access, bool const_key>
+JET_PRESERVE_NONE void op_field_load_fast(VM_OP_PARAMS)
+{
+	FieldOp<false, const_key>* op = reinterpret_cast<FieldOp<false, const_key>*>(pc);
+	Atom object = frame_regs[op->obj];
+	if (!field_receiver_matches<Access>(object, op->ic.dispatch_key)) [[unlikely]]
+	{
+		JET_MUSTTAIL return op_field_impl<false, const_key>(VM_OP_ARGS);
+	}
+	JET_PROFILE_FIELD_DISPATCH((field_opcode<false, const_key>), profile_field_receiver(object), true);
+	if (!Access::template load_fast<const_key>(s, op, frame_regs)) [[unlikely]]
+	{
+		JET_MUSTTAIL return Access::template op_load_slow<const_key>(VM_OP_ARGS);
+	}
+	pc += sizeof(*op);
+	DISPATCH();
+}
+
+template <typename Access, bool const_key>
+JET_PRESERVE_NONE void op_field_store_fast(VM_OP_PARAMS)
+{
+	FieldOp<true, const_key>* op = reinterpret_cast<FieldOp<true, const_key>*>(pc);
+	Atom object = frame_regs[op->obj];
+	if (!field_receiver_matches<Access>(object, op->ic.dispatch_key)) [[unlikely]]
+	{
+		JET_MUSTTAIL return op_field_impl<true, const_key>(VM_OP_ARGS);
+	}
+	JET_PROFILE_FIELD_DISPATCH((field_opcode<true, const_key>), profile_field_receiver(object), true);
+	if (!Access::template store_fast<const_key>(s, op, frame_regs)) [[unlikely]]
+	{
+		JET_MUSTTAIL return Access::template op_store_slow<const_key>(VM_OP_ARGS);
+	}
+	pc += sizeof(*op);
+	DISPATCH();
+}
+
+template <bool is_store, bool const_key>
+JET_PRESERVE_NONE void op_field_impl(VM_OP_PARAMS)
+{
+	FieldOp<is_store, const_key>* op = reinterpret_cast<FieldOp<is_store, const_key>*>(pc);
+	Atom object = frame_regs[op->obj];
+	const ObjShape* shape = shape_of(object);
+	VmOp handler = nullptr;
+	if (shape)
+	{
+		handler = is_store ? (const_key ? shape->stfk_handler : shape->stf_handler)
+		          : (const_key ? shape->ldfk_handler : shape->ldf_handler);
+	}
+	if (!handler) [[unlikely]]
+	{
+		JET_MUSTTAIL return die_field_receiver<is_store>(VM_OP_ARGS);
+	}
+	JET_PROFILE_FIELD_DISPATCH((field_opcode<is_store, const_key>), profile_field_receiver(object), false);
+	op->ic.dispatch_key = object.tag_is<jet_tag::struct_>()
+	                      ? reinterpret_cast<uint64_t>(unbox<Struct>(object)->type)
+	                      : type_bits(object);
+	op->ic.cached_index = FIELD_IC_NONE;
+	op->ic.cached_key = FIELD_IC_NONE;
+	std::memcpy(pc - OPCODE_SIZE, &handler, sizeof(handler));
+	JET_MUSTTAIL return handler(VM_OP_ARGS);
+}
+
+template <typename Access>
+constexpr ObjShape make_field_shape(Atom (*slow_ref)(Atom, Atom), Cursor* (*iter)(VmState&, Atom))
+{
+	return {op_field_load_fast<Access, false>, op_field_store_fast<Access, false>,
+	        op_field_load_fast<Access, true>, op_field_store_fast<Access, true>, slow_ref, iter};
+}
 
 template <typename op_t>
 JET_ALWAYS_INLINE inline Atom fold(Atom* first, Atom* last, Number result)

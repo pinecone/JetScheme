@@ -296,63 +296,63 @@ const char* opcode_name(uint8_t op)
 	}
 }
 
-bool is_cs_op(uint8_t op)
+bool is_call_slot_op(uint8_t op)
 {
 #define X(name, disp)                                                                                        \
 	if (op == static_cast<uint8_t>(Opcode::name))                                                            \
 	{                                                                                                        \
 		return true;                                                                                         \
 	}
-	JET_REPLICATE(X, cs, "cs")
-	JET_REPLICATE(X, cst, "cst")
+	JET_REPLICATE(X, call_upval_slot, "cus")
+	JET_REPLICATE(X, call_upval_slot_tail, "cust")
 #undef X
 	return false;
 }
 
-bool is_cd_op(uint8_t op)
+bool is_call_atom_op(uint8_t op)
 {
 #define X(name, disp)                                                                                        \
 	if (op == static_cast<uint8_t>(Opcode::name))                                                            \
 	{                                                                                                        \
 		return true;                                                                                         \
 	}
-	JET_REPLICATE(X, cdl, "cdl")
-	JET_REPLICATE(X, cdlt, "cdlt")
-	JET_REPLICATE(X, cdu, "cdu")
-	JET_REPLICATE(X, cdut, "cdut")
+	JET_REPLICATE(X, call_local, "cl")
+	JET_REPLICATE(X, call_local_tail, "clt")
+	JET_REPLICATE(X, call_upval, "cu")
+	JET_REPLICATE(X, call_upval_tail, "cut")
 #undef X
 	return false;
 }
 
-bool is_cds_op(uint8_t op)
+bool is_call_self_op(uint8_t op)
 {
 #define X(name, disp)                                                                                        \
 	if (op == static_cast<uint8_t>(Opcode::name))                                                            \
 	{                                                                                                        \
 		return true;                                                                                         \
 	}
-	JET_REPLICATE(X, cds, "cds")
+	JET_REPLICATE(X, call_self, "cself")
 #undef X
 	return false;
 }
 
 void decode_args(FILE* out, uint8_t op, Code* p)
 {
-	if (is_cs_op(op))
+	if (is_call_slot_op(op))
 	{
-		OP_cs* o = reinterpret_cast<OP_cs*>(p);
+		OP_call_slot* o = reinterpret_cast<OP_call_slot*>(p);
 		std::fprintf(out, " w=%u upvalue=%u nargs=%u", o->w, o->upvalue_idx, o->nargs);
 		return;
 	}
-	if (is_cd_op(op))
+	if (is_call_atom_op(op))
 	{
-		OP_cd* o = reinterpret_cast<OP_cd*>(p);
+		OP_call_atom* o = reinterpret_cast<OP_call_atom*>(p);
 		std::fprintf(out, " w=%u idx=%u nargs=%u", o->w, o->idx, o->nargs);
 		return;
 	}
-	if (is_cds_op(op))
+	if (is_call_self_op(op))
 	{
-		OP_cds* o = reinterpret_cast<OP_cds*>(p);
+		OP_call_self* o = reinterpret_cast<OP_call_self*>(p);
 		std::fprintf(out, " w=%u nargs=%u", o->w, o->nargs);
 		return;
 	}
@@ -466,9 +466,9 @@ void decode_args(FILE* out, uint8_t op, Code* p)
 			std::fprintf(out, " w=%u callee=%u nargs=%u", o->w, o->callee, o->nargs);
 			break;
 		}
-		case Opcode::recur:
+		case Opcode::call_self_tail:
 		{
-			OP_recur* o = reinterpret_cast<OP_recur*>(p);
+			OP_call_self_tail* o = reinterpret_cast<OP_call_self_tail*>(p);
 			std::fprintf(out, " w=%u nargs=%u", o->w, o->nargs);
 			break;
 		}

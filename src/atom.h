@@ -198,6 +198,11 @@ bool is_type(Atom x)
 	return type == x.type();
 }
 
+inline uint16_t type_bits(Atom a)
+{
+	return static_cast<uint16_t>(a.bits >> 48);
+}
+
 struct VectorCursor;
 
 struct Vec
