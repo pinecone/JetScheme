@@ -9,10 +9,10 @@
 
 struct Struct;
 
-#define JET_REPLICATE_N 8
+#define JET_REPLICATE_N 4
 #define JET_REPLICATE(X, name, disp)                                                                        \
-	X(name##_0, disp "_0") X(name##_1, disp "_1") X(name##_2, disp "_2") X(name##_3, disp "_3")              \
-	X(name##_4, disp "_4") X(name##_5, disp "_5") X(name##_6, disp "_6") X(name##_7, disp "_7")
+	X(name##_0, disp "_0", 0) X(name##_1, disp "_1", 1)                                                     \
+	X(name##_2, disp "_2", 2) X(name##_3, disp "_3", 3)
 
 // X(c++_name, "disasm_name") -- short, RISC-ish display strings keep traces
 // scannable; C++ identifiers stay descriptive for source readability.
@@ -80,12 +80,12 @@ struct Struct;
 
 enum class Opcode : uint8_t
 {
-#define X(name, disp) name,
+#define X(name, disp, ...) name,
 	JET_OPCODES(X)
 #undef X
 };
 
-#define X(name, disp) +1
+#define X(name, disp, ...) +1
 constexpr int OPCODE_COUNT = 0 JET_OPCODES(X);
 #undef X
 
@@ -364,19 +364,19 @@ inline size_t opcode_step(uint8_t op, const uint8_t* operands)
 			return OPCODE_SIZE + sizeof(OP_iter_next1);
 		case Opcode::iter_next2:
 			return OPCODE_SIZE + sizeof(OP_iter_next2);
-#define X(name, disp) case Opcode::name:
+#define X(name, disp, n) case Opcode::name:
 			JET_REPLICATE(X, call_upval_slot, "cus")
 			JET_REPLICATE(X, call_upval_slot_tail, "cust")
 #undef X
 			return OPCODE_SIZE + sizeof(OP_call_slot);
-#define X(name, disp) case Opcode::name:
+#define X(name, disp, n) case Opcode::name:
 			JET_REPLICATE(X, call_local, "cl")
 			JET_REPLICATE(X, call_local_tail, "clt")
 			JET_REPLICATE(X, call_upval, "cu")
 			JET_REPLICATE(X, call_upval_tail, "cut")
 #undef X
 			return OPCODE_SIZE + sizeof(OP_call_atom);
-#define X(name, disp) case Opcode::name:
+#define X(name, disp, n) case Opcode::name:
 			JET_REPLICATE(X, call_self, "cself")
 #undef X
 			return OPCODE_SIZE + sizeof(OP_call_self);

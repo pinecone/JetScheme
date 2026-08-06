@@ -23,7 +23,7 @@ void profile_print()
 	{
 		switch (op)
 		{
-#define X(name, disp)                                                                                        \
+#define X(name, disp, ...)                                                                                   \
 	case static_cast<int>(Opcode::name):                                                                     \
 		return disp;
 		JET_OPCODES(X)
@@ -286,7 +286,7 @@ const char* opcode_name(uint8_t op)
 {
 	switch (op)
 	{
-#define X(name, disp)                                                                                        \
+#define X(name, disp, ...)                                                                                   \
 	case static_cast<uint8_t>(Opcode::name):                                                                 \
 		return disp;
 	JET_OPCODES(X)
@@ -298,7 +298,7 @@ const char* opcode_name(uint8_t op)
 
 bool is_call_slot_op(uint8_t op)
 {
-#define X(name, disp)                                                                                        \
+#define X(name, disp, n)                                                                                     \
 	if (op == static_cast<uint8_t>(Opcode::name))                                                            \
 	{                                                                                                        \
 		return true;                                                                                         \
@@ -311,7 +311,7 @@ bool is_call_slot_op(uint8_t op)
 
 bool is_call_atom_op(uint8_t op)
 {
-#define X(name, disp)                                                                                        \
+#define X(name, disp, n)                                                                                     \
 	if (op == static_cast<uint8_t>(Opcode::name))                                                            \
 	{                                                                                                        \
 		return true;                                                                                         \
@@ -326,7 +326,7 @@ bool is_call_atom_op(uint8_t op)
 
 bool is_call_self_op(uint8_t op)
 {
-#define X(name, disp)                                                                                        \
+#define X(name, disp, n)                                                                                     \
 	if (op == static_cast<uint8_t>(Opcode::name))                                                            \
 	{                                                                                                        \
 		return true;                                                                                         \

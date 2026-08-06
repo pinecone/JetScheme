@@ -1567,68 +1567,39 @@ JET_NOINLINE JET_PRESERVE_NONE static void op_call_self_impl(VM_OP_PARAMS)
 	JET_MUSTTAIL return op_enter_lambda_fast<false>(VM_OP_ARGS);
 }
 
-static constexpr auto& op_call_upval_slot_0 = op_call_slot_impl<0, false>;
-static constexpr auto& op_call_upval_slot_1 = op_call_slot_impl<1, false>;
-static constexpr auto& op_call_upval_slot_2 = op_call_slot_impl<2, false>;
-static constexpr auto& op_call_upval_slot_3 = op_call_slot_impl<3, false>;
-static constexpr auto& op_call_upval_slot_4 = op_call_slot_impl<4, false>;
-static constexpr auto& op_call_upval_slot_5 = op_call_slot_impl<5, false>;
-static constexpr auto& op_call_upval_slot_6 = op_call_slot_impl<6, false>;
-static constexpr auto& op_call_upval_slot_7 = op_call_slot_impl<7, false>;
+#define X(name, disp, n)                                                                                     \
+	static constexpr auto& op_##name = op_call_slot_impl<n, false>;
+JET_REPLICATE(X, call_upval_slot, "cus")
+#undef X
 
-static constexpr auto& op_call_upval_slot_tail_0 = op_call_slot_impl<0, true>;
-static constexpr auto& op_call_upval_slot_tail_1 = op_call_slot_impl<1, true>;
-static constexpr auto& op_call_upval_slot_tail_2 = op_call_slot_impl<2, true>;
-static constexpr auto& op_call_upval_slot_tail_3 = op_call_slot_impl<3, true>;
-static constexpr auto& op_call_upval_slot_tail_4 = op_call_slot_impl<4, true>;
-static constexpr auto& op_call_upval_slot_tail_5 = op_call_slot_impl<5, true>;
-static constexpr auto& op_call_upval_slot_tail_6 = op_call_slot_impl<6, true>;
-static constexpr auto& op_call_upval_slot_tail_7 = op_call_slot_impl<7, true>;
+#define X(name, disp, n)                                                                                     \
+	static constexpr auto& op_##name = op_call_slot_impl<n, true>;
+JET_REPLICATE(X, call_upval_slot_tail, "cust")
+#undef X
 
-static constexpr auto& op_call_local_0 = op_call_atom_impl<0, false, CalleeSource::Local>;
-static constexpr auto& op_call_local_1 = op_call_atom_impl<1, false, CalleeSource::Local>;
-static constexpr auto& op_call_local_2 = op_call_atom_impl<2, false, CalleeSource::Local>;
-static constexpr auto& op_call_local_3 = op_call_atom_impl<3, false, CalleeSource::Local>;
-static constexpr auto& op_call_local_4 = op_call_atom_impl<4, false, CalleeSource::Local>;
-static constexpr auto& op_call_local_5 = op_call_atom_impl<5, false, CalleeSource::Local>;
-static constexpr auto& op_call_local_6 = op_call_atom_impl<6, false, CalleeSource::Local>;
-static constexpr auto& op_call_local_7 = op_call_atom_impl<7, false, CalleeSource::Local>;
+#define X(name, disp, n)                                                                                     \
+	static constexpr auto& op_##name = op_call_atom_impl<n, false, CalleeSource::Local>;
+JET_REPLICATE(X, call_local, "cl")
+#undef X
 
-static constexpr auto& op_call_local_tail_0 = op_call_atom_impl<0, true, CalleeSource::Local>;
-static constexpr auto& op_call_local_tail_1 = op_call_atom_impl<1, true, CalleeSource::Local>;
-static constexpr auto& op_call_local_tail_2 = op_call_atom_impl<2, true, CalleeSource::Local>;
-static constexpr auto& op_call_local_tail_3 = op_call_atom_impl<3, true, CalleeSource::Local>;
-static constexpr auto& op_call_local_tail_4 = op_call_atom_impl<4, true, CalleeSource::Local>;
-static constexpr auto& op_call_local_tail_5 = op_call_atom_impl<5, true, CalleeSource::Local>;
-static constexpr auto& op_call_local_tail_6 = op_call_atom_impl<6, true, CalleeSource::Local>;
-static constexpr auto& op_call_local_tail_7 = op_call_atom_impl<7, true, CalleeSource::Local>;
+#define X(name, disp, n)                                                                                     \
+	static constexpr auto& op_##name = op_call_atom_impl<n, true, CalleeSource::Local>;
+JET_REPLICATE(X, call_local_tail, "clt")
+#undef X
 
-static constexpr auto& op_call_upval_0 = op_call_atom_impl<0, false, CalleeSource::Upval>;
-static constexpr auto& op_call_upval_1 = op_call_atom_impl<1, false, CalleeSource::Upval>;
-static constexpr auto& op_call_upval_2 = op_call_atom_impl<2, false, CalleeSource::Upval>;
-static constexpr auto& op_call_upval_3 = op_call_atom_impl<3, false, CalleeSource::Upval>;
-static constexpr auto& op_call_upval_4 = op_call_atom_impl<4, false, CalleeSource::Upval>;
-static constexpr auto& op_call_upval_5 = op_call_atom_impl<5, false, CalleeSource::Upval>;
-static constexpr auto& op_call_upval_6 = op_call_atom_impl<6, false, CalleeSource::Upval>;
-static constexpr auto& op_call_upval_7 = op_call_atom_impl<7, false, CalleeSource::Upval>;
+#define X(name, disp, n)                                                                                     \
+	static constexpr auto& op_##name = op_call_atom_impl<n, false, CalleeSource::Upval>;
+JET_REPLICATE(X, call_upval, "cu")
+#undef X
 
-static constexpr auto& op_call_upval_tail_0 = op_call_atom_impl<0, true, CalleeSource::Upval>;
-static constexpr auto& op_call_upval_tail_1 = op_call_atom_impl<1, true, CalleeSource::Upval>;
-static constexpr auto& op_call_upval_tail_2 = op_call_atom_impl<2, true, CalleeSource::Upval>;
-static constexpr auto& op_call_upval_tail_3 = op_call_atom_impl<3, true, CalleeSource::Upval>;
-static constexpr auto& op_call_upval_tail_4 = op_call_atom_impl<4, true, CalleeSource::Upval>;
-static constexpr auto& op_call_upval_tail_5 = op_call_atom_impl<5, true, CalleeSource::Upval>;
-static constexpr auto& op_call_upval_tail_6 = op_call_atom_impl<6, true, CalleeSource::Upval>;
-static constexpr auto& op_call_upval_tail_7 = op_call_atom_impl<7, true, CalleeSource::Upval>;
+#define X(name, disp, n)                                                                                     \
+	static constexpr auto& op_##name = op_call_atom_impl<n, true, CalleeSource::Upval>;
+JET_REPLICATE(X, call_upval_tail, "cut")
+#undef X
 
-static constexpr auto& op_call_self_0 = op_call_self_impl<0>;
-static constexpr auto& op_call_self_1 = op_call_self_impl<1>;
-static constexpr auto& op_call_self_2 = op_call_self_impl<2>;
-static constexpr auto& op_call_self_3 = op_call_self_impl<3>;
-static constexpr auto& op_call_self_4 = op_call_self_impl<4>;
-static constexpr auto& op_call_self_5 = op_call_self_impl<5>;
-static constexpr auto& op_call_self_6 = op_call_self_impl<6>;
-static constexpr auto& op_call_self_7 = op_call_self_impl<7>;
+#define X(name, disp, n) static constexpr auto& op_##name = op_call_self_impl<n>;
+JET_REPLICATE(X, call_self, "cself")
+#undef X
 
 void eval(VmState& vm, Frame& init_frame, Atom* constants, size_t n_constants, size_t initial_stack_size)
 {
@@ -1670,7 +1641,7 @@ namespace
 		dispatch_init_t()
 		{
 			VmOp init[] = {
-#define X(name, disp) op_##name,
+#define X(name, disp, ...) op_##name,
 				JET_OPCODES(X)
 #undef X
 			};
