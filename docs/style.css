@@ -257,6 +257,13 @@ h3 {
   text-decoration-color: var(--comment);
 }
 
+.benchmark-arrow {
+  display: inline-block;
+  font-size: 0.75em;
+  line-height: 1;
+  vertical-align: middle;
+}
+
 .perf-details:hover {
   color: var(--fg);
   text-decoration-color: var(--fg-muted);

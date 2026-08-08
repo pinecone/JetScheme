@@ -21,7 +21,7 @@
 <section id="usage">
   <div class="masthead">
     <h1>JetScheme</h1>
-    <p class="tagline">A small, <a class="perf-details" href="#benchmarks">fast</a>, single-executable <a href="https://en.wikipedia.org/wiki/Scheme_(programming_language)">Scheme</a>.</p>
+    <p class="tagline">A fast <a href="https://en.wikipedia.org/wiki/Scheme_(programming_language)">Scheme</a> in a single executable.</p>
     <div class="acquire" role="group" aria-label="Clone and build JetScheme">
       <code><span><span class="cmd">git</span> clone <a href="https://github.com/pinecone/JetScheme">https://github.com/pinecone/JetScheme</a></span></code>
       <code><span><span class="cmd">cd</span> JetScheme &amp;&amp; <span class="cmd">make</span></span></code>
@@ -31,7 +31,7 @@
 
 <section id="docs">
   <h2>Features</h2>
-  <p><strong>Small &amp; fast.</strong> About 10,000 lines of C++, tuned for performance.</p>
+  <p><strong>Small &amp; fast.</strong> About 10,000 lines of C++, tuned for performance. <a class="perf-details" href="#benchmarks">(See benchmarks. <span class="benchmark-arrow">↓</span>)</a></p>
   <figure class="scale">
     <div class="scale-track" role="img"
          aria-label="Speed relative to jet across both platforms: python is 2.6 times slower, lua 2.3 times slower, and jsc is 2.5 times faster.">
@@ -61,11 +61,8 @@
       <div class="scale-ends"><span>&larr; slower</span><span>faster &rarr;</span></div>
     </div>
   </figure>
-  <p><strong>All numbers are 64-bit doubles.</strong> <code>exact?</code> and
-  <code>integer?</code> answer <code>#t</code> for every integral value.</p>
-  <p><strong>Strings are immutable and byte-level UTF-8.</strong>
-  <code>string-length</code> and <code>string-ref</code> are byte-indexed, and
-  comparison sorts by codepoint. Character classes cover ASCII.</p>
+  <p><strong>Safe iteration.</strong> Traversal remains deterministic under mutation; every remaining
+  element is visited.</p>
   <p><strong>Generic accessors.</strong>
   <code>(ref v i)</code> reads and <code>(setf! v i x)</code> stores <code>x</code> at
   key <code>i</code> in <code>v</code>. Vectors, strings, bytevectors, and tuples
@@ -84,10 +81,9 @@
 (<span class="k">setf!</span> m '<span class="n">b</span> <span class="n">2</span>)                                   <span class="c">; insert or overwrite</span>
 (<span class="b">ref</span> m '<span class="n">b</span>)                                       <span class="c">; =&gt; 2    (any legal key)</span></code></pre>
 
-  <p><strong>Safe iteration.</strong> Traversal remains deterministic under mutation; every remaining
-  element is visited.</p>
-
   <h3>Numbers</h3>
+  <p>All numbers are 64-bit doubles. <code>exact?</code> and
+  <code>integer?</code> answer <code>#t</code> for every integral value.</p>
   <p><code>+</code> <code>-</code> <code>*</code> <code>/</code>,
   <code>quotient</code>, <code>remainder</code>, <code>modulo</code>,
   <code>abs</code>, <code>square</code>, <code>expt</code>, <code>sqrt</code>,
@@ -127,6 +123,9 @@
 (<span class="b">displayn</span> (<span class="b">sum</span> '(<span class="n">1</span> <span class="n">2</span> <span class="n">3</span> <span class="n">4</span> <span class="n">5</span>)))                    <span class="c">; prints 15</span></code></pre>
 
   <h3>Strings &amp; characters</h3>
+  <p>Strings are immutable and byte-level UTF-8.
+  <code>string-length</code> and <code>string-ref</code> are byte-indexed, and
+  comparison sorts by codepoint. Character classes cover ASCII.</p>
   <p><code>string</code>, <code>make-string</code>, <code>string-append</code>,
   <code>substring</code>, <code>string-copy</code>,
   <code>string-length</code>; index with <code>ref</code>.
