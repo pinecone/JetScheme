@@ -93,7 +93,7 @@ void init_lists(VmState& s)
 	e.bind("set-cdr!", make_prim<set_cdr>(s));
 }
 
-static Number jet_modulo(Number a, Number b)
+static double jet_modulo(double a, double b)
 {
 	JET_DIE_UNLESS(b != 0, "modulo: division by zero");
 	return a - std::floor(a / b) * b;
@@ -111,7 +111,7 @@ struct min
 	T operator()(T a, T b) { return std::min(a, b); }
 };
 
-static int32_t to_int32(Number x)
+static int32_t to_int32(double x)
 {
 	JET_DIE_UNLESS(std::isfinite(x), "bitwise op requires a finite number, given %g", x);
 	return static_cast<int32_t>(static_cast<int64_t>(x));
@@ -120,80 +120,85 @@ static int32_t to_int32(Number x)
 template <typename T>
 struct bit_and
 {
-	Number operator()(T a, T b) { return static_cast<Number>(to_int32(a) & to_int32(b)); }
+	T operator()(T a, T b) { return static_cast<T>(to_int32(a) & to_int32(b)); }
 };
 
 template <typename T>
 struct bit_ior
 {
-	Number operator()(T a, T b) { return static_cast<Number>(to_int32(a) | to_int32(b)); }
+	T operator()(T a, T b) { return static_cast<T>(to_int32(a) | to_int32(b)); }
 };
 
 template <typename T>
 struct bit_xor
 {
-	Number operator()(T a, T b) { return static_cast<Number>(to_int32(a) ^ to_int32(b)); }
+	T operator()(T a, T b) { return static_cast<T>(to_int32(a) ^ to_int32(b)); }
 };
 
-static Number jet_bitwise_not(Number x)
+static Number jet_bitwise_not(double x)
 {
-	return static_cast<Number>(~to_int32(x));
+	return Number::trusted(static_cast<double>(~to_int32(x)));
 }
 
-static Number jet_arithmetic_shift(Number x, Number count)
+static Number jet_arithmetic_shift(double x, double count)
 {
 	int32_t v = to_int32(x);
 	int32_t c = to_int32(count);
-	if (c >= 0)
-	{
-		return static_cast<Number>(static_cast<int32_t>(static_cast<uint32_t>(v) << (c & 31)));
-	}
-	return static_cast<Number>(v >> ((-c) & 31));
+	int32_t shifted = c >= 0 ? static_cast<int32_t>(static_cast<uint32_t>(v) << (c & 31)) : v >> ((-c) & 31);
+	return Number::trusted(static_cast<double>(shifted));
 }
 
-static Number jet_abs(Number x)
+static double jet_abs(double x)
 {
 	return fabs(x);
 }
 
-static bool jet_is_positive(Number x)
+static bool jet_is_positive(double x)
 {
 	return x > 0;
 }
 
-static bool jet_is_negative(Number x)
+static bool jet_is_negative(double x)
 {
 	return x < 0;
 }
 
-static bool jet_is_even(Number x)
+static bool jet_is_even(double x)
 {
 	JET_DIE_UNLESS(is_integer(x), "even? expects an integer, given %g", x);
 	return std::fmod(x, 2.0) == 0.0;
 }
 
-static bool jet_is_odd(Number x)
+static bool jet_is_odd(double x)
 {
 	JET_DIE_UNLESS(is_integer(x), "odd? expects an integer, given %g", x);
 	return std::fmod(x, 2.0) != 0.0;
 }
 
-static Number jet_quotient(Number a, Number b)
+static double jet_quotient(double a, double b)
 {
 	JET_DIE_UNLESS(b != 0, "quotient: division by zero");
 	return std::trunc(a / b);
 }
 
-static Number jet_remainder(Number a, Number b)
+static double jet_remainder(double a, double b)
 {
 	JET_DIE_UNLESS(b != 0, "remainder: division by zero");
 	return std::fmod(a, b);
 }
 
-static Number jet_square(Number x)
+static double jet_square(double x)
 {
 	return x * x;
 }
+
+struct num_equal
+{
+	bool operator()(double first, double second)
+	{
+		return std::bit_cast<uint64_t>(first) == std::bit_cast<uint64_t>(second);
+	}
+};
 
 static Atom random_seed()
 {
@@ -206,54 +211,54 @@ void init_number(VmState& s)
 	Env& e = s.env;
 	using namespace std;
 
-	e.bind("+", make_prim<folding_op<plus<Number>, 0>>(s));
-	e.bind("-", make_prim<folding_op<minus<Number>, 0>>(s, at_least(1)));
-	e.bind("*", make_prim<folding_op<multiplies<Number>, 1>>(s));
-	e.bind("/", make_prim<folding_op<divides<Number>, 1>>(s, at_least(1)));
+	e.bind("+", make_prim<folding_op<plus<double>, 0, Number::from_sum>>(s));
+	e.bind("-", make_prim<folding_op<minus<double>, 0, Number::from_sum>>(s, at_least(1)));
+	e.bind("*", make_prim<folding_op<multiplies<double>, 1>>(s));
+	e.bind("/", make_prim<folding_op<divides<double>, 1>>(s, at_least(1)));
 
-	e.bind("floor", make_prim<arith_unary_fun<Number, ::floor>>(s, exactly(1)));
-	e.bind("ceiling", make_prim<arith_unary_fun<Number, ::ceil>>(s, exactly(1)));
-	e.bind("truncate", make_prim<arith_unary_fun<Number, ::trunc>>(s, exactly(1)));
-	e.bind("round", make_prim<arith_unary_fun<Number, ::round>>(s, exactly(1)));
-	e.bind("sqrt", make_prim<arith_unary_fun<Number, ::sqrt>>(s, exactly(1)));
-	e.bind("expt", make_prim<arith_binary_fun<Number, ::pow>>(s, exactly(2)));
-	e.bind("exp", make_prim<arith_unary_fun<Number, ::exp>>(s, exactly(1)));
-	e.bind("log", make_prim<arith_unary_fun<Number, ::log>>(s, exactly(1)));
-	e.bind("sin", make_prim<arith_unary_fun<Number, ::sin>>(s, exactly(1)));
-	e.bind("cos", make_prim<arith_unary_fun<Number, ::cos>>(s, exactly(1)));
-	e.bind("tan", make_prim<arith_unary_fun<Number, ::tan>>(s, exactly(1)));
-	e.bind("asin", make_prim<arith_unary_fun<Number, ::asin>>(s, exactly(1)));
-	e.bind("acos", make_prim<arith_unary_fun<Number, ::acos>>(s, exactly(1)));
-	e.bind("atan", make_prim<arith_unary_fun<Number, ::atan>>(s, exactly(1)));
-	e.bind("abs", make_prim<arith_unary_fun<Number, jet_abs>>(s, exactly(1)));
-	e.bind("square", make_prim<arith_unary_fun<Number, jet_square>>(s, exactly(1)));
-	e.bind("quotient", make_prim<arith_binary_fun<Number, jet_quotient>>(s, exactly(2)));
-	e.bind("remainder", make_prim<arith_binary_fun<Number, jet_remainder>>(s, exactly(2)));
+	e.bind("floor", make_prim<arith_unary_fun<double, ::floor>>(s, exactly(1)));
+	e.bind("ceiling", make_prim<arith_unary_fun<double, ::ceil>>(s, exactly(1)));
+	e.bind("truncate", make_prim<arith_unary_fun<double, ::trunc>>(s, exactly(1)));
+	e.bind("round", make_prim<arith_unary_fun<double, ::round>>(s, exactly(1)));
+	e.bind("sqrt", make_prim<arith_unary_fun<double, ::sqrt>>(s, exactly(1)));
+	e.bind("expt", make_prim<arith_binary_fun<double, ::pow>>(s, exactly(2)));
+	e.bind("exp", make_prim<arith_unary_fun<double, ::exp>>(s, exactly(1)));
+	e.bind("log", make_prim<arith_unary_fun<double, ::log>>(s, exactly(1)));
+	e.bind("sin", make_prim<arith_unary_fun<double, ::sin>>(s, exactly(1)));
+	e.bind("cos", make_prim<arith_unary_fun<double, ::cos>>(s, exactly(1)));
+	e.bind("tan", make_prim<arith_unary_fun<double, ::tan>>(s, exactly(1)));
+	e.bind("asin", make_prim<arith_unary_fun<double, ::asin>>(s, exactly(1)));
+	e.bind("acos", make_prim<arith_unary_fun<double, ::acos>>(s, exactly(1)));
+	e.bind("atan", make_prim<arith_unary_fun<double, ::atan>>(s, exactly(1)));
+	e.bind("abs", make_prim<arith_unary_fun<double, jet_abs>>(s, exactly(1)));
+	e.bind("square", make_prim<arith_unary_fun<double, jet_square>>(s, exactly(1)));
+	e.bind("quotient", make_prim<arith_binary_fun<double, jet_quotient>>(s, exactly(2)));
+	e.bind("remainder", make_prim<arith_binary_fun<double, jet_remainder>>(s, exactly(2)));
 
-	e.bind("positive?", make_prim<arith_unary_pred<Number, jet_is_positive>>(s, exactly(1)));
-	e.bind("negative?", make_prim<arith_unary_pred<Number, jet_is_negative>>(s, exactly(1)));
-	e.bind("even?", make_prim<arith_unary_pred<Number, jet_is_even>>(s, exactly(1)));
-	e.bind("odd?", make_prim<arith_unary_pred<Number, jet_is_odd>>(s, exactly(1)));
+	e.bind("positive?", make_prim<arith_unary_pred<double, jet_is_positive>>(s, exactly(1)));
+	e.bind("negative?", make_prim<arith_unary_pred<double, jet_is_negative>>(s, exactly(1)));
+	e.bind("even?", make_prim<arith_unary_pred<double, jet_is_even>>(s, exactly(1)));
+	e.bind("odd?", make_prim<arith_unary_pred<double, jet_is_odd>>(s, exactly(1)));
 
-	e.bind("=", make_prim<folding_pred<equal_to<Number>>>(s, at_least(2)));
-	e.bind("<", make_prim<folding_pred<less<Number>>>(s, at_least(2)));
-	e.bind("<=", make_prim<folding_pred<less_equal<Number>>>(s, at_least(2)));
+	e.bind("=", make_prim<folding_pred<num_equal>>(s, at_least(2)));
+	e.bind("<", make_prim<folding_pred<less<double>>>(s, at_least(2)));
+	e.bind("<=", make_prim<folding_pred<less_equal<double>>>(s, at_least(2)));
 
-	e.bind(">", make_prim<folding_pred<greater<Number>>>(s, at_least(2)));
-	e.bind(">=", make_prim<folding_pred<greater_equal<Number>>>(s, at_least(2)));
+	e.bind(">", make_prim<folding_pred<greater<double>>>(s, at_least(2)));
+	e.bind(">=", make_prim<folding_pred<greater_equal<double>>>(s, at_least(2)));
 
-	e.bind("modulo", make_prim<arith_binary_fun<Number, jet_modulo>>(s, exactly(2)));
-	e.bind("max", make_prim<folding_op<::max<Number>>>(s, at_least(1)));
-	e.bind("min", make_prim<folding_op<::min<Number>>>(s, at_least(1)));
+	e.bind("modulo", make_prim<arith_binary_fun<double, jet_modulo>>(s, exactly(2)));
+	e.bind("max", make_prim<folding_op<::max<double>, Number::trusted>>(s, at_least(1)));
+	e.bind("min", make_prim<folding_op<::min<double>, Number::trusted>>(s, at_least(1)));
 
-	e.bind("bitwise-and", make_prim<folding_op<::bit_and<Number>, -1>>(s));
-	e.bind("bitwise-ior", make_prim<folding_op<::bit_ior<Number>, 0>>(s));
-	e.bind("bitwise-xor", make_prim<folding_op<::bit_xor<Number>, 0>>(s));
-	e.bind("bitwise-not", make_prim<arith_unary_fun<Number, jet_bitwise_not>>(s, exactly(1)));
-	e.bind("arithmetic-shift", make_prim<arith_binary_fun<Number, jet_arithmetic_shift>>(s, exactly(2)));
+	e.bind("bitwise-and", make_prim<folding_op<::bit_and<double>, -1, Number::trusted>>(s));
+	e.bind("bitwise-ior", make_prim<folding_op<::bit_ior<double>, 0, Number::trusted>>(s));
+	e.bind("bitwise-xor", make_prim<folding_op<::bit_xor<double>, 0, Number::trusted>>(s));
+	e.bind("bitwise-not", make_prim<arith_unary_fun<jet_bitwise_not>>(s, exactly(1)));
+	e.bind("arithmetic-shift", make_prim<arith_binary_fun<jet_arithmetic_shift>>(s, exactly(2)));
 
-	e.bind("exact?", make_prim<arith_unary_pred<Number, is_exact>>(s, exactly(1)));
-	e.bind("integer?", make_prim<arith_unary_pred<Number, is_integer>>(s, exactly(1)));
+	e.bind("exact?", make_prim<arith_unary_pred<double, is_exact>>(s, exactly(1)));
+	e.bind("integer?", make_prim<arith_unary_pred<double, is_integer>>(s, exactly(1)));
 	e.bind("number?", make_prim<is_type<jet::Type::Number>>(s));
 	e.bind("real?", make_prim<is_type<jet::Type::Number>>(s));
 	e.bind("rational?", make_prim<is_type<jet::Type::Number>>(s));
@@ -311,7 +316,7 @@ Atom vector_ref(Atom v, Atom idx)
 
 Atom vector_length(Atom v)
 {
-	return box(Number(slow_unbox<Vec>(v)->size()));
+	return box(Number::trusted(static_cast<double>(slow_unbox<Vec>(v)->size())));
 }
 
 static Atom vector_set(Atom v, Atom idx, Atom val)
@@ -466,7 +471,7 @@ Atom bytevector_u8_ref(Atom bv, Atom k)
 	size_t index = unbox<Number>(k);
 	ByteVector& mbv = *slow_unbox<ByteVector>(bv);
 	JET_DIE_UNLESS(index < mbv.size(), "bytevector-u8-ref index %zu out of bounds", index);
-	return box(Number(mbv[index]));
+	return box(Number::trusted(mbv[index]));
 }
 
 static Atom bytevector_u8_set(Atom bv, Atom k, Atom b)
@@ -483,7 +488,7 @@ static Atom bytevector_u8_set(Atom bv, Atom k, Atom b)
 
 static Atom bytevector_length(Atom bv)
 {
-	return box(Number(slow_unbox<ByteVector>(bv)->size()));
+	return box(Number::trusted(static_cast<double>(slow_unbox<ByteVector>(bv)->size())));
 }
 
 static Atom make_bytevector(VmState& s, Atom k, Atom fill)
@@ -596,8 +601,6 @@ bool is_eqv(Atom obj1, Atom obj2)
 
 	switch (obj1.type())
 	{
-		case jet::Type::Number:
-			return compare_objects<Number>(obj1, obj2);
 		case jet::Type::Primitive:
 			return compare_objects<Prim>(obj1, obj2);
 		case jet::Type::Unknown:
@@ -832,7 +835,7 @@ Atom display_to(Atom a, std::string& out)
 	{
 		case jet::Type::Number:
 		{
-			Number n = unbox<Number>(a);
+			double n = unbox<Number>(a);
 			char buf[32];
 			std::to_chars_result r = std::to_chars(buf, buf + sizeof(buf), n);
 			out.append(buf, r.ptr - buf);
@@ -1028,7 +1031,7 @@ static Atom string_ctor(VmState& s, Atom* first, Atom* last)
 
 static Number string_length(Atom s)
 {
-	return slow_unbox<String>(s)->size();
+	return Number::trusted(static_cast<double>(slow_unbox<String>(s)->size()));
 }
 
 Atom string_ref(Atom s, Atom k)
@@ -1091,7 +1094,7 @@ static Atom string_to_number(VmState& s, Atom* first, Atom* last)
 		{
 			return box(false);
 		}
-		return box<Number>(v);
+		return box(Number::from_ieee(v));
 	}
 	JET_DIE_UNLESS(radix == 2 || radix == 8 || radix == 16,
 	               "string->number: radix must be 2, 8, 10, or 16, got %d", radix);
@@ -1102,12 +1105,12 @@ static Atom string_to_number(VmState& s, Atom* first, Atom* last)
 	{
 		return box(false);
 	}
-	return box<Number>(static_cast<Number>(v));
+	return box(Number::trusted(static_cast<double>(v)));
 }
 
 static Atom number_to_string(VmState& s, Atom* first, Atom* last)
 {
-	Number n = slow_unbox<Number>(first[0]);
+	double n = slow_unbox<Number>(first[0]);
 	int radix = last - first >= 2 ? static_cast<int>(slow_unbox<Number>(first[1])) : 10;
 	if (radix == 10)
 	{
@@ -1145,12 +1148,12 @@ void init_strings(VmState& s)
 
 static Number char_to_integer(Atom c)
 {
-	return static_cast<Number>(slow_unbox<Character>(c));
+	return Number::trusted(slow_unbox<Character>(c));
 }
 
 static Atom integer_to_char(Atom n)
 {
-	Number v = slow_unbox<Number>(n);
+	double v = slow_unbox<Number>(n);
 	JET_DIE_UNLESS(is_byte(n), "integer->char: out of range %g", v);
 	return box(static_cast<Character>(static_cast<uint8_t>(v)));
 }
@@ -1195,7 +1198,7 @@ static Atom char_downcase(Atom c)
 static Number digit_value(Atom c)
 {
 	Character ch = slow_unbox<Character>(c);
-	return std::isdigit(ch) ? static_cast<Number>(ch - '0') : -1;
+	return Number::trusted(std::isdigit(ch) ? static_cast<double>(ch - '0') : -1.0);
 }
 
 void init_chars(VmState& s)
@@ -1817,16 +1820,6 @@ static bool key_hash_try(Atom key, uint64_t& out, Atom& culprit)
 	switch (key.type())
 	{
 		case jet::Type::Number:
-		{
-			double value = key.as_double();
-			if (std::isnan(value)) [[unlikely]]
-			{
-				culprit = key;
-				return false;
-			}
-			out = mix64(Atom::from_double(value == 0.0 ? 0.0 : value).bits);
-			return true;
-		}
 		case jet::Type::Boolean:
 		case jet::Type::Character:
 		case jet::Type::EmptyList:
@@ -1861,10 +1854,6 @@ static bool key_hash_try(Atom key, uint64_t& out, Atom& culprit)
 
 [[noreturn]] static void die_illegal_key(Atom culprit)
 {
-	if (is_type<jet::Type::Number>(culprit))
-	{
-		JET_DIE("hash key cannot be NaN");
-	}
 	if (is_type<jet::Type::Struct>(culprit))
 	{
 		StructType* type = unbox<Struct>(culprit)->type;
@@ -1896,16 +1885,6 @@ JET_ALWAYS_INLINE static std::optional<FastKey> make_fast_key(Atom atom)
 	switch (atom.type())
 	{
 		case jet::Type::Number:
-		{
-			double value = atom.as_double();
-			if (std::isnan(value)) [[unlikely]]
-			{
-				return std::nullopt;
-			}
-			hash = mix64(Atom::from_double(value == 0.0 ? 0.0 : value).bits);
-			kind = FastKeyKind::Number;
-			break;
-		}
 		case jet::Type::Boolean:
 		case jet::Type::Character:
 		case jet::Type::EmptyList:
@@ -2011,7 +1990,7 @@ static Number hashset_length(Atom object)
 	Struct* instance = slow_unbox<Struct>(object);
 	JET_DIE_UNLESS(instance->type->kind() == StructKind::HashSet,
 	               "hashset-length: expected a hashset");
-	return static_cast<Number>(static_cast<HashSet*>(instance)->index.size());
+	return Number::trusted(static_cast<double>(static_cast<HashSet*>(instance)->index.size()));
 }
 
 static Atom hashset_unset(Atom object, Atom key)
@@ -2338,8 +2317,8 @@ static Atom prim_check(VmState&, Atom* first, Atom*)
 	if (bool test = is_true(first[0]); !test)
 	{
 		String& file = *unbox<String>(first[1]);
-		Number line = unbox<Number>(first[2]);
-		Number col = unbox<Number>(first[3]);
+		double line = unbox<Number>(first[2]);
+		double col = unbox<Number>(first[3]);
 		JET_DIE("FAIL %s:%g:%g", file.c_str(), line, col);
 	}
 	return Atom{};

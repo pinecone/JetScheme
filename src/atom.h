@@ -68,7 +68,6 @@ namespace jet
 } // namespace jet
 
 using Character = uint8_t;
-using Number = double;
 using String = std::string;
 using Symbol = const std::string*;
 using ByteVector = std::vector<uint8_t>;
@@ -84,6 +83,58 @@ constexpr uint64_t QNAN_TAG = 0x7FF8'0000'0000'0000ULL;
 constexpr uint64_t TAG_MASK = 0x0007'0000'0000'0000ULL;
 constexpr uint64_t SIGN_BIT = 0x8000'0000'0000'0000ULL;
 constexpr uint64_t PAYLOAD_MASK = 0x0000'FFFF'FFFF'FFFFULL;
+constexpr uint64_t CANONICAL_NAN = 0x7FF0'0000'0000'0001ULL;
+
+struct Number
+{
+	double value;
+
+	Number() = delete;
+
+	static Number from_ieee(double value)
+	{
+		if (std::bit_cast<uint64_t>(value) == SIGN_BIT) [[unlikely]]
+		{
+			return Number{0.0};
+		}
+		if (value != value) [[unlikely]]
+		{
+			return nan();
+		}
+		return Number{value};
+	}
+
+	static Number from_sum(double value)
+	{
+		if (value != value) [[unlikely]]
+		{
+			return nan();
+		}
+		return trusted(value);
+	}
+
+	static Number nan()
+	{
+		uint64_t nan_bits = CANONICAL_NAN;
+		// the `asm` forces a real branch by making nan_bits opaque. without it clang
+		// if-converts the branch to branchless code, and the NaN fold lands on the FP
+		// dependency chain of every arithmetic op in the vm.
+		asm ("" : "+r" (nan_bits));
+		return Number{std::bit_cast<double>(nan_bits)};
+	}
+
+	static Number trusted(double value)
+	{
+#ifdef JET_DEBUG
+		uint64_t canon = std::bit_cast<uint64_t>(from_ieee(value).value);
+		JET_DIE_UNLESS(std::bit_cast<uint64_t>(value) == canon, "non-canonical number %g", value);
+#endif
+		return Number{value};
+	}
+
+	private:
+		explicit Number(double value) : value{value} {}
+};
 
 namespace jet_tag
 {
@@ -295,9 +346,9 @@ struct box_unbox_t;
 template <>
 struct box_unbox_t<Number>
 {
-	static Atom box(Number v) { return Atom::from_double(static_cast<double>(v)); }
+	static Atom box(Number number) { return Atom::from_double(number.value); }
 
-	static Number unbox(Atom x) { return static_cast<Number>(x.as_double()); }
+	static double unbox(Atom atom) { return atom.as_double(); }
 };
 
 template <>

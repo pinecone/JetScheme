@@ -318,7 +318,6 @@ struct HashMapEntry
 enum class FastKeyKind : uint8_t
 {
 	Bits,
-	Number,
 	Tuple,
 };
 
@@ -351,12 +350,6 @@ struct KeyEqual
 		if (first.key.atom.bits == second.atom.bits)
 		{
 			return true;
-		}
-		if (first.kind == FastKeyKind::Number && is_type<jet::Type::Number>(second.atom))
-		{
-			Atom first_atom = first.key.atom;
-			Atom second_atom = second.atom;
-			return first_atom.as_double() == second_atom.as_double();
 		}
 		if (first.kind == FastKeyKind::Tuple)
 		{
@@ -852,19 +845,19 @@ Atom make_prim(VmState& s)
 	}
 }
 
-inline bool is_exact(Number x)
+inline bool is_exact(double x)
 {
 	return trunc(x) == x;
 }
 
-inline bool is_integer(Number x)
+inline bool is_integer(double x)
 {
 	return is_exact(x);
 }
 
 inline bool is_positive_integer(Atom num)
 {
-	Number n = slow_unbox<Number>(num);
+	double n = slow_unbox<Number>(num);
 	return is_integer(n) && n >= 0;
 }
 
@@ -906,7 +899,7 @@ template <bool is_store>
 	{
 		JET_DIE("%s: expected a non-negative integer index", op);
 	}
-	Number n = unbox<Number>(key);
+	double n = unbox<Number>(key);
 	if (!is_integer(n) || n < 0)
 	{
 		JET_DIE("%s: expected a non-negative integer index", op);
@@ -930,7 +923,7 @@ JET_ALWAYS_INLINE bool index_of_key(size_t size, Atom key, FieldIc& ic, size_t& 
 	{
 		return false;
 	}
-	Number n = unbox<Number>(key);
+	double n = unbox<Number>(key);
 	if (!is_integer(n) || n < 0) [[unlikely]]
 	{
 		return false;
@@ -956,7 +949,7 @@ JET_ALWAYS_INLINE Atom container_load(T& container, size_t index)
 	}
 	else if constexpr (std::is_same_v<T, ByteVector>)
 	{
-		return box(Number(container[index]));
+		return box(Number::trusted(container[index]));
 	}
 	else
 	{
@@ -973,7 +966,7 @@ JET_ALWAYS_INLINE bool container_store(T& container, size_t index, Atom value)
 		{
 			return false;
 		}
-		Number n = unbox<Number>(value);
+		double n = unbox<Number>(value);
 		if (!is_integer(n) || n < 0 || n > 255) [[unlikely]]
 		{
 			return false;
@@ -1148,28 +1141,28 @@ constexpr ObjShape make_field_shape(Atom (*slow_ref)(Atom, Atom), Cursor* (*iter
 	        op_field_load_fast<Access, true>, op_field_store_fast<Access, true>, slow_ref, iter};
 }
 
-template <typename op_t>
-JET_ALWAYS_INLINE Atom fold(Atom* first, Atom* last, Number result)
+template <typename op_t, Number (*finish)(double)>
+JET_ALWAYS_INLINE Atom fold(Atom* first, Atom* last, double result)
 {
 	while (first != last)
 	{
 		result = op_t()(result, slow_unbox<Number>(*first++));
 	}
-	return box(result);
+	return box(finish(result));
 }
 
-template <typename op_t>
+template <typename op_t, Number (*finish)(double) = Number::from_ieee>
 JET_ALWAYS_INLINE Atom folding_op(VmState&, Atom* first, Atom* last)
 {
-	Number result = slow_unbox<Number>(*first++);
-	return fold<op_t>(first, last, result);
+	double result = slow_unbox<Number>(*first++);
+	return fold<op_t, finish>(first, last, result);
 }
 
-template <typename op_t, int init>
+template <typename op_t, int init, Number (*finish)(double) = Number::from_ieee>
 JET_ALWAYS_INLINE Atom folding_op(VmState&, Atom* first, Atom* last)
 {
-	Number result = last - first < 2 ? init : slow_unbox<Number>(*first++);
-	return fold<op_t>(first, last, result);
+	double result = last - first < 2 ? static_cast<double>(init) : slow_unbox<Number>(*first++);
+	return fold<op_t, finish>(first, last, result);
 }
 
 template <typename op_t>
@@ -1178,27 +1171,27 @@ JET_ALWAYS_INLINE Atom folding_pred(VmState&, Atom* first, Atom* last)
 	bool result = true;
 	while (first != last)
 	{
-		Number a = slow_unbox<Number>(*first++);
-		Number b = slow_unbox<Number>(*first++);
+		double a = slow_unbox<Number>(*first++);
+		double b = slow_unbox<Number>(*first++);
 		result = result && op_t()(a, b);
 	}
 
 	return box(result);
 }
 
-template <typename op_t>
-Atom arith_op(VmState&, Atom* first, Atom*)
-{
-	return box(op_t()(slow_unbox<Number>(first[0]), slow_unbox<Number>(first[1])));
-}
-
 template <typename T, T (*op)()>
 Atom arith_nullary_fun(VmState&, Atom*, Atom*)
 {
-	return box(Number(op()));
+	return box(Number::trusted(static_cast<double>(op())));
 }
 
 template <typename T, T (*op)(T)>
+Atom arith_unary_fun(VmState&, Atom* first, Atom*)
+{
+	return box(Number::from_ieee(op(slow_unbox<Number>(*first))));
+}
+
+template <Number (*op)(double)>
 Atom arith_unary_fun(VmState&, Atom* first, Atom*)
 {
 	return box(op(slow_unbox<Number>(*first)));
@@ -1211,6 +1204,12 @@ Atom arith_unary_pred(VmState&, Atom* first, Atom*)
 }
 
 template <typename T, T (*op)(T, T)>
+Atom arith_binary_fun(VmState&, Atom* first, Atom*)
+{
+	return box(Number::from_ieee(op(slow_unbox<Number>(first[0]), slow_unbox<Number>(first[1]))));
+}
+
+template <Number (*op)(double, double)>
 Atom arith_binary_fun(VmState&, Atom* first, Atom*)
 {
 	return box(op(slow_unbox<Number>(first[0]), slow_unbox<Number>(first[1])));

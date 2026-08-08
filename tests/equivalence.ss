@@ -40,7 +40,7 @@
 ($check (not (eq? 12 13)))
 ($check (not (eqv? 12 13)))
 ($check (not (equal? 12 13)))
-($check (not (eq? 0 -0)))
+($check (eq? 0 -0))
 ($check (eqv? 0 -0))
 ($check (equal? 0 -0))
 

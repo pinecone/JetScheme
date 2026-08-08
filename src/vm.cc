@@ -391,9 +391,9 @@ LoadedProgram load_program(VmState& s, Code* bytecode, size_t n_bytes)
 		{
 			case ConstTag::Number:
 			{
-				Number n;
+				double n;
 				memcpy(&n, code, sizeof(n));
-				out = box(n);
+				out = box(Number::from_ieee(n));
 				return code + sizeof(n);
 			}
 			case ConstTag::Boolean:
@@ -979,27 +979,27 @@ static constexpr auto& op_iter_next2 = op_iter_impl<OP_iter_next2, 2>;
 JET_ALWAYS_INLINE static Atom sub_atoms(Atom a, Atom b)
 {
 	JET_DIE_UNLESS(is_type<jet::Type::Number>(a) && is_type<jet::Type::Number>(b), "-: expected numbers");
-	return box<Number>(unbox<Number>(a) - unbox<Number>(b));
+	return box(Number::from_sum(unbox<Number>(a) - unbox<Number>(b)));
 }
 JET_ALWAYS_INLINE static Atom add_atoms(Atom a, Atom b)
 {
 	JET_DIE_UNLESS(is_type<jet::Type::Number>(a) && is_type<jet::Type::Number>(b), "+: expected numbers");
-	return box<Number>(unbox<Number>(a) + unbox<Number>(b));
+	return box(Number::from_sum(unbox<Number>(a) + unbox<Number>(b)));
 }
 JET_ALWAYS_INLINE static Atom mul_atoms(Atom a, Atom b)
 {
 	JET_DIE_UNLESS(is_type<jet::Type::Number>(a) && is_type<jet::Type::Number>(b), "*: expected numbers");
-	return box<Number>(unbox<Number>(a) * unbox<Number>(b));
+	return box(Number::from_ieee(unbox<Number>(a) * unbox<Number>(b)));
 }
 JET_ALWAYS_INLINE static Atom div_atoms(Atom a, Atom b)
 {
 	JET_DIE_UNLESS(is_type<jet::Type::Number>(a) && is_type<jet::Type::Number>(b), "/: expected numbers");
-	return box<Number>(unbox<Number>(a) / unbox<Number>(b));
+	return box(Number::from_ieee(unbox<Number>(a) / unbox<Number>(b)));
 }
 JET_ALWAYS_INLINE static Atom numeq_atoms(Atom a, Atom b)
 {
 	JET_DIE_UNLESS(is_type<jet::Type::Number>(a) && is_type<jet::Type::Number>(b), "=: expected numbers");
-	return box(unbox<Number>(a) == unbox<Number>(b));
+	return box(a.bits == b.bits);
 }
 JET_ALWAYS_INLINE static Atom eq_atoms(Atom a, Atom b) { return box(is_eq(a, b)); }
 JET_ALWAYS_INLINE static Atom lt_atoms(Atom a, Atom b)

@@ -5075,7 +5075,7 @@ namespace
 				case ExprKind::NumberLit:
 				{
 					double val = number_lit_value(e->number_lit.text);
-					Number n = static_cast<Number>(val);
+					Number n = Number::from_ieee(val);
 					return intern_typed(ConstTag::Number, n);
 				}
 				case ExprKind::SymbolLit:
@@ -5702,7 +5702,7 @@ namespace
 				case ExprKind::NumberLit:
 				{
 					double val = number_lit_value(expr->number_lit.text);
-					Number n = static_cast<Number>(val);
+					Number n = Number::from_ieee(val);
 					emit_ldk(dst, intern_typed(ConstTag::Number, n));
 					break;
 				}
@@ -6381,7 +6381,7 @@ namespace
 			case ExprKind::NumberLit:
 			{
 				double v = number_lit_value(e->number_lit.text);
-				return box<Number>(v);
+				return box(Number::from_ieee(v));
 			}
 			case ExprKind::StringLit:
 				return s.gc.alloc_tagged<String>(e->string_lit.value);
