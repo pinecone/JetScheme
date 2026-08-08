@@ -3,4 +3,20 @@
 file=$1
 shift
 JET=${JET:-../build/jet}
-"$JET" run $file $@ > /dev/null 2>&1
+
+if [ -z "$JET_TEST_DIAGNOSTICS" ]
+then
+    "$JET" run $file $@ > /dev/null 2>&1
+    exit $?
+fi
+
+diagnostics=$("$JET" run $file $@ 2>&1 > /dev/null)
+status=$?
+if [ -n "$diagnostics" ]
+then
+    printf '%s\n' "$diagnostics" >&2
+fi
+case $diagnostics in
+    *Sanitizer*) exit 1 ;;
+esac
+exit $status

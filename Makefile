@@ -3,11 +3,13 @@
 #		make										release build (default)
 #		make debug							debug build:	 build/jet-debug
 #		make profile						profile build: build/jet-profile
+#		make tysan							TypeSanitizer build: build/jet-tysan
 #		make all-variants				build release + debug + profile in one go
 #
 #		make test								run tests against release binary
 #		make test-debug					run tests against debug binary
 #		make test-profile				run tests against profile binary
+#		make sanitize					run tests and benchmarks under UBSan
 #
 #		make clean							wipe build/
 #
@@ -31,9 +33,14 @@ PRELUDE_H := $(BUILD)/prelude.h
 # --- Variant selection ---------------------------------------------------
 
 ifeq ($(VARIANT),debug)
-	OPT		 := -g3 -DJET_DEBUG -DJET_TRACE -fsanitize=undefined -fno-sanitize=vptr,function,alignment -fno-omit-frame-pointer -O1
+	OPT		 := -g3 -DJET_DEBUG -DJET_TRACE -fsanitize=undefined -fno-sanitize=vptr,function \
+						-fno-omit-frame-pointer -O1
 	LDOPT	 := -fsanitize=undefined -Wl,-rpath,$(ASAN_RTDIR)
 	SUFFIX := -debug
+else ifeq ($(VARIANT),tysan)
+	OPT		 := -g3 -DJET_DEBUG -fsanitize=type -fno-omit-frame-pointer -O1
+	LDOPT	 := -fsanitize=type -Wl,-rpath,$(ASAN_RTDIR)
+	SUFFIX := -tysan
 else ifeq ($(VARIANT),profile)
 	OPT		 := -O2 -g3
 	SUFFIX := -profile
@@ -44,7 +51,7 @@ else ifeq ($(VARIANT),release)
 	SUFFIX :=
 	LDOPT	 :=
 else
-	$(error unknown VARIANT '$(VARIANT)'; use release, debug, or profile)
+	$(error unknown VARIANT '$(VARIANT)'; use release, debug, tysan, or profile)
 endif
 
 OBJDIR := $(BUILD)/$(VARIANT)
@@ -64,13 +71,19 @@ LDFLAGS	 := $(LDOPT)
 ALL_CC	:= $(wildcard $(SRC)/*.cc)
 ALL_CPP := $(ALL_CC) $(wildcard $(SRC)/*.h)
 ALL_OBJ := $(patsubst $(SRC)/%.cc,$(OBJDIR)/%.o,$(ALL_CC))
+BENCHMARK_SS := $(sort $(wildcard bench/bench-*.ss))
+SANITIZE_OPTIONS ?= halt_on_error=1:print_stacktrace=1
+# TySan reports without changing the exit status, so runs are gated on this marker instead.
+SANITIZE_MARKER := Sanitizer
+SANITIZE_ENV := UBSAN_OPTIONS='$(SANITIZE_OPTIONS)' TYSAN_OPTIONS='$(SANITIZE_OPTIONS)' \
+								JET_TEST_DIAGNOSTICS=1
 
 DEPS := $(ALL_OBJ:.o=.d)
 
 # --- Targets -------------------------------------------------------------
 
-.PHONY: all release debug profile all-variants \
-				test test-debug test-profile \
+.PHONY: all release debug tysan profile all-variants \
+				test test-debug test-profile sanitize show-sanitizers \
 				ab-cross-bench format format-check clean tags
 .DEFAULT_GOAL := all
 
@@ -81,6 +94,9 @@ release:
 
 debug:
 	@$(MAKE) VARIANT=debug
+
+tysan:
+	@$(MAKE) VARIANT=tysan
 
 profile:
 	@$(MAKE) VARIANT=profile
@@ -100,6 +116,34 @@ test-debug: debug
 
 test-profile: profile
 	cd tests && JET=../build/jet-profile ./run-tests
+
+show-sanitizers:
+	@list=$$($(CXX) $(CXXFLAGS) -x c++ /dev/null -c -o /dev/null -### 2>&1 | tr ' ' '\n' | \
+		sed -n 's/^"-fsanitize=\(.*\)"$$/\1/p'); \
+		printf 'sanitizers (%s): %s\n' '$(VARIANT)' "$${list:-none}"
+
+define sanitize_run
+	@$(MAKE) VARIANT=$(1) --no-print-directory show-sanitizers
+	cd tests && $(SANITIZE_ENV) JET=../$(BUILD)/jet$(2) ./run-tests
+	@set -e; \
+		echo "runnin' benchmarks:"; \
+		for benchmark in $(BENCHMARK_SS); do \
+			name=$${benchmark#bench/bench-}; \
+			name=$${name%.ss}; \
+			printf "   %s... " "$$name"; \
+			if diagnostics=$$($(SANITIZE_ENV) $(BUILD)/jet$(2) run "$$benchmark" 2>&1 >/dev/null) && \
+				! printf '%s' "$$diagnostics" | grep -q '$(SANITIZE_MARKER)'; then \
+				echo "success"; \
+			else \
+				echo "fail"; \
+				printf '%s\n' "$$diagnostics" >&2; \
+				exit 1; \
+			fi; \
+		done
+endef
+
+sanitize: debug
+	$(call sanitize_run,debug,-debug)
 
 # Builds its own worktree of REF (default HEAD), so no build dependency.
 ab-cross-bench:
@@ -125,7 +169,7 @@ $(JET_BIN): $(ALL_OBJ) | $(BUILD)
 
 $(OBJDIR)/main.o: $(PRELUDE_H)
 
-$(OBJDIR)/%.o: $(SRC)/%.cc | $(OBJDIR)
+$(OBJDIR)/%.o: $(SRC)/%.cc Makefile | $(OBJDIR)
 	$(CXX) $(CXXFLAGS) -MMD -MP -c -o $@ $<
 
 $(PRELUDE_H): $(PRELUDE) | $(BUILD)
