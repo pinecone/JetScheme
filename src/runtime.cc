@@ -836,6 +836,12 @@ Atom display_to(Atom a, std::string& out)
 		case jet::Type::Number:
 		{
 			double n = unbox<Number>(a);
+			if (n != n)
+			{
+				// libc++ spells the canonical signaling NaN "nan(snan)"; print "nan" on every platform.
+				out += "nan";
+				break;
+			}
 			char buf[32];
 			std::to_chars_result r = std::to_chars(buf, buf + sizeof(buf), n);
 			out.append(buf, r.ptr - buf);
