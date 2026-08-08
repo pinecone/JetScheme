@@ -6,6 +6,7 @@
 
 #include "debug.h"
 #include "error.h"
+#include <bit>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -143,13 +144,13 @@ public:
 
 	int tag() { return static_cast<int>(((bits >> 48) & 0x7) | ((bits >> 60) & 0x8)); }
 
-	void* as_ptr() { return reinterpret_cast<void*>(bits & PAYLOAD_MASK); }
+	void* as_ptr() { return std::bit_cast<void*>(bits & PAYLOAD_MASK); }
 
 	uint64_t as_payload() { return bits & PAYLOAD_MASK; }
 
 	static Atom make_tagged(int tag, const void* ptr)
 	{
-		uint64_t p = reinterpret_cast<uint64_t>(ptr) & PAYLOAD_MASK;
+		uint64_t p = std::bit_cast<uint64_t>(ptr) & PAYLOAD_MASK;
 		return from_bits(QNAN_TAG | (static_cast<uint64_t>(tag & 0x7) << 48) |
 		                 (static_cast<uint64_t>((tag >> 3) & 0x1) << 63) | p);
 	}

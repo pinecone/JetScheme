@@ -1062,7 +1062,7 @@ JET_ALWAYS_INLINE inline bool field_receiver_matches(Atom object, uint64_t dispa
 	if constexpr (Access::is_struct)
 	{
 		return object.tag_is<jet_tag::struct_>() &&
-		       reinterpret_cast<uint64_t>(unbox<Struct>(object)->type) == dispatch_key;
+		       std::bit_cast<uint64_t>(unbox<Struct>(object)->type) == dispatch_key;
 	}
 	else
 	{
@@ -1133,7 +1133,7 @@ JET_PRESERVE_NONE void op_field_impl(VM_OP_PARAMS)
 	}
 	JET_PROFILE_FIELD_DISPATCH((field_opcode<is_store, const_key>), profile_field_receiver(object), false);
 	op->ic.dispatch_key = object.tag_is<jet_tag::struct_>()
-	                      ? reinterpret_cast<uint64_t>(unbox<Struct>(object)->type)
+	                      ? std::bit_cast<uint64_t>(unbox<Struct>(object)->type)
 	                      : type_bits(object);
 	op->ic.cached_index = FIELD_IC_NONE;
 	op->ic.cached_key = FIELD_IC_NONE;

@@ -6,6 +6,7 @@
 #include "error.h"
 #include "runtime.h"
 #include <array>
+#include <bit>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -584,7 +585,7 @@ JET_ALWAYS_INLINE JET_PRESERVE_NONE static void op_enter_lambda_fast(VM_OP_PARAM
 	else
 	{
 		const Ic* op = reinterpret_cast<const Ic*>(pc - sizeof(Ic));
-		code = reinterpret_cast<Code*>(op->ic_code);
+		code = std::bit_cast<Code*>(op->ic_code);
 		n_locals = op->ic_n_locals;
 	}
 	size_t base = is_tail ? frame->base : static_cast<size_t>(args - stack_base);
@@ -743,7 +744,7 @@ JET_PRESERVE_NONE static void op_iter_impl(VM_OP_PARAMS)
 	// Each cursor StructType is held by a permanent Env binding (%vector-cursor,
 	// %hashset-cursor, %hashmap-cursor), so the type pointer outlives every cursor
 	// and cannot be recycled behind this key.
-	op->ic.dispatch_key = reinterpret_cast<uint64_t>(cursor->type);
+	op->ic.dispatch_key = std::bit_cast<uint64_t>(cursor->type);
 	std::memcpy(pc - OPCODE_SIZE, &handler, sizeof(handler));
 	JET_MUSTTAIL return handler(VM_OP_ARGS);
 }
@@ -766,7 +767,7 @@ JET_PRESERVE_NONE static void op_iter_next_fast(VM_OP_PARAMS)
 	Op* op = reinterpret_cast<Op*>(pc);
 	Atom value = frame_regs[op->cursor];
 	if (!value.tag_is<jet_tag::struct_>()
-	    || op->ic.dispatch_key != reinterpret_cast<uint64_t>(unbox<Struct>(value)->type)) [[unlikely]]
+	    || op->ic.dispatch_key != std::bit_cast<uint64_t>(unbox<Struct>(value)->type)) [[unlikely]]
 	{
 		JET_MUSTTAIL return op_iter_impl<Op, Access::outputs>(VM_OP_ARGS);
 	}
@@ -1421,7 +1422,7 @@ static bool cache_lambda_entry(VmState& s, Atom callee, Ic* op)
 	{
 		return false;
 	}
-	op->ic_code = reinterpret_cast<uint64_t>(la->code);
+	op->ic_code = std::bit_cast<uint64_t>(la->code);
 	op->ic_n_locals = la->n_locals;
 	op->ic_epoch = s.gc.epoch;
 	return true;
@@ -1439,13 +1440,13 @@ JET_NOINLINE JET_PRESERVE_NONE static void op_call_slot_slow(VM_OP_PARAMS)
 	Slot* sl = unbox<Slot>(frame->closure->captures[op->upvalue_idx]);
 	callee = sl->value;
 	VmOp stub = resolve_callee(callee, op->nargs, is_tail);
-	op->ic_slot = reinterpret_cast<uint64_t>(sl);
+	op->ic_slot = std::bit_cast<uint64_t>(sl);
 	op->ic_atom = callee.bits;
 	op->ic_version = sl->version;
 	VmOp fast = op_call_slot_impl<N, is_tail, CalleeKind::Lambda>;
 	if (!cache_lambda_entry<is_tail>(s, callee, op))
 	{
-		op->ic_stub = reinterpret_cast<uint64_t>(stub);
+		op->ic_stub = std::bit_cast<uint64_t>(stub);
 		fast = op_call_slot_impl<N, is_tail, CalleeKind::Stub>;
 	}
 	std::memcpy(reinterpret_cast<Code*>(op) - OPCODE_SIZE, &fast, sizeof(fast));
@@ -1461,7 +1462,7 @@ JET_PRESERVE_NONE static void op_call_slot_impl(VM_OP_PARAMS)
 	}
 	OP_call_slot* op = reinterpret_cast<OP_call_slot*>(pc);
 	if (Slot* sl = unbox<Slot>(frame->closure->captures[op->upvalue_idx]);
-	    op->ic_slot != reinterpret_cast<uint64_t>(sl) || op->ic_version != sl->version
+	    op->ic_slot != std::bit_cast<uint64_t>(sl) || op->ic_version != sl->version
 	    || (CalleeKind::Lambda == kind && op->ic_epoch != s.gc.epoch)) [[unlikely]]
 	{
 		JET_MUSTTAIL return op_call_slot_slow<N, is_tail>(VM_OP_ARGS);
@@ -1475,7 +1476,7 @@ JET_PRESERVE_NONE static void op_call_slot_impl(VM_OP_PARAMS)
 	}
 	else
 	{
-		JET_MUSTTAIL return reinterpret_cast<VmOp>(op->ic_stub)(VM_OP_ARGS);
+		JET_MUSTTAIL return std::bit_cast<VmOp>(op->ic_stub)(VM_OP_ARGS);
 	}
 }
 
@@ -1519,7 +1520,7 @@ JET_NOINLINE JET_PRESERVE_NONE static void op_call_atom_slow(VM_OP_PARAMS)
 	VmOp fast = op_call_atom_impl<N, is_tail, source, CalleeKind::Lambda>;
 	if (!cache_lambda_entry<is_tail>(s, callee, op))
 	{
-		op->ic_stub = reinterpret_cast<uint64_t>(stub);
+		op->ic_stub = std::bit_cast<uint64_t>(stub);
 		fast = op_call_atom_impl<N, is_tail, source, CalleeKind::Stub>;
 	}
 	std::memcpy(reinterpret_cast<Code*>(op) - OPCODE_SIZE, &fast, sizeof(fast));
@@ -1557,7 +1558,7 @@ JET_PRESERVE_NONE static void op_call_atom_impl(VM_OP_PARAMS)
 	}
 	else
 	{
-		JET_MUSTTAIL return reinterpret_cast<VmOp>(op->ic_stub)(VM_OP_ARGS);
+		JET_MUSTTAIL return std::bit_cast<VmOp>(op->ic_stub)(VM_OP_ARGS);
 	}
 }
 
