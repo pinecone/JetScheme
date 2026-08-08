@@ -675,7 +675,7 @@ JET_NOINLINE JET_PRESERVE_NONE static void op_gc_slow(VM_OP_PARAMS)
 {
 	s.stack_top = stack_top;
 	collect(s);
-	VmOp h = *reinterpret_cast<VmOp*>(pc - OPCODE_SIZE);
+	VmOp h = decode_op(pc - OPCODE_SIZE);
 	JET_MUSTTAIL return h(VM_OP_ARGS);
 }
 
@@ -1625,7 +1625,7 @@ void eval(VmState& vm, Frame& init_frame, Atom* constants, size_t n_constants, s
 	Frame* frame = &vm.frames.back();
 	Code* pc = frame->code;
 	Atom* stack_top = vm.stack_top;
-	VmOp h = *reinterpret_cast<VmOp*>(pc);
+	VmOp h = decode_op(pc);
 	pc += OPCODE_SIZE;
 	JET_PROFILE_OP(pc[-1]);
 	JET_TRACE_STEP(vm, frame, pc, stack_top);

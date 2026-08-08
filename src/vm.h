@@ -533,6 +533,13 @@ struct VmState
 using VmOp = void (*)(VM_OP_PARAMS) JET_PRESERVE_NONE;
 static_assert(sizeof(VmOp) == VM_OP_SLOT_SIZE);
 
+JET_ALWAYS_INLINE inline VmOp decode_op(const Code* code)
+{
+	VmOp op;
+	std::memcpy(&op, code, sizeof(op));
+	return op;
+}
+
 #define VM_OP_ARGS s, frame, pc, stack_top, callee, args, stack_base, frame_regs
 
 void collect(VmState& s);
@@ -552,7 +559,7 @@ extern ObjShape g_shape_by_tag[jet_tag::HEAP_END];
 #define DISPATCH()                                                                                           \
 	do                                                                                                       \
 	{                                                                                                        \
-		VmOp h = *reinterpret_cast<VmOp*>(pc);                                                               \
+		VmOp h = decode_op(pc);                                                                                \
 		pc += OPCODE_SIZE;                                                                                   \
 		JET_PROFILE_OP(pc[-1]);                                                                             \
 		JET_TRACE_STEP(s, frame, pc, stack_top);                                                            \
