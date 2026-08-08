@@ -103,3 +103,61 @@
 ($check (not (integer? 2.5)))
 ($check (exact? 2))
 ($check (not (exact? 2.5)))
+
+;; Sign and parity predicates
+($check (positive? 2))
+($check (not (positive? 0)))
+($check (not (positive? -2)))
+($check (negative? -2))
+($check (not (negative? 0)))
+($check (even? 0))
+($check (even? -4))
+($check (not (even? 3)))
+($check (odd? -3))
+($check (not (odd? 4)))
+
+;; Rounding family
+($check (= 3 (ceiling 2.1)))
+($check (= -2 (ceiling -2.1)))
+($check (= 2 (truncate 2.7)))
+($check (= -2 (truncate -2.7)))
+($check (= 2 (round 2.4)))
+($check (= 3 (round 2.5)))
+($check (= -3 (round -2.5)))
+($check (= 9 (square -3)))
+
+;; Trigonometry and exponentials at exact points
+($check (= 0 (sin 0)))
+($check (= 1 (cos 0)))
+($check (= 0 (tan 0)))
+($check (= 0 (asin 0)))
+($check (= 0 (acos 1)))
+($check (= 0 (atan 0)))
+($check (= 1 (exp 0)))
+($check (= 0 (log 1)))
+
+;; Fold identities and unary forms
+($check (= 0 (+)))
+($check (= 1 (*)))
+($check (= 0.5 (/ 2)))
+($check (= 7 (- 10 1 2)))
+($check (= 4 (/ 24 2 3)))
+($check (= 3.5 (max 1 3.5 2)))
+($check (= -1 (min 3 -1 2)))
+
+;; random returns a non-negative integer below 2^31
+($check (integer? (random)))
+($check (<= 0 (random)))
+($check (< (random) 2147483648))
+
+;; Chained comparisons use overlapping pairs
+($check (= 2 2 2))
+($check (not (= 2 2 3)))
+($check (< 1 2 3))
+($check (not (< 1 3 2)))
+($check (not (< 1 2 2)))
+($check (<= 1 2 2))
+($check (> 3 2 1))
+($check (not (> 3 1 2)))
+($check (>= 3 3 1))
+($check (= 1 1 1 1 1))

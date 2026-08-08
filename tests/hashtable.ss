@@ -174,3 +174,10 @@
 (define k 'key)
 ($check (= 5 (ref `#hashmap(,k 5) 'key)))
 ($check (ref `#hashset(,k) 'key))
+
+;; NaN is one key.
+(define with-nan (hashmap (/ 0 0) 'nan-value))
+($check (eq? 'nan-value (ref with-nan (/ 0 0))))
+($check (eq? 'nan-value (ref with-nan (sqrt -1))))
+(setf! with-nan (- (/ 1 0) (/ 1 0)) 'replaced)
+($check (eq? 'replaced (ref with-nan (/ 0 0))))

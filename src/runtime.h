@@ -1169,11 +1169,12 @@ template <typename op_t>
 JET_ALWAYS_INLINE Atom folding_pred(VmState&, Atom* first, Atom* last)
 {
 	bool result = true;
+	double prev = slow_unbox<Number>(*first++);
 	while (first != last)
 	{
-		double a = slow_unbox<Number>(*first++);
-		double b = slow_unbox<Number>(*first++);
-		result = result && op_t()(a, b);
+		double cur = slow_unbox<Number>(*first++);
+		result = result && op_t()(prev, cur);
+		prev = cur;
 	}
 
 	return box(result);

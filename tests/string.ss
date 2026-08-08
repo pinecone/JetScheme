@@ -120,3 +120,9 @@
                         b"))
 ($check (string=? "a b" "a \
                          b"))
+
+;; Number parsing edge cases
+($check (eq? (/ 0 0) (string->number "nan")))
+($check (eq? (/ 1 0) (string->number "inf")))
+($check (eq? (/ 1 0) (string->number "1e309")))
+($check (= 0 (string->number "-0.0")))

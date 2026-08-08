@@ -25,3 +25,15 @@
 ($check (= 1 (bitwise-and 4294967297 1)))    ;; 2^32 + 1 -> 1
 
 (displayn "all bitops checks passed")
+
+;; Shift counts mask to 5 bits, negative counts shift right.
+($check (= 2 (arithmetic-shift 1 33)))
+($check (= 0 (arithmetic-shift 1 -33)))
+($check (= -16 (arithmetic-shift -8 1)))
+($check (= -4 (arithmetic-shift -8 -1)))
+
+;; Single-argument folds return the value.
+($check (= 5 (bitwise-and 5)))
+($check (= 5 (bitwise-ior 5)))
+($check (= 5 (bitwise-xor 5)))
+($check (= 0 (bitwise-not -1)))
