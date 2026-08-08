@@ -886,7 +886,7 @@ constexpr Opcode field_opcode = is_store ? (const_key ? Opcode::stfk : Opcode::s
                                 : (const_key ? Opcode::ldfk : Opcode::ldf);
 
 template <bool const_key, typename Op>
-JET_ALWAYS_INLINE inline Atom field_key(VmState& s, const Op* op, Atom* frame_regs)
+JET_ALWAYS_INLINE Atom field_key(VmState& s, const Op* op, Atom* frame_regs)
 {
 	if constexpr (const_key)
 	{
@@ -915,7 +915,7 @@ template <bool is_store>
 }
 
 template <bool const_key>
-JET_ALWAYS_INLINE inline bool index_of_key(size_t size, Atom key, FieldIc& ic, size_t& index)
+JET_ALWAYS_INLINE bool index_of_key(size_t size, Atom key, FieldIc& ic, size_t& index)
 {
 	if constexpr (const_key)
 	{
@@ -948,7 +948,7 @@ JET_ALWAYS_INLINE inline bool index_of_key(size_t size, Atom key, FieldIc& ic, s
 }
 
 template <typename T>
-JET_ALWAYS_INLINE inline Atom container_load(T& container, size_t index)
+JET_ALWAYS_INLINE Atom container_load(T& container, size_t index)
 {
 	if constexpr (std::is_same_v<T, String>)
 	{
@@ -965,7 +965,7 @@ JET_ALWAYS_INLINE inline Atom container_load(T& container, size_t index)
 }
 
 template <typename T>
-JET_ALWAYS_INLINE inline bool container_store(T& container, size_t index, Atom value)
+JET_ALWAYS_INLINE bool container_store(T& container, size_t index, Atom value)
 {
 	if constexpr (std::is_same_v<T, ByteVector>)
 	{
@@ -1057,7 +1057,7 @@ struct StringAccess : ContainerAccess<String>
 };
 
 template <typename Access>
-JET_ALWAYS_INLINE inline bool field_receiver_matches(Atom object, uint64_t dispatch_key)
+JET_ALWAYS_INLINE bool field_receiver_matches(Atom object, uint64_t dispatch_key)
 {
 	if constexpr (Access::is_struct)
 	{
@@ -1149,7 +1149,7 @@ constexpr ObjShape make_field_shape(Atom (*slow_ref)(Atom, Atom), Cursor* (*iter
 }
 
 template <typename op_t>
-JET_ALWAYS_INLINE inline Atom fold(Atom* first, Atom* last, Number result)
+JET_ALWAYS_INLINE Atom fold(Atom* first, Atom* last, Number result)
 {
 	while (first != last)
 	{
@@ -1159,21 +1159,21 @@ JET_ALWAYS_INLINE inline Atom fold(Atom* first, Atom* last, Number result)
 }
 
 template <typename op_t>
-JET_ALWAYS_INLINE inline Atom folding_op(VmState&, Atom* first, Atom* last)
+JET_ALWAYS_INLINE Atom folding_op(VmState&, Atom* first, Atom* last)
 {
 	Number result = slow_unbox<Number>(*first++);
 	return fold<op_t>(first, last, result);
 }
 
 template <typename op_t, int init>
-JET_ALWAYS_INLINE inline Atom folding_op(VmState&, Atom* first, Atom* last)
+JET_ALWAYS_INLINE Atom folding_op(VmState&, Atom* first, Atom* last)
 {
 	Number result = last - first < 2 ? init : slow_unbox<Number>(*first++);
 	return fold<op_t>(first, last, result);
 }
 
 template <typename op_t>
-JET_ALWAYS_INLINE inline Atom folding_pred(VmState&, Atom* first, Atom* last)
+JET_ALWAYS_INLINE Atom folding_pred(VmState&, Atom* first, Atom* last)
 {
 	bool result = true;
 	while (first != last)
