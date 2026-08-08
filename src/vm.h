@@ -155,6 +155,11 @@ struct Gc
 	};
 	static_assert(sizeof(ObjEntry) == 12);
 
+	struct FreeNode
+	{
+		void* next;
+	};
+
 	struct HugeEntry
 	{
 		uint32_t n_cells;
@@ -214,7 +219,7 @@ struct Gc
 		{
 			return alloc_slow(n, tag, destructor_id);
 		}
-		freelist[tag][n] = *static_cast<void**>(mem);
+		freelist[tag][n] = next_free(mem);
 		uint32_t start = static_cast<uint32_t>((static_cast<char*>(mem) - arena_base) / CELL_SIZE);
 		set_bits(live_bits, start, n);
 		*objects_end++ = {start, static_cast<uint32_t>(n), destructor_id, static_cast<uint8_t>(tag)};
@@ -227,7 +232,7 @@ struct Gc
 		void* mem = raw_freelist[n];
 		if (mem)
 		{
-			raw_freelist[n] = *static_cast<void**>(mem);
+			raw_freelist[n] = next_free(mem);
 			return mem;
 		}
 		JET_DIE_UNLESS(bump_cells + n <= TOTAL_CELLS, "gc: arena exhausted");
@@ -248,7 +253,7 @@ struct Gc
 
 	JET_ALWAYS_INLINE void free_raw_small(void* mem, size_t n)
 	{
-		*static_cast<void**>(mem) = raw_freelist[n];
+		link_free(mem, raw_freelist[n]);
 		raw_freelist[n] = mem;
 	}
 
@@ -262,6 +267,11 @@ struct Gc
 		size_t n = (bytes + CELL_SIZE - 1) / CELL_SIZE;
 		free_raw_small(mem, n);
 	}
+
+	// A recycled cell still holds the bytes of a dead object; placement-new starts a FreeNode there.
+	JET_ALWAYS_INLINE static void link_free(void* mem, void* next) { new (mem) FreeNode{next}; }
+
+	JET_ALWAYS_INLINE static void* next_free(void* mem) { return static_cast<FreeNode*>(mem)->next; }
 
 	bool should_collect() { return alloc_since_gc > gc_threshold; }
 

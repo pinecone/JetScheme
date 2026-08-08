@@ -127,7 +127,7 @@ void* Gc::alloc_slow(size_t n, int tag, uint16_t destructor_id)
 	if (freelist[tag][n])
 	{
 		mem = freelist[tag][n];
-		freelist[tag][n] = *static_cast<void**>(mem);
+		freelist[tag][n] = next_free(mem);
 		start = static_cast<uint32_t>((static_cast<char*>(mem) - arena_base) / CELL_SIZE);
 	}
 	else
@@ -298,7 +298,7 @@ void Gc::sweep()
 			void* obj = arena_base + static_cast<size_t>(e->cell_idx) * CELL_SIZE;
 			destroy_object(e->tag, e->destructor_id, obj, struct_destructor_table);
 			clear_bits(live_bits, e->cell_idx, e->n_cells);
-			*static_cast<void**>(obj) = freelist[e->tag][e->n_cells];
+			link_free(obj, freelist[e->tag][e->n_cells]);
 			freelist[e->tag][e->n_cells] = obj;
 		}
 	}
