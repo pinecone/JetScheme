@@ -412,6 +412,49 @@ inline bool is_struct_constructor(std::string_view name)
 	return false;
 }
 
+inline int hex_digit_value(char digit)
+{
+	if (digit >= '0' && digit <= '9')
+	{
+		return digit - '0';
+	}
+	if (digit >= 'a' && digit <= 'f')
+	{
+		return digit - 'a' + 10;
+	}
+	if (digit >= 'A' && digit <= 'F')
+	{
+		return digit - 'A' + 10;
+	}
+	return -1;
+}
+
+inline void append_utf8(std::string& out, uint32_t code)
+{
+	if (code < 0x80)
+	{
+		out += static_cast<char>(code);
+	}
+	else if (code < 0x800)
+	{
+		out += static_cast<char>(0xC0 | (code >> 6));
+		out += static_cast<char>(0x80 | (code & 0x3F));
+	}
+	else if (code < 0x10000)
+	{
+		out += static_cast<char>(0xE0 | (code >> 12));
+		out += static_cast<char>(0x80 | ((code >> 6) & 0x3F));
+		out += static_cast<char>(0x80 | (code & 0x3F));
+	}
+	else
+	{
+		out += static_cast<char>(0xF0 | (code >> 18));
+		out += static_cast<char>(0x80 | ((code >> 12) & 0x3F));
+		out += static_cast<char>(0x80 | ((code >> 6) & 0x3F));
+		out += static_cast<char>(0x80 | (code & 0x3F));
+	}
+}
+
 inline char decode_char_literal(std::string_view body, SourceLoc loc)
 {
 	if (body.size() == 1)
@@ -1076,7 +1119,7 @@ namespace
 			return arena.copy_slice(vec);
 		}
 
-		std::string_view process_string_escapes(std::string_view raw)
+		std::string_view process_string_escapes(std::string_view raw, SourceLoc loc)
 		{
 			// `raw` is the lexer slice including surrounding quotes.
 			std::string_view inner = raw.substr(1, raw.size() - 2);
@@ -1091,35 +1134,97 @@ namespace
 
 			for (size_t i = 0; i < inner.size(); ++i)
 			{
-				if (inner[i] == '\\' && i + 1 < inner.size())
-				{
-					++i;
-					switch (inner[i])
-					{
-						case '\\':
-							result += '\\';
-							break;
-						case '"':
-							result += '"';
-							break;
-						case 'n':
-							result += '\n';
-							break;
-						case 't':
-							result += '\t';
-							break;
-						default:
-							result += inner[i];
-							break;
-					}
-				}
-				else
+				if (inner[i] != '\\')
 				{
 					result += inner[i];
+					continue;
+				}
+
+				JET_DIE_WHEN(i + 1 == inner.size(), "%d:%d: trailing '\\' in string", loc.line, loc.col);
+				++i;
+
+				switch (inner[i])
+				{
+					case '\\':
+						result += '\\';
+						break;
+					case '"':
+						result += '"';
+						break;
+					case '|':
+						result += '|';
+						break;
+					case 'a':
+						result += '\a';
+						break;
+					case 'b':
+						result += '\b';
+						break;
+					case 'n':
+						result += '\n';
+						break;
+					case 'r':
+						result += '\r';
+						break;
+					case 't':
+						result += '\t';
+						break;
+					case 'x':
+						append_utf8(result, parse_hex_escape(inner, i, loc));
+						break;
+					default:
+						JET_DIE_UNLESS(skip_line_continuation(inner, i),
+						               "%d:%d: unknown string escape '\\%c'", loc.line, loc.col, inner[i]);
+						break;
 				}
 			}
 
 			return arena.copy_string(result);
+		}
+
+		uint32_t parse_hex_escape(std::string_view inner, size_t& i, SourceLoc loc)
+		{
+			size_t first = i + 1;
+			size_t end = inner.find(';', first);
+			JET_DIE_WHEN(end == std::string_view::npos || end == first,
+			             "%d:%d: '\\x' escape needs hex digits and a ';'", loc.line, loc.col);
+
+			uint32_t code = 0;
+			for (size_t at = first; at < end; ++at)
+			{
+				int value = hex_digit_value(inner[at]);
+				JET_DIE_WHEN(value < 0, "%d:%d: '\\x' escape has a non-hex digit '%c'", loc.line, loc.col,
+				             inner[at]);
+				code = code * 16 + static_cast<uint32_t>(value);
+				JET_DIE_WHEN(code > 0x10FFFF, "%d:%d: '\\x' escape is above U+10FFFF", loc.line, loc.col);
+			}
+
+			JET_DIE_WHEN(code >= 0xD800 && code <= 0xDFFF,
+			             "%d:%d: '\\x' escape is a UTF-16 surrogate", loc.line, loc.col);
+
+			i = end;
+			return code;
+		}
+
+		bool skip_line_continuation(std::string_view inner, size_t& i)
+		{
+			size_t at = i;
+			while (at < inner.size() && (inner[at] == ' ' || inner[at] == '\t'))
+			{
+				++at;
+			}
+			if (at == inner.size() || inner[at] != '\n')
+			{
+				return false;
+			}
+			++at;
+			while (at < inner.size() && (inner[at] == ' ' || inner[at] == '\t'))
+			{
+				++at;
+			}
+
+			i = at - 1;
+			return true;
 		}
 
 		Expr* parse_expr()
@@ -1137,7 +1242,7 @@ namespace
 				case TokenKind::String:
 				{
 					Expr* e = make_expr(ExprKind::StringLit, tok.loc);
-					e->string_lit.value = process_string_escapes(advance().text);
+					e->string_lit.value = process_string_escapes(advance().text, tok.loc);
 					return e;
 				}
 				case TokenKind::Boolean:
@@ -1363,7 +1468,7 @@ namespace
 			{
 				JET_DIE("%d:%d: %%prim expects a string literal", loc.line, loc.col);
 			}
-			std::string_view name = process_string_escapes(advance().text);
+			std::string_view name = process_string_escapes(advance().text, loc);
 			expect(TokenKind::RParen);
 
 			Expr* e = make_expr(ExprKind::PrimRef, loc);
@@ -1786,7 +1891,7 @@ namespace
 			std::string_view raw_path = advance().text;
 			expect(TokenKind::RParen);
 
-			std::string_view raw_inc_path = process_string_escapes(raw_path);
+			std::string_view raw_inc_path = process_string_escapes(raw_path, loc);
 
 			std::string path{raw_inc_path};
 			if (path[0] != '/')
@@ -4930,12 +5035,24 @@ namespace
 			return intern_constant(s);
 		}
 
-		uint16_t intern_string(ConstTag t, std::string_view payload)
+		uint16_t intern_name(ConstTag t, std::string_view payload)
 		{
 			std::string s;
 			s.push_back(static_cast<char>(t));
 			s.append(payload.data(), payload.size());
 			s.push_back(0);
+			return intern_constant(s);
+		}
+
+		uint16_t intern_text(std::string_view payload)
+		{
+			JET_DIE_WHEN(payload.size() > UINT32_MAX, "string literal is too long");
+			uint32_t n_bytes = static_cast<uint32_t>(payload.size());
+
+			std::string s;
+			s.push_back(static_cast<char>(ConstTag::String));
+			s.append(reinterpret_cast<const char*>(&n_bytes), sizeof(n_bytes));
+			s.append(payload.data(), payload.size());
 			return intern_constant(s);
 		}
 
@@ -4948,7 +5065,7 @@ namespace
 
 		uint16_t intern_global_name(std::string_view name)
 		{
-			return intern_string(ConstTag::GlobalName, name);
+			return intern_name(ConstTag::GlobalName, name);
 		}
 
 		uint16_t intern_literal_key(Expr* e)
@@ -4962,7 +5079,7 @@ namespace
 					return intern_typed(ConstTag::Number, n);
 				}
 				case ExprKind::SymbolLit:
-					return intern_string(ConstTag::Symbol, e->symbol_lit.name);
+					return intern_name(ConstTag::Symbol, e->symbol_lit.name);
 				case ExprKind::CharacterLit:
 				{
 					Character c = static_cast<Character>(e->character_lit.value);
@@ -4974,7 +5091,7 @@ namespace
 					return intern_typed(ConstTag::Boolean, v);
 				}
 				case ExprKind::StringLit:
-					return intern_string(ConstTag::String, e->string_lit.value);
+					return intern_text(e->string_lit.value);
 				default:
 					JET_DIE("intern_literal_key: not a literal Expr (kind %d)", static_cast<int>(e->kind));
 			}
@@ -5605,11 +5722,11 @@ namespace
 				}
 
 				case ExprKind::StringLit:
-					emit_ldk(dst, intern_string(ConstTag::String, expr->string_lit.value));
+					emit_ldk(dst, intern_text(expr->string_lit.value));
 					break;
 
 				case ExprKind::SymbolLit:
-					emit_ldk(dst, intern_string(ConstTag::Symbol, expr->symbol_lit.name));
+					emit_ldk(dst, intern_name(ConstTag::Symbol, expr->symbol_lit.name));
 					break;
 
 				case ExprKind::UnknownLit:

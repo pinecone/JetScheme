@@ -411,9 +411,11 @@ LoadedProgram load_program(VmState& s, Code* bytecode, size_t n_bytes)
 			}
 			case ConstTag::String:
 			{
-				char* string = reinterpret_cast<char*>(code);
-				out = s.gc.alloc_tagged<String>(string);
-				return code + strlen(string) + 1;
+				uint32_t n_string_bytes;
+				memcpy(&n_string_bytes, code, sizeof(n_string_bytes));
+				code += sizeof(n_string_bytes);
+				out = s.gc.alloc_tagged<String>(reinterpret_cast<char*>(code), n_string_bytes);
+				return code + n_string_bytes;
 			}
 			case ConstTag::Symbol:
 			{

@@ -640,6 +640,14 @@ namespace
 				return p + sizeof(c);
 			}
 			case ConstTag::String:
+			{
+				uint32_t n_string_bytes;
+				std::memcpy(&n_string_bytes, p, sizeof(n_string_bytes));
+				p += sizeof(n_string_bytes);
+				std::fprintf(out, "\"%.*s\"\n", static_cast<int>(n_string_bytes),
+				             reinterpret_cast<const char*>(p));
+				return p + n_string_bytes;
+			}
 			case ConstTag::Symbol:
 			case ConstTag::GlobalName:
 			{
