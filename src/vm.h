@@ -155,11 +155,6 @@ struct Gc
 	};
 	static_assert(sizeof(ObjEntry) == 12);
 
-	struct FreeNode
-	{
-		void* next;
-	};
-
 	struct HugeEntry
 	{
 		uint32_t n_cells;
@@ -268,10 +263,16 @@ struct Gc
 		free_raw_small(mem, n);
 	}
 
-	// A recycled cell still holds the bytes of a dead object; placement-new starts a FreeNode there.
-	JET_ALWAYS_INLINE static void link_free(void* mem, void* next) { new (mem) FreeNode{next}; }
+	JET_ALWAYS_INLINE static void link_free(void* mem, void* next) { std::memcpy(mem, &next, sizeof(next)); }
 
-	JET_ALWAYS_INLINE static void* next_free(void* mem) { return static_cast<FreeNode*>(mem)->next; }
+	JET_ALWAYS_INLINE static void* next_free(void* mem)
+	{
+		void* next;
+		// the link shares storage with a dead object of another type;
+		// byte copies avoid the aliasing violation (UB)
+		std::memcpy(&next, mem, sizeof(next));
+		return next;
+	}
 
 	bool should_collect() { return alloc_since_gc > gc_threshold; }
 
