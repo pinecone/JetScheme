@@ -16,15 +16,32 @@
 #include <type_traits>
 
 using GcDestructor = void (*)(void*);
-static constexpr std::array<GcDestructor, jet_tag::TAG_MAX> gc_destructor_table = []
+
+template <typename T>
+static constexpr GcDestructor gc_destructor_of()
 {
-	std::array<GcDestructor, jet_tag::TAG_MAX> table{};
-#define X(_name, tag, cpp) table[jet_tag::tag] = gc_destroy<cpp>;
+	if constexpr (std::is_same_v<T, Struct>)
+	{
+		return nullptr;
+	}
+	else
+	{
+		return gc_destroy<T>;
+	}
+}
+
+static constexpr GcDestructor gc_destructor_table[jet_tag::TAG_MAX]{
+	nullptr,
+#define X(_enum, _name, _cpp) nullptr,
+	JET_IMM_TYPES(X)
+#undef X
+	nullptr,
+#define X(_name, _tag, cpp) gc_destructor_of<cpp>(),
 	JET_HEAP_TYPES(X)
 #undef X
-	table[jet_tag::struct_] = nullptr;
-	return table;
-}();
+};
+static_assert(gc_destructor_table[jet_tag::pair] == gc_destroy<Cons>);
+static_assert(gc_destructor_table[jet_tag::struct_] == nullptr);
 static VmOp dispatch_table[256];
 
 uint16_t Gc::register_struct_destructor(StructDestructor destructor)
