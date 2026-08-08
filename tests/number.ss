@@ -72,3 +72,34 @@
 ($check (= 1 +1))
 ($check (= -1 -1))
 ($check (= 3.14 +3.14))
+
+;; expt and sqrt edge cases
+($check (= 0.5 (expt 2 -1)))
+($check (= 0.25 (expt 2 -2)))
+($check (= 1.4142135623730951 (expt 2 0.5)))
+($check (= 1 (expt 0 0)))
+($check (= 0 (expt 0 3)))
+($check (= -8 (expt -2 3)))
+($check (= 4 (expt -2 2)))
+($check (= 2 (sqrt 4)))
+($check (= 0 (sqrt 0)))
+($check (= 1.5 (sqrt 2.25)))
+($check (= 2.0000000000000004 (expt (sqrt 2) 2)))
+
+;; division by zero gives an infinity, which is a number and compares
+($check (> (/ 1 0) 0))
+($check (< (- 0 (/ 1 0)) 0))
+($check (number? (/ 1 0)))
+($check (< 1 (/ 1 0)))
+($check (> 1 (- 0 (/ 1 0))))
+($check (= (/ 1 0) (/ 2 0)))
+($check (not (= (/ 1 0) (- 0 (/ 1 0)))))
+($check (= (/ 1 0) (+ 1 (/ 1 0))))
+
+;; integer? and exact? answer for every integral value
+($check (integer? 2))
+($check (integer? 2.0))
+($check (integer? -7))
+($check (not (integer? 2.5)))
+($check (exact? 2))
+($check (not (exact? 2.5)))

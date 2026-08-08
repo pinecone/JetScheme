@@ -9,6 +9,7 @@
 (define set-cdr! (%prim "set-cdr!"))
 (define pair? (%prim "pair?"))
 (define null? (%prim "null?"))
+(define list? (%prim "list?"))
 (define list (lambda x x))
 
 (define (caar x) (car (car x)))
@@ -116,6 +117,7 @@
 (define (newline) (display "\n"))
 
 (define exit (%prim "exit"))
+(define argv (%prim "argv"))
 
 (define read (%prim "read"))
 (define display (%prim "display"))
@@ -154,6 +156,8 @@
 (define even? (%prim "even?"))
 (define odd? (%prim "odd?"))
 (define number? (%prim "number?"))
+(define integer? (%prim "integer?"))
+(define exact? (%prim "exact?"))
 (define real? (%prim "real?"))
 (define rational? (%prim "rational?"))
 (define complex? (%prim "complex?"))
@@ -165,6 +169,8 @@
 (define modulo (%prim "modulo"))
 (define max (%prim "max"))
 (define min (%prim "min"))
+(define random (%prim "random"))
+(define random-seed (%prim "random-seed"))
 
 ;;; bit ops
 (define bitwise-and (%prim "bitwise-and"))
@@ -174,6 +180,7 @@
 (define arithmetic-shift (%prim "arithmetic-shift"))
 
 ;;; symbols
+(define symbol? (%prim "symbol?"))
 (define symbol->string (%prim "symbol->string"))
 (define string->symbol (%prim "string->symbol"))
 (define symbol=? (%prim "symbol=?"))
