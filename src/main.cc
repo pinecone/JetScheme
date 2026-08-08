@@ -72,7 +72,7 @@ static int compile_to_bytecode(const string& source_path, const string& prelude_
 	return 0;
 }
 
-static int execute_bytecode(vector<uint8_t>& bytecode, int script_argc, char* script_argv[])
+static int execute_bytecode(const CodeImage& image, int script_argc, char* script_argv[])
 {
 	Env primitives_env;
 	VmState vm{.env = primitives_env};
@@ -80,7 +80,7 @@ static int execute_bytecode(vector<uint8_t>& bytecode, int script_argc, char* sc
 	init_primitives(vm);
 	init_cmdline(vm, script_argc, script_argv);
 
-	LoadedProgram prog = load_program(vm, bytecode.data(), bytecode.size());
+	LoadedProgram prog = load_program(vm, image.bytes, image.size);
 
 	Frame frame = {prog.code, nullptr, 0, prog.n_toplevel_slots};
 	eval(vm, frame, prog.constants.data(), prog.constants.size(), prog.n_toplevel_slots);
@@ -219,9 +219,11 @@ int main(int argc, char* argv[])
 		JET_DIE_UNLESS(slurp_bytes(input_path, bc), "error: cannot read '%s'", input_path.c_str());
 	}
 
+	CodeImage image{bc.data(), bc.size()};
+
 	if (want_disasm)
 	{
-		disassemble(stdout, bc.data(), bc.size());
+		disassemble(stdout, image.bytes, image.size);
 		return 0;
 	}
 
@@ -233,7 +235,7 @@ int main(int argc, char* argv[])
 		{
 			shim.push_back(argv[i]);
 		}
-		return execute_bytecode(bc, static_cast<int>(shim.size()), shim.data());
+		return execute_bytecode(image, static_cast<int>(shim.size()), shim.data());
 	}
 
 	fwrite(bc.data(), 1, bc.size(), stdout);

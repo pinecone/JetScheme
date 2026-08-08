@@ -60,7 +60,7 @@ JET_BIN := $(BUILD)/jet$(SUFFIX)
 
 # --- Flags ---------------------------------------------------------------
 
-CXXFLAGS := -std=c++20 -fno-exceptions -fno-rtti -fno-strict-aliasing \
+CXXFLAGS := -std=c++20 -fno-exceptions -fno-rtti \
 						-Wall -Werror -pipe -Wold-style-cast -Wextra -Wno-unused-parameter \
 						$(OPT) $(PROFILE_DEF) -I$(SRC) -I$(BUILD) -Ivendor
 

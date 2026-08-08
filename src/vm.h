@@ -405,19 +405,6 @@ enum class ConstTag : uint8_t
 	Lambda
 };
 
-template <typename T>
-inline Code* advance_type(Code* code, T& out)
-{
-	out = *reinterpret_cast<T*>(code);
-	return code + sizeof(T);
-}
-
-inline Code* advance_string(Code* code, char*& out)
-{
-	out = reinterpret_cast<char*>(code);
-	return code + strlen(out) + 1;
-}
-
 struct Lambda;
 
 struct Frame
@@ -593,6 +580,25 @@ struct LoadedProgram
 	Code* code;
 	uint32_t n_toplevel_slots;
 	std::vector<Atom> constants;
+};
+
+struct CodeImage
+{
+	Code* bytes;
+	size_t size;
+
+	CodeImage(const Code* data, size_t n_bytes)
+		: bytes{static_cast<Code*>(checked_malloc(n_bytes))}, size{n_bytes}
+	{
+		std::memcpy(bytes, data, n_bytes);
+	}
+	~CodeImage()
+	{
+		std::free(bytes);
+	}
+
+	CodeImage(const CodeImage&) = delete;
+	CodeImage& operator=(const CodeImage&) = delete;
 };
 
 // Bytecode layout: [u32 n_toplevel_slots][u32 n_constants][pool entries][toplevel code...].
