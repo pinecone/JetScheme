@@ -15,6 +15,7 @@
 #include <string_view>
 #include <sys/mman.h>
 #include <type_traits>
+#include <utility>
 
 using GcDestructor = void (*)(void*);
 
@@ -493,6 +494,22 @@ constexpr size_t STACK_CAPACITY = 1 << 20;
 // the slack below the true end absorbs the overshoot.
 constexpr size_t STACK_SLACK = 4096;
 
+template <size_t max_unrolled, bool copy_above_max>
+JET_ALWAYS_INLINE static void copy_atoms(Atom* dst, const Atom* src, size_t count)
+{
+	[&]<size_t... counts>(std::index_sequence<counts...>)
+	{
+		if (((count == counts && (std::memmove(dst, src, counts * sizeof(Atom)), true)) || ...))
+		{
+			return;
+		}
+		if constexpr (copy_above_max)
+		{
+			std::memmove(dst, src, count * sizeof(Atom));
+		}
+	}(std::make_index_sequence<max_unrolled + 1>{});
+}
+
 template <bool is_tail>
 JET_NOINLINE JET_PRESERVE_NONE static void op_enter_lambda_slow(VM_OP_PARAMS)
 {
@@ -510,15 +527,7 @@ JET_NOINLINE JET_PRESERVE_NONE static void op_enter_lambda_slow(VM_OP_PARAMS)
 		bool nary = is_nary(lambda.arity);
 		size_t n_copy = nary ? lambda.arity.expected : nargs;
 		Atom* dst = stack_base + base;
-		switch (n_copy)
-		{
-			case 0: break;
-			case 1: std::memmove(dst, call_args, sizeof(Atom)); break;
-			case 2: std::memmove(dst, call_args, 2 * sizeof(Atom)); break;
-			case 3: std::memmove(dst, call_args, 3 * sizeof(Atom)); break;
-			case 4: std::memmove(dst, call_args, 4 * sizeof(Atom)); break;
-			default: std::memmove(dst, call_args, n_copy * sizeof(Atom)); break;
-		}
+		copy_atoms<4, true>(dst, call_args, n_copy);
 		if (nary) [[unlikely]]
 		{
 			dst[n_copy] = pack_args_to_list(call_args + n_copy, call_args + nargs);
@@ -598,26 +607,7 @@ JET_ALWAYS_INLINE JET_PRESERVE_NONE static void op_enter_lambda_fast(VM_OP_PARAM
 
 	if constexpr (is_tail)
 	{
-		switch (stack_top - args)
-		{
-			case 0: break;
-			case 1: std::memmove(dst, args, 1 * sizeof(Atom)); break;
-			case 2: std::memmove(dst, args, 2 * sizeof(Atom)); break;
-			case 3: std::memmove(dst, args, 3 * sizeof(Atom)); break;
-			case 4: std::memmove(dst, args, 4 * sizeof(Atom)); break;
-			case 5: std::memmove(dst, args, 5 * sizeof(Atom)); break;
-			case 6: std::memmove(dst, args, 6 * sizeof(Atom)); break;
-			case 7: std::memmove(dst, args, 7 * sizeof(Atom)); break;
-			case 8: std::memmove(dst, args, 8 * sizeof(Atom)); break;
-			case 9: std::memmove(dst, args, 9 * sizeof(Atom)); break;
-			case 10: std::memmove(dst, args, 10 * sizeof(Atom)); break;
-			case 11: std::memmove(dst, args, 11 * sizeof(Atom)); break;
-			case 12: std::memmove(dst, args, 12 * sizeof(Atom)); break;
-			case 13: std::memmove(dst, args, 13 * sizeof(Atom)); break;
-			case 14: std::memmove(dst, args, 14 * sizeof(Atom)); break;
-			case 15: std::memmove(dst, args, 15 * sizeof(Atom)); break;
-			case 16: std::memmove(dst, args, 16 * sizeof(Atom)); break;
-		}
+		copy_atoms<16, false>(dst, args, static_cast<size_t>(stack_top - args));
 		frame->code = code;
 		frame->closure = &la;
 		frame->top = base + n_locals;
@@ -1359,15 +1349,7 @@ JET_NOINLINE JET_PRESERVE_NONE static void op_call_self_tail_slow(VM_OP_PARAMS)
 	Atom* dst = frame_regs;
 	Atom* src = frame_regs + op->w;
 	size_t nargs = op->nargs;
-	switch (nargs)
-	{
-		case 0: break;
-		case 1: std::memmove(dst, src, 1 * sizeof(Atom)); break;
-		case 2: std::memmove(dst, src, 2 * sizeof(Atom)); break;
-		case 3: std::memmove(dst, src, 3 * sizeof(Atom)); break;
-		case 4: std::memmove(dst, src, 4 * sizeof(Atom)); break;
-		default: std::memmove(dst, src, nargs * sizeof(Atom)); break;
-	}
+	copy_atoms<4, true>(dst, src, nargs);
 	pc = la.code;
 	DISPATCH();
 }
