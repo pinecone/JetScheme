@@ -145,10 +145,15 @@
 ($check (not (eqv? empty-bytevector-1 empty-bytevector-2)))
 ($check (equal? empty-bytevector-1 empty-bytevector-2))
 
+;; Lambdas never compare eq?, even to themselves; primitives compare by identity.
 (define procedure-alias procedure-value)
-($check (eq? procedure-value procedure-alias))
-($check (eqv? procedure-value procedure-alias))
-($check (equal? procedure-value procedure-alias))
+($check (not (eq? procedure-value procedure-alias)))
+($check (not (eqv? procedure-value procedure-alias)))
+($check (not (equal? procedure-value procedure-alias)))
+($check (not (eq? procedure-value procedure-value)))
+($check (eq? car car))
+($check (eqv? car car))
+($check (equal? car car))
 
 (define (make-reader value)
   (lambda () value))
@@ -259,12 +264,15 @@
       (and (predicate-laws-for-pair? value (car values))
            (predicate-laws-against? value (cdr values)))))
 
+(define (reflexive-unless-lambda? x)
+  (if (procedure? x)
+      #t
+      (and (eq? x x) (eqv? x x) (equal? x x))))
+
 (define (predicate-laws? values)
   (if (null? values)
       #t
-      (and (eq? (car values) (car values))
-           (eqv? (car values) (car values))
-           (equal? (car values) (car values))
+      (and (reflexive-unless-lambda? (car values))
            (predicate-laws-against? (car values) law-values)
            (predicate-laws? (cdr values)))))
 

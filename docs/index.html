@@ -173,7 +173,9 @@
 
   <h3>Equality &amp; symbols</h3>
   <p><code>eq?</code> compares identity, <code>eqv?</code> compares identity and
-  numbers by value, and <code>equal?</code> compares structures recursively. There
+  numbers by value, and <code>equal?</code> compares structures recursively. Lambdas
+  have no observable identity: all three answer <code>#f</code> for a lambda, even
+  compared with itself. There
   are also the type-specific predicates <code>boolean=?</code>,
   <code>symbol=?</code>, and <code>string=?</code>. Symbols convert with
   <code>symbol-&gt;string</code> and <code>string-&gt;symbol</code>, and there are
@@ -204,7 +206,8 @@
 
   <h3>I/O &amp; files</h3>
   <p><code>display</code> prints values in human-readable form. <code>write</code> prints them in code-form, which <code>read</code> can parse back. <code>newline</code> prints a newline, and
-  <code>displayn</code> is <code>display</code> followed by a newline.</p>
+  <code>displayn</code> is <code>display</code> followed by a newline. Each takes an
+  optional output port and defaults to stdout.</p>
 
   <p>To read and write a file one character at a time there are
   <code>open-input-file</code>, <code>open-output-file</code>,

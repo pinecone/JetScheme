@@ -113,8 +113,8 @@
 (define boolean=? (%prim "boolean=?"))
 
 ;;; i/o
-(define (displayn x) (display x) (newline))
-(define (newline) (display "\n"))
+(define displayn (lambda args (apply display args) (apply newline (cdr args))))
+(define newline (lambda ports (apply display (cons "\n" ports))))
 
 (define exit (%prim "exit"))
 (define argv (%prim "argv"))

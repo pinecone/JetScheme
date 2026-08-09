@@ -49,10 +49,11 @@
 ($check (= 11 ((lambda (x) ((lambda (x) (+ x 1)) (* x 2))) 5)))
 ($check (= 42 ((lambda () 42))))
 
+;; Lambdas never compare eq?, so closure identity cannot leak optimization choices.
 (define (make-equivalent-procedure) (lambda () #t))
 (define equivalent-procedure-1 (make-equivalent-procedure))
 (define equivalent-procedure-2 (make-equivalent-procedure))
-($check (eq? equivalent-procedure-1 equivalent-procedure-1))
+($check (not (eq? equivalent-procedure-1 equivalent-procedure-1)))
 ($check (not (eq? equivalent-procedure-1 equivalent-procedure-2)))
 
 ;; Closure capture: basic make-adder

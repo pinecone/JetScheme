@@ -1,0 +1,61 @@
+#!/bin/sh
+# Every test must produce identical stdout and status under `run`, a compile/exec
+# bytecode round-trip, and each optimizer flag. stderr is ignored: sanitizer builds
+# write diagnostics there.
+
+trap exit 2
+
+JET=${JET:-../build/jet}
+
+if [ ! -e "$JET" ]
+then
+    echo "error: jet executable '$JET' not found; build it first."
+    exit
+fi
+
+pass=0
+fail=0
+failed_names=
+for file in *.ss
+do
+    name=${file%%.*}
+    printf "   $name... "
+
+    expected=$("$JET" run $file 2>/dev/null)
+    run_status=$?
+
+    ok=1
+    for mode in roundtrip --no-inline --no-lift-lambdas --no-specialize-ops
+    do
+        if [ "$mode" = roundtrip ]
+        then
+            actual=$("$JET" compile $file 2>/dev/null | "$JET" exec - 2>/dev/null)
+        else
+            actual=$("$JET" run $mode $file 2>/dev/null)
+        fi
+        if [ $? -ne $run_status ] || [ "$actual" != "$expected" ]
+        then
+            ok=0
+            break
+        fi
+    done
+
+    if [ $ok -eq 1 ]
+    then
+      echo "success"
+      pass=$((pass + 1))
+    else
+      echo "fail ($mode)"
+      fail=$((fail + 1))
+      failed_names="$failed_names $name"
+    fi
+done
+
+total=$((pass + fail))
+if [ $fail -eq 0 ]
+then
+    echo "===== $pass/$total passed ====="
+else
+    echo "===== $pass/$total passed, $fail failed:$failed_names ====="
+    exit 1
+fi

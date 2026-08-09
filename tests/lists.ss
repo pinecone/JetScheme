@@ -150,3 +150,24 @@
 ($check (procedure? car))
 ($check (procedure? (lambda (x) x)))
 ($check (not (procedure? 1)))
+
+;; boolean?, symbol?, list?
+($check (boolean? #t))
+($check (boolean? #f))
+($check (not (boolean? 0)))
+($check (not (boolean? '())))
+($check (symbol? 'a))
+($check (symbol? (string->symbol "b")))
+($check (not (symbol? "a")))
+($check (list? '()))
+($check (list? '(1 2 3)))
+($check (not (list? '(1 . 2))))
+($check (not (list? 5)))
+
+;; deep cxr accessors
+($check (= 4 (cadddr '(1 2 3 4 5))))
+($check (equal? '(5) (cddddr '(1 2 3 4 5))))
+($check (null? (cddddr '(1 2 3 4))))
+(define cyclic (list 1 2 3))
+(set-cdr! (cddr cyclic) cyclic)
+($check (not (list? cyclic)))

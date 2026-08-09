@@ -126,3 +126,17 @@
 ($check (eq? (/ 1 0) (string->number "inf")))
 ($check (eq? (/ 1 0) (string->number "1e309")))
 ($check (= 0 (string->number "-0.0")))
+
+;; multibyte UTF-8: strings are byte-level
+(define lambda-str "λ")
+($check (= 2 (string-length lambda-str)))
+($check (= 4 (string-length "🎈")))
+($check (= 206 (char->integer (string-ref lambda-str 0))))
+($check (= 187 (char->integer (string-ref lambda-str 1))))
+($check (string=? "λ" (substring "aλb" 1 3)))
+($check (= 3 (string-length (string-append "a" lambda-str))))
+
+;; codepoint ordering through UTF-8 byte comparison
+($check (string<? "A" "λ"))
+($check (string<? "λ" "🎈"))
+($check (string<? "z" "é"))

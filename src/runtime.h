@@ -297,9 +297,10 @@ static_assert(sizeof(Tuple) == 16);
 
 bool is_eqv(Atom a, Atom b);
 
+// Capture-free lambdas share one pool template, so identity would expose optimization choices.
 inline bool is_eq(Atom a, Atom b)
 {
-	return a.bits == b.bits;
+	return a.bits == b.bits && !is_type<jet::Type::Procedure>(a);
 }
 
 // Hashing a value and proving it a legal key are one walk, so the verdict travels with the key.
@@ -1233,7 +1234,7 @@ bool compare_objects(Atom obj1, Atom obj2)
 
 void init_equivalence(VmState& s);
 
-Atom display(Atom a);
+Atom display(VmState& s, Atom* first, Atom* last);
 Atom write_to(Atom a, std::string& out);
 void init_display_primitives(VmState& s);
 

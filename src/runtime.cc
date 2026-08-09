@@ -37,7 +37,36 @@ bool operator==(Cons& p1, Cons& p2)
 
 Atom is_list(Atom a)
 {
-	return box(is_type<jet::Type::Pair>(a));
+	Atom slow = a;
+
+	while (true)
+	{
+		if (is_type<jet::Type::EmptyList>(a))
+		{
+			return box(true);
+		}
+		if (!is_type<jet::Type::Pair>(a))
+		{
+			return box(false);
+		}
+		a = unbox<Cons>(a)->cdr;
+
+		if (is_type<jet::Type::EmptyList>(a))
+		{
+			return box(true);
+		}
+		if (!is_type<jet::Type::Pair>(a))
+		{
+			return box(false);
+		}
+		a = unbox<Cons>(a)->cdr;
+
+		slow = unbox<Cons>(slow)->cdr;
+		if (a.bits == slow.bits)
+		{
+			return box(false);
+		}
+	}
 }
 
 static Atom set_car(Atom pair, Atom x)
@@ -913,25 +942,50 @@ Atom write_to(Atom a, std::string& out)
 {
 	auto&& write_escaped_char = [](char c, std::string& output)
 	{
-		static std::string_view emap[256];
-		emap[static_cast<int>('\\')] = "\\";
-		emap[static_cast<int>('\n')] = "\\n";
-		emap[static_cast<int>('\t')] = "\\t";
-		if (std::string_view esc = emap[static_cast<int>(c)]; !esc.empty())
+		switch (c)
 		{
-			output += esc;
+			case '\\': output += "\\\\"; break;
+			case '"': output += "\\\""; break;
+			case '\a': output += "\\a"; break;
+			case '\b': output += "\\b"; break;
+			case '\n': output += "\\n"; break;
+			case '\r': output += "\\r"; break;
+			case '\t': output += "\\t"; break;
+			default: output += c; break;
 		}
-		else
+	};
+	auto&& char_name = [](Character c) -> std::string_view
+	{
+		switch (c)
 		{
-			output += c;
+			case 0x00: return "null";
+			case 0x07: return "alarm";
+			case 0x08: return "backspace";
+			case 0x09: return "tab";
+			case 0x0A: return "newline";
+			case 0x0D: return "return";
+			case 0x1B: return "escape";
+			case 0x20: return "space";
+			case 0x7F: return "delete";
+			default: return {};
 		}
 	};
 	switch (a.type())
 	{
 		case jet::Type::Character:
+		{
 			out += "#\\";
-			out += unbox<Character>(a);
+			Character c = unbox<Character>(a);
+			if (std::string_view name = char_name(c); !name.empty())
+			{
+				out += name;
+			}
+			else
+			{
+				out += c;
+			}
 			break;
+		}
 
 		case jet::Type::String:
 		{
@@ -972,29 +1026,46 @@ Atom write_to(Atom a, std::string& out)
 	return Atom{};
 }
 
-Atom display(Atom a)
+static Atom put_buffer(std::string& buf, const char* who, Atom* first, Atom* last)
 {
-	std::string buf;
-	display_to(a, buf);
+	size_t n_args = static_cast<size_t>(last - first);
+	JET_DIE_UNLESS(n_args <= 2, "%s expects at most 2 arguments, given %zu", who, n_args);
+
+	if (n_args == 2)
+	{
+		OPort* op = static_cast<OPort*>(slow_unbox<Port>(first[1]));
+		JET_DIE_UNLESS(op->is_output(), "%s: not an output port", who);
+		for (char c : buf)
+		{
+			op->write_byte(c);
+		}
+		return Atom{};
+	}
+
 	std::fwrite(buf.data(), 1, buf.size(), stdout);
 	std::fflush(stdout);
 	return Atom{};
 }
 
-static Atom write_atom(Atom a)
+Atom display(VmState&, Atom* first, Atom* last)
 {
 	std::string buf;
-	write_to(a, buf);
-	std::fwrite(buf.data(), 1, buf.size(), stdout);
-	std::fflush(stdout);
-	return Atom{};
+	display_to(first[0], buf);
+	return put_buffer(buf, "display", first, last);
+}
+
+static Atom write_atom(VmState&, Atom* first, Atom* last)
+{
+	std::string buf;
+	write_to(first[0], buf);
+	return put_buffer(buf, "write", first, last);
 }
 
 void init_display_primitives(VmState& s)
 {
 	Env& e = s.env;
-	e.bind("display", make_prim<display>(s));
-	e.bind("write", make_prim<write_atom>(s));
+	e.bind("display", make_prim<display>(s, at_least(1)));
+	e.bind("write", make_prim<write_atom>(s, at_least(1)));
 }
 
 static Atom string_append(VmState& s, Atom* first, Atom* last)

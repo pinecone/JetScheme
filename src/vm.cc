@@ -585,7 +585,8 @@ JET_ALWAYS_INLINE JET_PRESERVE_NONE static void op_enter_lambda_fast(VM_OP_PARAM
 	else
 	{
 		const Ic* op = reinterpret_cast<const Ic*>(pc - sizeof(Ic));
-		code = std::bit_cast<Code*>(op->ic_code);
+		uint64_t code_bits = op->ic_code;
+		code = std::bit_cast<Code*>(code_bits);
 		n_locals = op->ic_n_locals;
 	}
 	size_t base = is_tail ? frame->base : static_cast<size_t>(args - stack_base);
@@ -1476,7 +1477,8 @@ JET_PRESERVE_NONE static void op_call_slot_impl(VM_OP_PARAMS)
 	}
 	else
 	{
-		JET_MUSTTAIL return std::bit_cast<VmOp>(op->ic_stub)(VM_OP_ARGS);
+		uint64_t stub_bits = op->ic_stub;
+		JET_MUSTTAIL return std::bit_cast<VmOp>(stub_bits)(VM_OP_ARGS);
 	}
 }
 
@@ -1558,7 +1560,8 @@ JET_PRESERVE_NONE static void op_call_atom_impl(VM_OP_PARAMS)
 	}
 	else
 	{
-		JET_MUSTTAIL return std::bit_cast<VmOp>(op->ic_stub)(VM_OP_ARGS);
+		uint64_t stub_bits = op->ic_stub;
+		JET_MUSTTAIL return std::bit_cast<VmOp>(stub_bits)(VM_OP_ARGS);
 	}
 }
 

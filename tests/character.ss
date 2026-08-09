@@ -48,3 +48,15 @@
 ($check (= 0 (digit-value #\0)))
 ($check (= 9 (digit-value #\9)))
 ($check (= -1 (digit-value #\a)))
+
+;; case-insensitive comparisons
+($check (char-ci<=? #\a #\A))
+($check (char-ci<=? #\A #\b))
+($check (not (char-ci<=? #\b #\A)))
+($check (char-ci>=? #\A #\a))
+($check (char-ci>=? #\B #\a))
+($check (not (char-ci>=? #\a #\B)))
+($check (char-ci>? #\B #\a))
+($check (not (char-ci>? #\a #\A)))
+($check (char-ci<=? #\a #\B #\c))
+($check (char-ci>=? #\C #\b #\A))

@@ -38,3 +38,7 @@ else
     echo "===== $pass/$total passed, $fail failed:$failed_names ====="
     exit 1
 fi
+
+echo "runnin' mode tests:"
+./run-mode-tests
+

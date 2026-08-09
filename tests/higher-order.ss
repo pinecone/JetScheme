@@ -33,3 +33,14 @@
 ;; N-ary via apply
 (define n-ary-thing (lambda args args))
 ($check (equal? '(1 2 3) (apply n-ary-thing '(1 2 3))))
+
+;; fold-right keeps list order; fold reverses it
+($check (equal? '(1 2 3) (fold-right cons '() '(1 2 3))))
+($check (= 6 (fold-right + 0 '(1 2 3))))
+($check (equal? '(1 (2 (3 ()))) (fold-right list '() '(1 2 3))))
+
+;; reduce-right uses the identity only for the empty list
+($check (= 0 (reduce-right + 0 '())))
+($check (= 5 (reduce-right + 0 '(5))))
+($check (= 6 (reduce-right + 0 '(1 2 3))))
+($check (equal? '(1 2 . 3) (reduce-right cons 'unused '(1 2 3))))

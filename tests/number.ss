@@ -161,3 +161,30 @@
 ($check (not (> 3 1 2)))
 ($check (>= 3 3 1))
 ($check (= 1 1 1 1 1))
+
+;; expt edge cases
+($check (= 1 (expt 0 0)))
+($check (= 0 (expt 0 5)))
+($check (= 0.25 (expt 2 -2)))
+($check (= 8 (expt 2 3)))
+($check (= 3 (expt 9 0.5)))
+($check (= 0.001 (expt 10 -3)))
+
+;; sqrt of a negative number is the canonical NaN; NaN propagates and is unordered
+($check (eq? (sqrt -1) (/ 0 0)))
+($check (eq? (+ (sqrt -1) 1) (/ 0 0)))
+($check (not (< (sqrt -1) 0)))
+($check (not (> (sqrt -1) 0)))
+($check (not (<= (sqrt -1) (sqrt -1))))
+
+;; random-seed reseeds and random keeps working
+($check (begin (random-seed) #t))
+($check (integer? (random)))
+
+;; numeric-tower predicates all mean "number"
+($check (real? 1.5))
+($check (rational? 1.5))
+($check (complex? 1.5))
+($check (not (real? 'a)))
+($check (not (rational? "1")))
+($check (not (complex? #t)))
