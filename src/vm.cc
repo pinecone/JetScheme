@@ -10,7 +10,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <memory>
 #include <string>
 #include <string_view>
 #include <sys/mman.h>
@@ -488,11 +487,6 @@ LoadedProgram load_program(VmState& s, Code* bytecode, size_t n_bytes)
 	prog.code = p;
 	return prog;
 }
-
-constexpr size_t STACK_CAPACITY = 1 << 20;
-// apply's list splat writes above the frame before its overflow check runs;
-// the slack below the true end absorbs the overshoot.
-constexpr size_t STACK_SLACK = 4096;
 
 enum class CopyVariadic
 {
@@ -1269,9 +1263,17 @@ JET_PRESERVE_NONE static void op_retv(VM_OP_PARAMS)
 	DISPATCH();
 }
 
+void vm_exit(VmState& vm, int status)
+{
+	profile_print();
+	vm.~VmState();
+	std::exit(status);
+}
+
 JET_PRESERVE_NONE static void op_halt(VM_OP_PARAMS)
 {
 	s.stack_top = stack_top;
+	vm_exit(s, 0);
 }
 
 JET_PRESERVE_NONE static void op_skip(VM_OP_PARAMS)
@@ -1617,24 +1619,23 @@ JET_REPLICATE(X, call_upval_tail, "cut")
 JET_REPLICATE(X, call_self, "cself")
 #undef X
 
-void eval(VmState& vm, Frame& init_frame, Atom* constants, size_t n_constants, size_t initial_stack_size)
+[[noreturn]] void eval(VmState& vm, Frame& init_frame, Atom* constants, size_t n_constants,
+                       size_t initial_stack_size)
 {
-	std::unique_ptr<Atom[]> stack_buffer{new Atom[STACK_CAPACITY]};
 	JET_DIE_WHEN(initial_stack_size > STACK_CAPACITY - STACK_SLACK,
 	             "stack overflow: %zu toplevel slots", initial_stack_size);
 
-	vm.stack_base = stack_buffer.get();
-	vm.stack_end = stack_buffer.get() + STACK_CAPACITY;
-	vm.stack_top = stack_buffer.get() + initial_stack_size;
+	vm.stack_base = vm.stack.get();
+	vm.stack_end = vm.stack.get() + STACK_CAPACITY;
+	vm.stack_top = vm.stack.get() + initial_stack_size;
 	vm.stack_watermark = vm.stack_top;
 	vm.constants = constants;
 	vm.n_constants = n_constants;
 
-	Code halt_buf[OPCODE_SIZE];
 	VmOp halt_handler = dispatch_table[static_cast<int>(Opcode::halt)];
-	std::memcpy(halt_buf, &halt_handler, sizeof(halt_handler));
-	halt_buf[VM_OP_SLOT_SIZE] = static_cast<uint8_t>(Opcode::halt);
-	vm.frames.push({halt_buf, nullptr, 0, initial_stack_size});
+	std::memcpy(vm.halt_code, &halt_handler, sizeof(halt_handler));
+	vm.halt_code[VM_OP_SLOT_SIZE] = static_cast<uint8_t>(Opcode::halt);
+	vm.frames.push({vm.halt_code, nullptr, 0, initial_stack_size});
 	vm.frames.push(init_frame);
 
 	JET_PROFILE_BEGIN();
@@ -1647,7 +1648,7 @@ void eval(VmState& vm, Frame& init_frame, Atom* constants, size_t n_constants, s
 	JET_TRACE_STEP(vm, frame, pc, stack_top);
 	h(vm, frame, pc, stack_top, Atom{}, nullptr, vm.stack_base, vm.stack_base + frame->base);
 
-	profile_print();
+	JET_DIE("vm: halt returned to eval");
 }
 
 namespace

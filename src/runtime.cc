@@ -1303,9 +1303,9 @@ void init_chars(VmState& s)
 	e.bind("digit-value", make_prim<digit_value>(s));
 }
 
-static Atom exit_(Atom status)
+static Atom exit_(VmState& s, Atom status)
 {
-	exit(slow_unbox<Number>(status));
+	vm_exit(s, static_cast<int>(slow_unbox<Number>(status)));
 }
 
 void init_sys(VmState& s)

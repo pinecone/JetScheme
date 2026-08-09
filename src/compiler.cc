@@ -4444,9 +4444,15 @@ namespace
 
 		Expr* clone_proc(Expr* proc)
 		{
+			// TODO: this `get` call has to happen first, otherwise another
+			//       `get` could resize `bindings_` and cause a UAF. would
+			//       be better if the compiler just didn't have this hazard
+			//       to begin with.
+			ResolvedBinding source{get(db.bindings_, proc->id)};
+
 			Expr* e = db.make_expr(ExprKind::VarRef, proc->loc);
 			e->var_ref.name = proc->var_ref.name;
-			get(db.bindings_, e->id) = get(db.bindings_, proc->id);
+			get(db.bindings_, e->id) = source;
 			return e;
 		}
 

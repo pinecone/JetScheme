@@ -72,7 +72,7 @@ static int compile_to_bytecode(const string& source_path, const string& prelude_
 	return 0;
 }
 
-static int execute_bytecode(const CodeImage& image, int script_argc, char* script_argv[])
+[[noreturn]] static void execute_bytecode(const CodeImage& image, int script_argc, char* script_argv[])
 {
 	Env primitives_env;
 	VmState vm{.env = primitives_env};
@@ -84,7 +84,6 @@ static int execute_bytecode(const CodeImage& image, int script_argc, char* scrip
 
 	Frame frame = {prog.code, nullptr, 0, prog.n_toplevel_slots};
 	eval(vm, frame, prog.constants.data(), prog.constants.size(), prog.n_toplevel_slots);
-	return 0;
 }
 
 static void usage(FILE* o)
@@ -235,7 +234,7 @@ int main(int argc, char* argv[])
 		{
 			shim.push_back(argv[i]);
 		}
-		return execute_bytecode(image, static_cast<int>(shim.size()), shim.data());
+		execute_bytecode(image, static_cast<int>(shim.size()), shim.data());
 	}
 
 	fwrite(bc.data(), 1, bc.size(), stdout);

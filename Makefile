@@ -32,9 +32,9 @@ PRELUDE_H := $(BUILD)/prelude.h
 # --- Variant selection ---------------------------------------------------
 
 ifeq ($(VARIANT),debug)
-	OPT		 := -g3 -DJET_DEBUG -DJET_TRACE -fsanitize=undefined -fno-sanitize=vptr,function \
+	OPT		 := -g3 -DJET_DEBUG -DJET_TRACE -fsanitize=address,undefined -fno-sanitize=vptr,function \
 						-fno-omit-frame-pointer -O1
-	LDOPT	 := -fsanitize=undefined -Wl,-rpath,$(ASAN_RTDIR)
+	LDOPT	 := -fsanitize=address,undefined -Wl,-rpath,$(ASAN_RTDIR)
 	SUFFIX := -debug
 else ifeq ($(VARIANT),profile)
 	OPT		 := -O2 -g3
@@ -69,7 +69,8 @@ ALL_OBJ := $(patsubst $(SRC)/%.cc,$(OBJDIR)/%.o,$(ALL_CC))
 BENCHMARK_SS := $(sort $(wildcard bench/bench-*.ss))
 SANITIZE_OPTIONS ?= halt_on_error=1:print_stacktrace=1
 SANITIZE_MARKER := Sanitizer
-SANITIZE_ENV := UBSAN_OPTIONS='$(SANITIZE_OPTIONS)' JET_TEST_DIAGNOSTICS=1
+SANITIZE_ENV := ASAN_OPTIONS='$(SANITIZE_OPTIONS)' UBSAN_OPTIONS='$(SANITIZE_OPTIONS)' \
+								JET_TEST_DIAGNOSTICS=1
 
 DEPS := $(ALL_OBJ:.o=.d)
 

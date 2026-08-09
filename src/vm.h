@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
 #include <new>
 #include <string>
 #include <string_view>
@@ -507,12 +508,19 @@ struct box_unbox_t<Lambda>
 	static Lambda* unbox(Atom x) { return static_cast<Lambda*>(x.as_ptr()); }
 };
 
+constexpr size_t STACK_CAPACITY = 1 << 20;
+// apply's list splat writes above the frame before its overflow check runs;
+// the slack below the true end absorbs the overshoot.
+constexpr size_t STACK_SLACK = 4096;
+
 struct VmState
 {
 	Gc gc{};
 	Env& env;
 	InternedSymbols symbols{};
 	FrameStack frames{};
+	std::unique_ptr<Atom[]> stack{new Atom[STACK_CAPACITY]};
+	Code halt_code[OPCODE_SIZE]{};
 	Atom* stack_base{};
 	Atom* stack_end{};
 	Atom* stack_top{};
@@ -573,7 +581,10 @@ extern ObjShape g_shape_by_tag[jet_tag::HEAP_END];
 		}                                                                                                    \
 	} while (0)
 
-void eval(VmState& vm, Frame& init_frame, Atom* constants, size_t n_constants, size_t initial_stack_size);
+[[noreturn]] void vm_exit(VmState& vm, int status);
+
+[[noreturn]] void eval(VmState& vm, Frame& init_frame, Atom* constants, size_t n_constants,
+                       size_t initial_stack_size);
 
 struct LoadedProgram
 {
