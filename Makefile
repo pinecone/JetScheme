@@ -3,13 +3,12 @@
 #		make										release build (default)
 #		make debug							debug build:	 build/jet-debug
 #		make profile						profile build: build/jet-profile
-#		make tysan							TypeSanitizer build: build/jet-tysan
 #		make all-variants				build release + debug + profile in one go
 #
-#		make test								run tests against release binary
-#		make test-debug					run tests against debug binary
+#		make test								run the release, profile, and sanitize targets
+#		make test-release				run tests against release binary
 #		make test-profile				run tests against profile binary
-#		make sanitize					run tests and benchmarks under UBSan
+#		make sanitize					run debug-binary tests and benchmarks under UBSan
 #
 #		make clean							wipe build/
 #
@@ -37,10 +36,6 @@ ifeq ($(VARIANT),debug)
 						-fno-omit-frame-pointer -O1
 	LDOPT	 := -fsanitize=undefined -Wl,-rpath,$(ASAN_RTDIR)
 	SUFFIX := -debug
-else ifeq ($(VARIANT),tysan)
-	OPT		 := -g3 -DJET_DEBUG -fsanitize=type -fno-omit-frame-pointer -O1
-	LDOPT	 := -fsanitize=type -Wl,-rpath,$(ASAN_RTDIR)
-	SUFFIX := -tysan
 else ifeq ($(VARIANT),profile)
 	OPT		 := -O2 -g3
 	SUFFIX := -profile
@@ -51,7 +46,7 @@ else ifeq ($(VARIANT),release)
 	SUFFIX :=
 	LDOPT	 :=
 else
-	$(error unknown VARIANT '$(VARIANT)'; use release, debug, tysan, or profile)
+	$(error unknown VARIANT '$(VARIANT)'; use release, debug, or profile)
 endif
 
 OBJDIR := $(BUILD)/$(VARIANT)
@@ -73,17 +68,15 @@ ALL_CPP := $(ALL_CC) $(wildcard $(SRC)/*.h)
 ALL_OBJ := $(patsubst $(SRC)/%.cc,$(OBJDIR)/%.o,$(ALL_CC))
 BENCHMARK_SS := $(sort $(wildcard bench/bench-*.ss))
 SANITIZE_OPTIONS ?= halt_on_error=1:print_stacktrace=1
-# TySan reports without changing the exit status, so runs are gated on this marker instead.
 SANITIZE_MARKER := Sanitizer
-SANITIZE_ENV := UBSAN_OPTIONS='$(SANITIZE_OPTIONS)' TYSAN_OPTIONS='$(SANITIZE_OPTIONS)' \
-								JET_TEST_DIAGNOSTICS=1
+SANITIZE_ENV := UBSAN_OPTIONS='$(SANITIZE_OPTIONS)' JET_TEST_DIAGNOSTICS=1
 
 DEPS := $(ALL_OBJ:.o=.d)
 
 # --- Targets -------------------------------------------------------------
 
-.PHONY: all release debug tysan profile all-variants \
-				test test-debug test-profile sanitize show-sanitizers \
+.PHONY: all release debug profile all-variants \
+				test test-release test-profile sanitize show-sanitizers \
 				ab-cross-bench format format-check clean tags
 .DEFAULT_GOAL := all
 
@@ -95,9 +88,6 @@ release:
 debug:
 	@$(MAKE) VARIANT=debug
 
-tysan:
-	@$(MAKE) VARIANT=tysan
-
 profile:
 	@$(MAKE) VARIANT=profile
 
@@ -108,13 +98,18 @@ all-variants:
 
 # --- Run targets (variant-aware via JET env var) --------------------
 
-test: release
+# Recipe lines run in order, so a test target never builds variants in parallel.
+test:
+	@$(MAKE) test-release
+	@$(MAKE) test-profile
+	@$(MAKE) sanitize
+
+test-release:
+	@$(MAKE) VARIANT=release
 	cd tests && JET=../build/jet ./run-tests
 
-test-debug: debug
-	cd tests && JET=../build/jet-debug ./run-tests
-
-test-profile: profile
+test-profile:
+	@$(MAKE) VARIANT=profile
 	cd tests && JET=../build/jet-profile ./run-tests
 
 show-sanitizers:
@@ -142,7 +137,8 @@ define sanitize_run
 		done
 endef
 
-sanitize: debug
+sanitize:
+	@$(MAKE) VARIANT=debug
 	$(call sanitize_run,debug,-debug)
 
 # Builds its own worktree of REF (default HEAD), so no build dependency.
