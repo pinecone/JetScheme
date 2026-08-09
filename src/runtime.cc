@@ -1564,11 +1564,11 @@ static Atom load_tuple_field(Struct* instance, uint64_t index)
 	return static_cast<Tuple*>(instance)->elements[index];
 }
 
-template <bool is_store, bool const_key>
+template <FieldAccess access, FieldKeySource key_source>
 JET_NOINLINE JET_PRESERVE_NONE static void die_scheme_field(VM_OP_PARAMS)
 {
-	FieldOp<is_store, const_key>* op = reinterpret_cast<FieldOp<is_store, const_key>*>(pc);
-	Atom key = field_key<const_key>(s, op, frame_regs);
+	FieldOp<access, key_source>* op = reinterpret_cast<FieldOp<access, key_source>*>(pc);
+	Atom key = field_key<key_source>(s, op, frame_regs);
 	JET_DIE_UNLESS(is_type<jet::Type::Symbol>(key), "struct field access requires a symbol key");
 	die_struct_no_field(unbox<Struct>(frame_regs[op->obj])->type, unbox<Symbol>(key));
 }
@@ -1590,10 +1590,10 @@ JET_ALWAYS_INLINE static bool cache_field_index(Struct* instance, Atom key, Fiel
 	return true;
 }
 
-template <bool const_key>
+template <FieldKeySource key_source>
 JET_ALWAYS_INLINE static bool scheme_field_matches(Atom key, const FieldIc& ic)
 {
-	if constexpr (const_key)
+	if constexpr (key_source == FieldKeySource::Constant)
 	{
 		return ic.cached_index != FIELD_IC_NONE;
 	}
@@ -1607,10 +1607,11 @@ struct SchemeStructAccess
 {
 	static constexpr bool is_struct = true;
 
-	template <bool const_key>
-	JET_ALWAYS_INLINE static bool load_fast(VmState& s, FieldOp<false, const_key>* op, Atom* frame_regs)
+	template <FieldKeySource key_source>
+	JET_ALWAYS_INLINE static bool load_fast(VmState& s, FieldOp<FieldAccess::Load, key_source>* op,
+	                                        Atom* frame_regs)
 	{
-		if (!scheme_field_matches<const_key>(field_key<const_key>(s, op, frame_regs), op->ic)) [[unlikely]]
+		if (!scheme_field_matches<key_source>(field_key<key_source>(s, op, frame_regs), op->ic)) [[unlikely]]
 		{
 			return false;
 		}
@@ -1618,24 +1619,26 @@ struct SchemeStructAccess
 		return true;
 	}
 
-	template <bool const_key>
+	template <FieldKeySource key_source>
 	JET_NOINLINE JET_PRESERVE_NONE static void op_load_slow(VM_OP_PARAMS)
 	{
-		FieldOp<false, const_key>* op = reinterpret_cast<FieldOp<false, const_key>*>(pc);
+		FieldOp<FieldAccess::Load,
+		        key_source>* op = reinterpret_cast<FieldOp<FieldAccess::Load, key_source>*>(pc);
 		Struct* instance = unbox<Struct>(frame_regs[op->obj]);
-		if (!cache_field_index(instance, field_key<const_key>(s, op, frame_regs), op->ic)) [[unlikely]]
+		if (!cache_field_index(instance, field_key<key_source>(s, op, frame_regs), op->ic)) [[unlikely]]
 		{
-			JET_MUSTTAIL return die_scheme_field<false, const_key>(VM_OP_ARGS);
+			JET_MUSTTAIL return die_scheme_field<FieldAccess::Load, key_source>(VM_OP_ARGS);
 		}
 		frame_regs[op->dst] = load_scheme_field(instance, op->ic.cached_index);
 		pc += sizeof(*op);
 		DISPATCH();
 	}
 
-	template <bool const_key>
-	JET_ALWAYS_INLINE static bool store_fast(VmState& s, FieldOp<true, const_key>* op, Atom* frame_regs)
+	template <FieldKeySource key_source>
+	JET_ALWAYS_INLINE static bool store_fast(VmState& s, FieldOp<FieldAccess::Store, key_source>* op,
+	                                         Atom* frame_regs)
 	{
-		if (!scheme_field_matches<const_key>(field_key<const_key>(s, op, frame_regs), op->ic)) [[unlikely]]
+		if (!scheme_field_matches<key_source>(field_key<key_source>(s, op, frame_regs), op->ic)) [[unlikely]]
 		{
 			return false;
 		}
@@ -1643,14 +1646,15 @@ struct SchemeStructAccess
 		return true;
 	}
 
-	template <bool const_key>
+	template <FieldKeySource key_source>
 	JET_NOINLINE JET_PRESERVE_NONE static void op_store_slow(VM_OP_PARAMS)
 	{
-		FieldOp<true, const_key>* op = reinterpret_cast<FieldOp<true, const_key>*>(pc);
+		FieldOp<FieldAccess::Store,
+		        key_source>* op = reinterpret_cast<FieldOp<FieldAccess::Store, key_source>*>(pc);
 		Struct* instance = unbox<Struct>(frame_regs[op->obj]);
-		if (!cache_field_index(instance, field_key<const_key>(s, op, frame_regs), op->ic)) [[unlikely]]
+		if (!cache_field_index(instance, field_key<key_source>(s, op, frame_regs), op->ic)) [[unlikely]]
 		{
-			JET_MUSTTAIL return die_scheme_field<true, const_key>(VM_OP_ARGS);
+			JET_MUSTTAIL return die_scheme_field<FieldAccess::Store, key_source>(VM_OP_ARGS);
 		}
 		store_scheme_field(instance, op->ic.cached_index, frame_regs[op->val]);
 		pc += sizeof(*op);
@@ -1662,13 +1666,14 @@ struct TupleAccess
 {
 	static constexpr bool is_struct = true;
 
-	template <bool const_key>
-	JET_ALWAYS_INLINE static bool load_fast(VmState& s, FieldOp<false, const_key>* op, Atom* frame_regs)
+	template <FieldKeySource key_source>
+	JET_ALWAYS_INLINE static bool load_fast(VmState& s, FieldOp<FieldAccess::Load, key_source>* op,
+	                                        Atom* frame_regs)
 	{
 		Tuple* tuple = static_cast<Tuple*>(unbox<Struct>(frame_regs[op->obj]));
 		size_t index;
-		Atom key = field_key<const_key>(s, op, frame_regs);
-		if (!index_of_key<const_key>(tuple->size, key, op->ic, index)) [[unlikely]]
+		Atom key = field_key<key_source>(s, op, frame_regs);
+		if (!index_of_key<key_source>(tuple->size, key, op->ic, index)) [[unlikely]]
 		{
 			return false;
 		}
@@ -1676,20 +1681,21 @@ struct TupleAccess
 		return true;
 	}
 
-	template <bool const_key>
+	template <FieldKeySource key_source>
 	JET_NOINLINE JET_PRESERVE_NONE static void op_load_slow(VM_OP_PARAMS)
 	{
-		FieldOp<false, const_key>* op = reinterpret_cast<FieldOp<false, const_key>*>(pc);
-		die_field_index<false>(field_key<const_key>(s, op, frame_regs));
+		FieldOp<FieldAccess::Load,
+		        key_source>* op = reinterpret_cast<FieldOp<FieldAccess::Load, key_source>*>(pc);
+		die_field_index<FieldAccess::Load>(field_key<key_source>(s, op, frame_regs));
 	}
 
-	template <bool const_key>
-	JET_ALWAYS_INLINE static bool store_fast(VmState&, FieldOp<true, const_key>*, Atom*)
+	template <FieldKeySource key_source>
+	JET_ALWAYS_INLINE static bool store_fast(VmState&, FieldOp<FieldAccess::Store, key_source>*, Atom*)
 	{
 		return false;
 	}
 
-	template <bool const_key>
+	template <FieldKeySource key_source>
 	JET_NOINLINE JET_PRESERVE_NONE static void op_store_slow(VM_OP_PARAMS)
 	{
 		JET_DIE("setf!: tuple is immutable");
@@ -2100,11 +2106,12 @@ struct HashSetAccess
 {
 	static constexpr bool is_struct = true;
 
-	template <bool const_key>
-	JET_ALWAYS_INLINE static bool load_fast(VmState& s, FieldOp<false, const_key>* op, Atom* frame_regs)
+	template <FieldKeySource key_source>
+	JET_ALWAYS_INLINE static bool load_fast(VmState& s, FieldOp<FieldAccess::Load, key_source>* op,
+	                                        Atom* frame_regs)
 	{
 		HashSet* set = static_cast<HashSet*>(unbox<Struct>(frame_regs[op->obj]));
-		FastFind found = hashset_find_fast(set, field_key<const_key>(s, op, frame_regs));
+		FastFind found = hashset_find_fast(set, field_key<key_source>(s, op, frame_regs));
 		if (found == FastFind::Unsupported) [[unlikely]]
 		{
 			return false;
@@ -2113,25 +2120,27 @@ struct HashSetAccess
 		return true;
 	}
 
-	template <bool const_key>
+	template <FieldKeySource key_source>
 	JET_NOINLINE JET_PRESERVE_NONE static void op_load_slow(VM_OP_PARAMS)
 	{
-		FieldOp<false, const_key>* op = reinterpret_cast<FieldOp<false, const_key>*>(pc);
+		FieldOp<FieldAccess::Load,
+		        key_source>* op = reinterpret_cast<FieldOp<FieldAccess::Load, key_source>*>(pc);
 		HashSet* set = static_cast<HashSet*>(unbox<Struct>(frame_regs[op->obj]));
-		frame_regs[op->dst] = hashset_lookup(set, field_key<const_key>(s, op, frame_regs));
+		frame_regs[op->dst] = hashset_lookup(set, field_key<key_source>(s, op, frame_regs));
 		pc += sizeof(*op);
 		DISPATCH();
 	}
 
-	template <bool const_key>
-	JET_ALWAYS_INLINE static bool store_fast(VmState& s, FieldOp<true, const_key>* op, Atom* frame_regs)
+	template <FieldKeySource key_source>
+	JET_ALWAYS_INLINE static bool store_fast(VmState& s, FieldOp<FieldAccess::Store, key_source>* op,
+	                                         Atom* frame_regs)
 	{
 		if (frame_regs[op->val].bits != box(true).bits) [[unlikely]]
 		{
 			return false;
 		}
 		HashSet* set = static_cast<HashSet*>(unbox<Struct>(frame_regs[op->obj]));
-		std::optional<FastKey> fast_key = make_fast_key(field_key<const_key>(s, op, frame_regs));
+		std::optional<FastKey> fast_key = make_fast_key(field_key<key_source>(s, op, frame_regs));
 		if (!fast_key) [[unlikely]]
 		{
 			return false;
@@ -2140,12 +2149,13 @@ struct HashSetAccess
 		return true;
 	}
 
-	template <bool const_key>
+	template <FieldKeySource key_source>
 	JET_NOINLINE JET_PRESERVE_NONE static void op_store_slow(VM_OP_PARAMS)
 	{
-		FieldOp<true, const_key>* op = reinterpret_cast<FieldOp<true, const_key>*>(pc);
+		FieldOp<FieldAccess::Store,
+		        key_source>* op = reinterpret_cast<FieldOp<FieldAccess::Store, key_source>*>(pc);
 		HashSet* set = static_cast<HashSet*>(unbox<Struct>(frame_regs[op->obj]));
-		hashset_insert(set, field_key<const_key>(s, op, frame_regs), frame_regs[op->val]);
+		hashset_insert(set, field_key<key_source>(s, op, frame_regs), frame_regs[op->val]);
 		pc += sizeof(*op);
 		DISPATCH();
 	}
@@ -2155,12 +2165,13 @@ struct HashMapAccess
 {
 	static constexpr bool is_struct = true;
 
-	template <bool const_key>
-	JET_ALWAYS_INLINE static bool load_fast(VmState& s, FieldOp<false, const_key>* op, Atom* frame_regs)
+	template <FieldKeySource key_source>
+	JET_ALWAYS_INLINE static bool load_fast(VmState& s, FieldOp<FieldAccess::Load, key_source>* op,
+	                                        Atom* frame_regs)
 	{
 		HashMap* map = static_cast<HashMap*>(unbox<Struct>(frame_regs[op->obj]));
 		size_t position;
-		if (hashmap_find_fast(map, field_key<const_key>(s, op, frame_regs), position) != FastFind::Found)
+		if (hashmap_find_fast(map, field_key<key_source>(s, op, frame_regs), position) != FastFind::Found)
 		[[unlikely]]
 		{
 			return false;
@@ -2169,22 +2180,24 @@ struct HashMapAccess
 		return true;
 	}
 
-	template <bool const_key>
+	template <FieldKeySource key_source>
 	JET_NOINLINE JET_PRESERVE_NONE static void op_load_slow(VM_OP_PARAMS)
 	{
-		FieldOp<false, const_key>* op = reinterpret_cast<FieldOp<false, const_key>*>(pc);
+		FieldOp<FieldAccess::Load,
+		        key_source>* op = reinterpret_cast<FieldOp<FieldAccess::Load, key_source>*>(pc);
 		HashMap* map = static_cast<HashMap*>(unbox<Struct>(frame_regs[op->obj]));
-		frame_regs[op->dst] = hashmap_lookup(map, field_key<const_key>(s, op, frame_regs));
+		frame_regs[op->dst] = hashmap_lookup(map, field_key<key_source>(s, op, frame_regs));
 		pc += sizeof(*op);
 		DISPATCH();
 	}
 
-	template <bool const_key>
-	JET_ALWAYS_INLINE static bool store_fast(VmState& s, FieldOp<true, const_key>* op, Atom* frame_regs)
+	template <FieldKeySource key_source>
+	JET_ALWAYS_INLINE static bool store_fast(VmState& s, FieldOp<FieldAccess::Store, key_source>* op,
+	                                         Atom* frame_regs)
 	{
 		HashMap* map = static_cast<HashMap*>(unbox<Struct>(frame_regs[op->obj]));
 		size_t position;
-		if (hashmap_find_fast(map, field_key<const_key>(s, op, frame_regs), position) != FastFind::Found)
+		if (hashmap_find_fast(map, field_key<key_source>(s, op, frame_regs), position) != FastFind::Found)
 		[[unlikely]]
 		{
 			return false;
@@ -2193,12 +2206,13 @@ struct HashMapAccess
 		return true;
 	}
 
-	template <bool const_key>
+	template <FieldKeySource key_source>
 	JET_NOINLINE JET_PRESERVE_NONE static void op_store_slow(VM_OP_PARAMS)
 	{
-		FieldOp<true, const_key>* op = reinterpret_cast<FieldOp<true, const_key>*>(pc);
+		FieldOp<FieldAccess::Store,
+		        key_source>* op = reinterpret_cast<FieldOp<FieldAccess::Store, key_source>*>(pc);
 		HashMap* map = static_cast<HashMap*>(unbox<Struct>(frame_regs[op->obj]));
-		hashmap_insert(map, field_key<const_key>(s, op, frame_regs), frame_regs[op->val]);
+		hashmap_insert(map, field_key<key_source>(s, op, frame_regs), frame_regs[op->val]);
 		pc += sizeof(*op);
 		DISPATCH();
 	}

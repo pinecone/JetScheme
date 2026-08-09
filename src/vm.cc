@@ -494,7 +494,13 @@ constexpr size_t STACK_CAPACITY = 1 << 20;
 // the slack below the true end absorbs the overshoot.
 constexpr size_t STACK_SLACK = 4096;
 
-template <size_t max_unrolled, bool copy_above_max>
+enum class CopyVariadic
+{
+	No,
+	Yes,
+};
+
+template <size_t max_unrolled, CopyVariadic variadic>
 JET_ALWAYS_INLINE static void copy_atoms(Atom* dst, const Atom* src, size_t count)
 {
 	[&]<size_t... counts>(std::index_sequence<counts...>)
@@ -503,14 +509,20 @@ JET_ALWAYS_INLINE static void copy_atoms(Atom* dst, const Atom* src, size_t coun
 		{
 			return;
 		}
-		if constexpr (copy_above_max)
+		if constexpr (variadic == CopyVariadic::Yes)
 		{
 			std::memmove(dst, src, count * sizeof(Atom));
 		}
 	}(std::make_index_sequence<max_unrolled + 1>{});
 }
 
-template <bool is_tail>
+enum class CallTail
+{
+	No,
+	Yes,
+};
+
+template <CallTail tail>
 JET_NOINLINE JET_PRESERVE_NONE static void op_enter_lambda_slow(VM_OP_PARAMS)
 {
 	auto&& pack_args_to_list = [&s](Atom* first, Atom* last) -> Atom
@@ -527,7 +539,7 @@ JET_NOINLINE JET_PRESERVE_NONE static void op_enter_lambda_slow(VM_OP_PARAMS)
 		bool nary = is_nary(lambda.arity);
 		size_t n_copy = nary ? lambda.arity.expected : nargs;
 		Atom* dst = stack_base + base;
-		copy_atoms<4, true>(dst, call_args, n_copy);
+		copy_atoms<4, CopyVariadic::Yes>(dst, call_args, n_copy);
 		if (nary) [[unlikely]]
 		{
 			dst[n_copy] = pack_args_to_list(call_args + n_copy, call_args + nargs);
@@ -537,8 +549,8 @@ JET_NOINLINE JET_PRESERVE_NONE static void op_enter_lambda_slow(VM_OP_PARAMS)
 	};
 	Lambda& la = *unbox<Lambda>(callee);
 	size_t nargs = static_cast<size_t>(stack_top - args);
-	size_t base = is_tail ? frame->base : static_cast<size_t>(args - stack_base);
-	if constexpr (is_tail)
+	size_t base = tail == CallTail::Yes ? frame->base : static_cast<size_t>(args - stack_base);
+	if constexpr (tail == CallTail::Yes)
 	{
 		install_args(la, base, args, nargs);
 		frame->code = la.code;
@@ -574,7 +586,7 @@ JET_NOINLINE JET_PRESERVE_NONE static void op_enter_lambda_slow(VM_OP_PARAMS)
 	DISPATCH();
 }
 
-template <bool is_tail, class Ic = void>
+template <CallTail tail, class Ic = void>
 JET_ALWAYS_INLINE JET_PRESERVE_NONE static void op_enter_lambda_fast(VM_OP_PARAMS)
 {
 	JET_PROFILE_LAMBDA;
@@ -584,9 +596,9 @@ JET_ALWAYS_INLINE JET_PRESERVE_NONE static void op_enter_lambda_fast(VM_OP_PARAM
 	if constexpr (std::is_void_v<Ic>)
 	{
 		size_t nargs = static_cast<size_t>(stack_top - args);
-		if (is_nary(la.arity) || (is_tail && nargs > 16)) [[unlikely]]
+		if (is_nary(la.arity) || (tail == CallTail::Yes && nargs > 16)) [[unlikely]]
 		{
-			JET_MUSTTAIL return op_enter_lambda_slow<is_tail>(VM_OP_ARGS);
+			JET_MUSTTAIL return op_enter_lambda_slow<tail>(VM_OP_ARGS);
 		}
 		code = la.code;
 		n_locals = la.n_locals;
@@ -598,16 +610,16 @@ JET_ALWAYS_INLINE JET_PRESERVE_NONE static void op_enter_lambda_fast(VM_OP_PARAM
 		code = std::bit_cast<Code*>(code_bits);
 		n_locals = op->ic_n_locals;
 	}
-	size_t base = is_tail ? frame->base : static_cast<size_t>(args - stack_base);
+	size_t base = tail == CallTail::Yes ? frame->base : static_cast<size_t>(args - stack_base);
 	if (stack_base + base + n_locals > s.stack_watermark) [[unlikely]]
 	{
-		JET_MUSTTAIL return op_enter_lambda_slow<is_tail>(VM_OP_ARGS);
+		JET_MUSTTAIL return op_enter_lambda_slow<tail>(VM_OP_ARGS);
 	}
 	Atom* dst = stack_base + base;
 
-	if constexpr (is_tail)
+	if constexpr (tail == CallTail::Yes)
 	{
-		copy_atoms<16, false>(dst, args, static_cast<size_t>(stack_top - args));
+		copy_atoms<16, CopyVariadic::No>(dst, args, static_cast<size_t>(stack_top - args));
 		frame->code = code;
 		frame->closure = &la;
 		frame->top = base + n_locals;
@@ -616,7 +628,7 @@ JET_ALWAYS_INLINE JET_PRESERVE_NONE static void op_enter_lambda_fast(VM_OP_PARAM
 	{
 		if (!s.frames.can_push()) [[unlikely]]
 		{
-			JET_MUSTTAIL return op_enter_lambda_slow<false>(VM_OP_ARGS);
+			JET_MUSTTAIL return op_enter_lambda_slow<CallTail::No>(VM_OP_ARGS);
 		}
 		frame = &s.frames.push_unchecked();
 		frame->code = code;
@@ -636,7 +648,22 @@ inline Arity struct_arity(StructType* t)
 	return t->arity();
 }
 
-JET_PRESERVE_NONE static void op_enter_escape(VM_OP_PARAMS);
+JET_NOINLINE JET_PRESERVE_NONE static void op_enter_escape(VM_OP_PARAMS)
+{
+	Escape* escape = static_cast<Escape*>(unbox<Struct>(callee));
+	JET_DIE_UNLESS(escape->n_frames <= s.frames.size()
+	               && s.frames.begin()[escape->n_frames - 1].code == escape->retk_code,
+	               "escape used outside the extent of its let/ec");
+	Atom value = args[0];
+	s.frames.truncate(escape->n_frames);
+	frame = &s.frames.back();
+	frame->code = escape->resume_pc;
+	frame_regs = stack_base + frame->base;
+	stack_top = stack_base + frame->top;
+	frame_regs[escape->dst] = value;
+	pc = escape->resume_pc;
+	DISPATCH();
+}
 
 static bool is_escape(Atom callee)
 {
@@ -649,14 +676,14 @@ JET_NOINLINE JET_PRESERVE_NONE static void die_not_callable(VM_OP_PARAMS)
 	JET_DIE("cannot call <%.*s>", static_cast<int>(name.size()), name.data());
 }
 
-template <bool is_tail>
+template <CallTail tail>
 JET_NOINLINE JET_PRESERVE_NONE static void op_call_slow(VM_OP_PARAMS)
 {
 	if (is_type<jet::Type::Procedure>(callee))
 	{
 		Lambda* la = unbox<Lambda>(callee);
 		check_arity(la->arity, stack_top - args);
-		JET_MUSTTAIL return op_enter_lambda_fast<is_tail>(VM_OP_ARGS);
+		JET_MUSTTAIL return op_enter_lambda_fast<tail>(VM_OP_ARGS);
 	}
 	else if (is_type<jet::Type::Primitive>(callee))
 	{
@@ -959,10 +986,10 @@ FieldReceiver profile_field_receiver(Atom object)
 }
 #endif
 
-static constexpr auto& op_ldf = op_field_impl<false, false>;
-static constexpr auto& op_stf = op_field_impl<true, false>;
-static constexpr auto& op_ldfk = op_field_impl<false, true>;
-static constexpr auto& op_stfk = op_field_impl<true, true>;
+static constexpr auto& op_ldf = op_field_impl<FieldAccess::Load, FieldKeySource::Register>;
+static constexpr auto& op_stf = op_field_impl<FieldAccess::Store, FieldKeySource::Register>;
+static constexpr auto& op_ldfk = op_field_impl<FieldAccess::Load, FieldKeySource::Constant>;
+static constexpr auto& op_stfk = op_field_impl<FieldAccess::Store, FieldKeySource::Constant>;
 
 static constexpr auto& op_iter_next1 = op_iter_impl<OP_iter_next1, 1>;
 static constexpr auto& op_iter_next2 = op_iter_impl<OP_iter_next2, 2>;
@@ -1014,13 +1041,14 @@ JET_ALWAYS_INLINE static Atom ge_atoms(Atom a, Atom b)
 	return box(unbox<Number>(a) >= unbox<Number>(b));
 }
 
-JET_NOINLINE static VmOp resolve_callee(Atom callee, size_t nargs, bool tail)
+JET_NOINLINE static VmOp resolve_callee(Atom callee, size_t nargs, CallTail tail)
 {
 	if (is_type<jet::Type::Procedure>(callee))
 	{
 		Lambda* la = unbox<Lambda>(callee);
 		check_arity(la->arity, nargs);
-		return tail ? &op_enter_lambda_fast<true> : &op_enter_lambda_fast<false>;
+		return tail == CallTail::Yes ? &op_enter_lambda_fast<CallTail::Yes>
+		       : &op_enter_lambda_fast<CallTail::No>;
 	}
 	if (is_type<jet::Type::Primitive>(callee))
 	{
@@ -1272,7 +1300,7 @@ JET_PRESERVE_NONE static void op_label(VM_OP_PARAMS)
 		frame->code = pc;                                                                                    \
 	} while (0)
 
-template <bool is_tail>
+template <CallTail tail>
 JET_PRESERVE_NONE static void op_call_impl(VM_OP_PARAMS)
 {
 	JET_GC_CHECK();
@@ -1280,11 +1308,11 @@ JET_PRESERVE_NONE static void op_call_impl(VM_OP_PARAMS)
 	pc += sizeof(*op);
 	callee = frame_regs[op->callee];
 	JET_CALL_WINDOW(op->w, op->nargs);
-	JET_MUSTTAIL return op_call_slow<is_tail>(VM_OP_ARGS);
+	JET_MUSTTAIL return op_call_slow<tail>(VM_OP_ARGS);
 }
 
-static constexpr auto& op_call = op_call_impl<false>;
-static constexpr auto& op_tcall = op_call_impl<true>;
+static constexpr auto& op_call = op_call_impl<CallTail::No>;
+static constexpr auto& op_tcall = op_call_impl<CallTail::Yes>;
 
 JET_PRESERVE_NONE static void op_reset(VM_OP_PARAMS)
 {
@@ -1312,7 +1340,7 @@ JET_PRESERVE_NONE static void op_reset(VM_OP_PARAMS)
 	args = window + 1;
 	stack_top = args + 1;
 	frame->code = escape->retk_code;
-	JET_MUSTTAIL return op_call_slow<false>(VM_OP_ARGS);
+	JET_MUSTTAIL return op_call_slow<CallTail::No>(VM_OP_ARGS);
 }
 
 JET_PRESERVE_NONE static void op_retk(VM_OP_PARAMS)
@@ -1325,23 +1353,6 @@ JET_PRESERVE_NONE static void op_retk(VM_OP_PARAMS)
 	DISPATCH();
 }
 
-JET_NOINLINE JET_PRESERVE_NONE static void op_enter_escape(VM_OP_PARAMS)
-{
-	Escape* escape = static_cast<Escape*>(unbox<Struct>(callee));
-	JET_DIE_UNLESS(escape->n_frames <= s.frames.size()
-	               && s.frames.begin()[escape->n_frames - 1].code == escape->retk_code,
-	               "escape used outside the extent of its let/ec");
-	Atom value = args[0];
-	s.frames.truncate(escape->n_frames);
-	frame = &s.frames.back();
-	frame->code = escape->resume_pc;
-	frame_regs = stack_base + frame->base;
-	stack_top = stack_base + frame->top;
-	frame_regs[escape->dst] = value;
-	pc = escape->resume_pc;
-	DISPATCH();
-}
-
 JET_NOINLINE JET_PRESERVE_NONE static void op_call_self_tail_slow(VM_OP_PARAMS)
 {
 	OP_call_self_tail* op = reinterpret_cast<OP_call_self_tail*>(pc);
@@ -1349,7 +1360,7 @@ JET_NOINLINE JET_PRESERVE_NONE static void op_call_self_tail_slow(VM_OP_PARAMS)
 	Atom* dst = frame_regs;
 	Atom* src = frame_regs + op->w;
 	size_t nargs = op->nargs;
-	copy_atoms<4, true>(dst, src, nargs);
+	copy_atoms<4, CopyVariadic::Yes>(dst, src, nargs);
 	pc = la.code;
 	DISPATCH();
 }
@@ -1382,7 +1393,7 @@ JET_PRESERVE_NONE static void op_apply(VM_OP_PARAMS)
 		s.stack_watermark = stack_top;
 	}
 	frame->code = pc;
-	JET_MUSTTAIL return op_call_slow<false>(VM_OP_ARGS);
+	JET_MUSTTAIL return op_call_slow<CallTail::No>(VM_OP_ARGS);
 }
 
 // Lambda is installed only for callees whose entry cannot allocate, so the GC check
@@ -1393,7 +1404,7 @@ enum class CalleeKind
 	Stub
 };
 
-template <bool is_tail, class Ic>
+template <CallTail tail, class Ic>
 static bool cache_lambda_entry(VmState& s, Atom callee, Ic* op)
 {
 	if (!is_type<jet::Type::Procedure>(callee))
@@ -1401,7 +1412,7 @@ static bool cache_lambda_entry(VmState& s, Atom callee, Ic* op)
 		return false;
 	}
 	Lambda* la = unbox<Lambda>(callee);
-	if (is_nary(la->arity) || (is_tail && op->nargs > 16))
+	if (is_nary(la->arity) || (tail == CallTail::Yes && op->nargs > 16))
 	{
 		return false;
 	}
@@ -1411,32 +1422,32 @@ static bool cache_lambda_entry(VmState& s, Atom callee, Ic* op)
 	return true;
 }
 
-template <int N, bool is_tail, CalleeKind kind = CalleeKind::Stub>
+template <int N, CallTail tail, CalleeKind kind = CalleeKind::Stub>
 JET_PRESERVE_NONE static void op_call_slot_impl(VM_OP_PARAMS);
 
-template <int N, bool is_tail>
+template <int N, CallTail tail>
 JET_NOINLINE JET_PRESERVE_NONE static void op_call_slot_slow(VM_OP_PARAMS)
 {
-	JET_PROFILE_IC_MISS(static_cast<uint8_t>(is_tail ? Opcode::call_upval_slot_tail_0
+	JET_PROFILE_IC_MISS(static_cast<uint8_t>(tail == CallTail::Yes ? Opcode::call_upval_slot_tail_0
 	                                         : Opcode::call_upval_slot_0) + N);
 	OP_call_slot* op = reinterpret_cast<OP_call_slot*>(pc);
 	Slot* sl = unbox<Slot>(frame->closure->captures[op->upvalue_idx]);
 	callee = sl->value;
-	VmOp stub = resolve_callee(callee, op->nargs, is_tail);
+	VmOp stub = resolve_callee(callee, op->nargs, tail);
 	op->ic_slot = std::bit_cast<uint64_t>(sl);
 	op->ic_atom = callee.bits;
 	op->ic_version = sl->version;
-	VmOp fast = op_call_slot_impl<N, is_tail, CalleeKind::Lambda>;
-	if (!cache_lambda_entry<is_tail>(s, callee, op))
+	VmOp fast = op_call_slot_impl<N, tail, CalleeKind::Lambda>;
+	if (!cache_lambda_entry<tail>(s, callee, op))
 	{
 		op->ic_stub = std::bit_cast<uint64_t>(stub);
-		fast = op_call_slot_impl<N, is_tail, CalleeKind::Stub>;
+		fast = op_call_slot_impl<N, tail, CalleeKind::Stub>;
 	}
 	std::memcpy(reinterpret_cast<Code*>(op) - OPCODE_SIZE, &fast, sizeof(fast));
 	JET_MUSTTAIL return fast(VM_OP_ARGS);
 }
 
-template <int N, bool is_tail, CalleeKind kind>
+template <int N, CallTail tail, CalleeKind kind>
 JET_PRESERVE_NONE static void op_call_slot_impl(VM_OP_PARAMS)
 {
 	if constexpr (CalleeKind::Stub == kind)
@@ -1448,14 +1459,14 @@ JET_PRESERVE_NONE static void op_call_slot_impl(VM_OP_PARAMS)
 	    op->ic_slot != std::bit_cast<uint64_t>(sl) || op->ic_version != sl->version
 	    || (CalleeKind::Lambda == kind && op->ic_epoch != s.gc.epoch)) [[unlikely]]
 	{
-		JET_MUSTTAIL return op_call_slot_slow<N, is_tail>(VM_OP_ARGS);
+		JET_MUSTTAIL return op_call_slot_slow<N, tail>(VM_OP_ARGS);
 	}
 	pc += sizeof(*op);
 	callee = Atom::from_bits(op->ic_atom);
 	JET_CALL_WINDOW(op->w, op->nargs);
 	if constexpr (CalleeKind::Lambda == kind)
 	{
-		JET_MUSTTAIL return op_enter_lambda_fast<is_tail, OP_call_slot>(VM_OP_ARGS);
+		JET_MUSTTAIL return op_enter_lambda_fast<tail, OP_call_slot>(VM_OP_ARGS);
 	}
 	else
 	{
@@ -1470,26 +1481,26 @@ enum class CalleeSource
 	Upval
 };
 
-template <bool is_tail, CalleeSource source>
+template <CallTail tail, CalleeSource source>
 static constexpr Opcode call_atom_opcode()
 {
 	if constexpr (source == CalleeSource::Local)
 	{
-		return is_tail ? Opcode::call_local_tail_0 : Opcode::call_local_0;
+		return tail == CallTail::Yes ? Opcode::call_local_tail_0 : Opcode::call_local_0;
 	}
 	else
 	{
-		return is_tail ? Opcode::call_upval_tail_0 : Opcode::call_upval_0;
+		return tail == CallTail::Yes ? Opcode::call_upval_tail_0 : Opcode::call_upval_0;
 	}
 }
 
-template <int N, bool is_tail, CalleeSource source, CalleeKind kind = CalleeKind::Stub>
+template <int N, CallTail tail, CalleeSource source, CalleeKind kind = CalleeKind::Stub>
 JET_PRESERVE_NONE static void op_call_atom_impl(VM_OP_PARAMS);
 
-template <int N, bool is_tail, CalleeSource source>
+template <int N, CallTail tail, CalleeSource source>
 JET_NOINLINE JET_PRESERVE_NONE static void op_call_atom_slow(VM_OP_PARAMS)
 {
-	JET_PROFILE_IC_MISS(static_cast<uint8_t>(call_atom_opcode<is_tail, source>()) + N);
+	JET_PROFILE_IC_MISS(static_cast<uint8_t>(call_atom_opcode<tail, source>()) + N);
 	OP_call_atom* op = reinterpret_cast<OP_call_atom*>(pc);
 	if constexpr (source == CalleeSource::Local)
 	{
@@ -1499,19 +1510,19 @@ JET_NOINLINE JET_PRESERVE_NONE static void op_call_atom_slow(VM_OP_PARAMS)
 	{
 		callee = frame->closure->captures[op->idx];
 	}
-	VmOp stub = resolve_callee(callee, op->nargs, is_tail);
+	VmOp stub = resolve_callee(callee, op->nargs, tail);
 	op->ic_atom = callee.bits;
-	VmOp fast = op_call_atom_impl<N, is_tail, source, CalleeKind::Lambda>;
-	if (!cache_lambda_entry<is_tail>(s, callee, op))
+	VmOp fast = op_call_atom_impl<N, tail, source, CalleeKind::Lambda>;
+	if (!cache_lambda_entry<tail>(s, callee, op))
 	{
 		op->ic_stub = std::bit_cast<uint64_t>(stub);
-		fast = op_call_atom_impl<N, is_tail, source, CalleeKind::Stub>;
+		fast = op_call_atom_impl<N, tail, source, CalleeKind::Stub>;
 	}
 	std::memcpy(reinterpret_cast<Code*>(op) - OPCODE_SIZE, &fast, sizeof(fast));
 	JET_MUSTTAIL return fast(VM_OP_ARGS);
 }
 
-template <int N, bool is_tail, CalleeSource source, CalleeKind kind>
+template <int N, CallTail tail, CalleeSource source, CalleeKind kind>
 JET_PRESERVE_NONE static void op_call_atom_impl(VM_OP_PARAMS)
 {
 	if constexpr (CalleeKind::Stub == kind)
@@ -1531,14 +1542,14 @@ JET_PRESERVE_NONE static void op_call_atom_impl(VM_OP_PARAMS)
 	if (op->ic_atom != current.bits
 	    || (CalleeKind::Lambda == kind && op->ic_epoch != s.gc.epoch)) [[unlikely]]
 	{
-		JET_MUSTTAIL return op_call_atom_slow<N, is_tail, source>(VM_OP_ARGS);
+		JET_MUSTTAIL return op_call_atom_slow<N, tail, source>(VM_OP_ARGS);
 	}
 	pc += sizeof(*op);
 	callee = current;
 	JET_CALL_WINDOW(op->w, op->nargs);
 	if constexpr (CalleeKind::Lambda == kind)
 	{
-		JET_MUSTTAIL return op_enter_lambda_fast<is_tail, OP_call_atom>(VM_OP_ARGS);
+		JET_MUSTTAIL return op_enter_lambda_fast<tail, OP_call_atom>(VM_OP_ARGS);
 	}
 	else
 	{
@@ -1554,7 +1565,7 @@ JET_PRESERVE_NONE static void op_call_self_fast(VM_OP_PARAMS)
 	pc += sizeof(*op);
 	callee = Atom::make_tagged(jet_tag::procedure, frame->closure);
 	JET_CALL_WINDOW(op->w, op->nargs);
-	JET_MUSTTAIL return op_enter_lambda_fast<false>(VM_OP_ARGS);
+	JET_MUSTTAIL return op_enter_lambda_fast<CallTail::No>(VM_OP_ARGS);
 }
 
 template <int N>
@@ -1569,36 +1580,36 @@ JET_NOINLINE JET_PRESERVE_NONE static void op_call_self_impl(VM_OP_PARAMS)
 	pc += sizeof(*op);
 	callee = Atom::make_tagged(jet_tag::procedure, frame->closure);
 	JET_CALL_WINDOW(op->w, op->nargs);
-	JET_MUSTTAIL return op_enter_lambda_fast<false>(VM_OP_ARGS);
+	JET_MUSTTAIL return op_enter_lambda_fast<CallTail::No>(VM_OP_ARGS);
 }
 
 #define X(name, disp, n)                                                                                     \
-	static constexpr auto& op_##name = op_call_slot_impl<n, false>;
+	static constexpr auto& op_##name = op_call_slot_impl<n, CallTail::No>;
 JET_REPLICATE(X, call_upval_slot, "cus")
 #undef X
 
 #define X(name, disp, n)                                                                                     \
-	static constexpr auto& op_##name = op_call_slot_impl<n, true>;
+	static constexpr auto& op_##name = op_call_slot_impl<n, CallTail::Yes>;
 JET_REPLICATE(X, call_upval_slot_tail, "cust")
 #undef X
 
 #define X(name, disp, n)                                                                                     \
-	static constexpr auto& op_##name = op_call_atom_impl<n, false, CalleeSource::Local>;
+	static constexpr auto& op_##name = op_call_atom_impl<n, CallTail::No, CalleeSource::Local>;
 JET_REPLICATE(X, call_local, "cl")
 #undef X
 
 #define X(name, disp, n)                                                                                     \
-	static constexpr auto& op_##name = op_call_atom_impl<n, true, CalleeSource::Local>;
+	static constexpr auto& op_##name = op_call_atom_impl<n, CallTail::Yes, CalleeSource::Local>;
 JET_REPLICATE(X, call_local_tail, "clt")
 #undef X
 
 #define X(name, disp, n)                                                                                     \
-	static constexpr auto& op_##name = op_call_atom_impl<n, false, CalleeSource::Upval>;
+	static constexpr auto& op_##name = op_call_atom_impl<n, CallTail::No, CalleeSource::Upval>;
 JET_REPLICATE(X, call_upval, "cu")
 #undef X
 
 #define X(name, disp, n)                                                                                     \
-	static constexpr auto& op_##name = op_call_atom_impl<n, true, CalleeSource::Upval>;
+	static constexpr auto& op_##name = op_call_atom_impl<n, CallTail::Yes, CalleeSource::Upval>;
 JET_REPLICATE(X, call_upval_tail, "cut")
 #undef X
 
