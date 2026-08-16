@@ -407,6 +407,7 @@ enum class ConstTag : uint8_t
 };
 
 struct Lambda;
+struct Coro;
 
 struct Frame
 {
@@ -416,40 +417,45 @@ struct Frame
 	size_t top;
 };
 
-class FrameStack
+template <typename T>
+class Stack
 {
 public:
 	size_t size() const { return active_; }
+	bool empty() const { return active_ == 0; }
 	bool can_push() const { return active_ < storage_.size(); }
+	void grow() { storage_.resize(storage_.empty() ? 8 : storage_.size() * 2); }
 
-	Frame& push()
+	T& push()
 	{
 		if (!can_push()) [[unlikely]]
 		{
-			storage_.resize(storage_.empty() ? 8 : storage_.size() * 2);
+			grow();
 		}
 		return push_unchecked();
 	}
 
-	Frame& push(const Frame& value)
+	T& push(const T& value)
 	{
-		Frame& frame = push();
-		frame = value;
-		return frame;
+		T& item = push();
+		item = value;
+		return item;
 	}
 
-	Frame& push_unchecked() { return storage_[active_++]; }
+	T& push_unchecked() { return storage_[active_++]; }
 
 	void pop() { --active_; }
 	void truncate(size_t n) { active_ = n; }
-	Frame& back() { return storage_[active_ - 1]; }
-	Frame* begin() { return storage_.data(); }
-	Frame* end() { return storage_.data() + active_; }
+	T& back() { return storage_[active_ - 1]; }
+	T& operator[](size_t i) { return storage_[i]; }
+	T* begin() { return storage_.data(); }
+	T* end() { return storage_.data() + active_; }
 
 private:
-	std::vector<Frame> storage_;
+	std::vector<T> storage_;
 	size_t active_{};
 };
+
 
 class Env
 {
@@ -513,12 +519,22 @@ constexpr size_t STACK_CAPACITY = 1 << 20;
 // the slack below the true end absorbs the overshoot.
 constexpr size_t STACK_SLACK = 4096;
 
+struct SavedStack
+{
+	std::unique_ptr<Atom[]> storage;
+	Atom* base{};
+	Atom* end{};
+	Atom* top{};
+	Atom* watermark{};
+	Stack<Frame> frames{};
+};
+
 struct VmState
 {
 	Gc gc{};
 	Env& env;
 	InternedSymbols symbols{};
-	FrameStack frames{};
+	Stack<Frame> frames{};
 	std::unique_ptr<Atom[]> stack{new Atom[STACK_CAPACITY]};
 	Code halt_code[OPCODE_SIZE]{};
 	Atom* stack_base{};
@@ -531,6 +547,33 @@ struct VmState
 	Atom* stack_watermark{};
 	Atom* constants{};
 	size_t n_constants{};
+	// The running coroutines, innermost last. The main stack is a permanent coroutine
+	// at `running[0]` (`eval`), so `running.back()` always owns the running stack.
+	// `x` is a member when `running[x->running_index] == x` with a bounds check;
+	// after an escape removes `x`, this stays false forever.
+	Stack<Coro*> running{};
+
+	void switch_stack(SavedStack& other)
+	{
+		stack.swap(other.storage);
+		std::swap(stack_base, other.base);
+		std::swap(stack_end, other.end);
+		std::swap(stack_top, other.top);
+		std::swap(stack_watermark, other.watermark);
+		std::swap(frames, other.frames);
+	}
+
+	void take_stack(SavedStack& other)
+	{
+		stack = std::move(other.storage);
+		stack_base = other.base;
+		stack_end = other.end;
+		stack_top = other.top;
+		stack_watermark = other.watermark;
+		frames = std::move(other.frames);
+		other.frames.truncate(0);
+		other.base = other.end = other.top = other.watermark = nullptr;
+	}
 };
 
 #define VM_OP_PARAMS                                                                                         \

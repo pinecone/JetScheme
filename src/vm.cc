@@ -272,6 +272,12 @@ void Gc::mark_object(void* ptr, int tag)
 					break;
 				case StructKind::Escape:
 					break;
+				case StructKind::Coro:
+					static_cast<Coro*>(s)->trace(*this);
+					break;
+				case StructKind::Yield:
+					static_cast<Yield*>(s)->trace(*this);
+					break;
 			}
 			break;
 		}
@@ -362,6 +368,11 @@ void collect(VmState& s)
 	}
 
 	s.env.scan([&gc](Atom& value) { gc.mark_atom(value.bits); });
+
+	for (Coro* coro : s.running)
+	{
+		gc.mark_atom(Atom::make_tagged(jet_tag::struct_, coro).bits);
+	}
 
 	gc.sweep();
 
@@ -516,6 +527,32 @@ enum class CallTail
 	Yes,
 };
 
+// Return addresses installed at coroutine stack bottoms (`retc`) and at frames
+// suspended by a tail-position yield (`retu`); neither exists in compiled code.
+static Code g_retc_code[OPCODE_SIZE];
+static Code g_retu_code[OPCODE_SIZE];
+
+JET_NOINLINE static void grow_stack(VmState& s, Atom* needed_top)
+{
+	size_t needed = static_cast<size_t>(needed_top - s.stack_base) + STACK_SLACK;
+	size_t capacity = static_cast<size_t>(s.stack_end - s.stack_base);
+	size_t new_capacity = capacity;
+	while (new_capacity < needed)
+	{
+		new_capacity *= 2;
+	}
+
+	std::unique_ptr<Atom[]> bigger{new Atom[new_capacity]};
+	std::memcpy(bigger.get(), s.stack_base, capacity * sizeof(Atom));
+
+	Atom* old_base = s.stack_base;
+	s.stack_top = bigger.get() + (s.stack_top - old_base);
+	s.stack_watermark = bigger.get() + (s.stack_watermark - old_base);
+	s.stack_end = bigger.get() + new_capacity;
+	s.stack_base = bigger.get();
+	s.stack = std::move(bigger);
+}
+
 template <CallTail tail>
 JET_NOINLINE JET_PRESERVE_NONE static void op_enter_lambda_slow(VM_OP_PARAMS)
 {
@@ -572,7 +609,10 @@ JET_NOINLINE JET_PRESERVE_NONE static void op_enter_lambda_slow(VM_OP_PARAMS)
 	{
 		if (stack_top > s.stack_end - STACK_SLACK) [[unlikely]]
 		{
-			JET_DIE("stack overflow (too much recursion?)");
+			grow_stack(s, stack_top);
+			stack_base = s.stack_base;
+			frame_regs = stack_base + base;
+			stack_top = stack_base + base + la.n_locals;
 		}
 		s.stack_watermark = stack_top;
 	}
@@ -645,10 +685,28 @@ inline Arity struct_arity(StructType* t)
 JET_NOINLINE JET_PRESERVE_NONE static void op_enter_escape(VM_OP_PARAMS)
 {
 	Escape* escape = static_cast<Escape*>(unbox<Struct>(callee));
+	Atom value = args[0];
+
+	Coro* owner = escape->owner;
+	JET_DIE_UNLESS(owner->running_index < s.running.size() && s.running[owner->running_index] == owner,
+	               "escape used outside the extent of its let/ec");
+	size_t after_owner = owner->running_index + 1;
+	if (s.running.size() > after_owner)
+	{
+		// The let/ec frame is on an outer stack. The first coroutine the owner resumed
+		// holds the owner's fields; switch to them. Each removed coroutine keeps the
+		// storage it holds, fails the membership check forever, and dies on resume.
+		Coro* holder = s.running[after_owner];
+		s.stack_top = stack_top;
+		s.switch_stack(holder->stack);
+		s.running.truncate(after_owner);
+		stack_base = s.stack_base;
+		stack_top = s.stack_top;
+	}
+
 	JET_DIE_UNLESS(escape->n_frames <= s.frames.size()
 	               && s.frames.begin()[escape->n_frames - 1].code == escape->retk_code,
 	               "escape used outside the extent of its let/ec");
-	Atom value = args[0];
 	s.frames.truncate(escape->n_frames);
 	frame = &s.frames.back();
 	frame->code = escape->resume_pc;
@@ -659,9 +717,37 @@ JET_NOINLINE JET_PRESERVE_NONE static void op_enter_escape(VM_OP_PARAMS)
 	DISPATCH();
 }
 
-static bool is_escape(Atom callee)
+template <CallTail tail>
+JET_NOINLINE JET_PRESERVE_NONE static void op_enter_yield(VM_OP_PARAMS)
 {
-	return is_type<jet::Type::Struct>(callee) && unbox<Struct>(callee)->type->kind() == StructKind::Escape;
+	Yield* yield = static_cast<Yield*>(unbox<Struct>(callee));
+	Coro* coro = static_cast<Coro*>(yield->target);
+	JET_DIE_UNLESS(s.running.back() == coro, "yield used outside its coroutine");
+	Atom value = args[0];
+
+	s.running.pop();
+	coro->state = CoroState::Suspended;
+	if constexpr (tail == CallTail::Yes)
+	{
+		// A tail-position yield has no code after the call; resume returns unknown
+		// from the suspended frame instead.
+		frame->code = g_retu_code;
+	}
+	else
+	{
+		// The yield expression's value: written now, read only after resume.
+		args[0] = Atom{};
+	}
+
+	s.stack_top = stack_top;
+	s.switch_stack(coro->stack);
+	stack_base = s.stack_base;
+	frame = &s.frames.back();
+	frame_regs = stack_base + frame->base;
+	stack_top = stack_base + frame->top;
+	frame_regs[coro->dst] = value;
+	pc = coro->consequent_pc;
+	DISPATCH();
 }
 
 JET_NOINLINE JET_PRESERVE_NONE static void die_not_callable(VM_OP_PARAMS)
@@ -679,28 +765,35 @@ JET_NOINLINE JET_PRESERVE_NONE static void op_call_slow(VM_OP_PARAMS)
 		check_arity(la->arity, stack_top - args);
 		JET_MUSTTAIL return op_enter_lambda_fast<tail>(VM_OP_ARGS);
 	}
-	else if (is_type<jet::Type::Primitive>(callee))
+	if (is_type<jet::Type::Primitive>(callee))
 	{
 		Prim* p = unbox<Prim>(callee);
 		check_arity(p->arity, stack_top - args);
 		JET_MUSTTAIL return p->stub(VM_OP_ARGS);
 	}
-	else if (is_type<jet::Type::StructType>(callee))
+	if (is_type<jet::Type::StructType>(callee))
 	{
 		StructType* t = unbox<StructType>(callee);
 		Arity a = struct_arity(t);
 		check_arity(a, static_cast<size_t>(stack_top - args));
 		JET_MUSTTAIL return t->ops().constructor(VM_OP_ARGS);
 	}
-	else
+	if (!is_type<jet::Type::Struct>(callee)) [[unlikely]]
 	{
-		if (!is_escape(callee)) [[unlikely]]
-		{
-			JET_MUSTTAIL return die_not_callable(VM_OP_ARGS);
-		}
+		JET_MUSTTAIL return die_not_callable(VM_OP_ARGS);
+	}
+	StructKind kind = unbox<Struct>(callee)->type->kind();
+	if (kind == StructKind::Escape)
+	{
 		check_arity(exactly(1), static_cast<size_t>(stack_top - args));
 		JET_MUSTTAIL return op_enter_escape(VM_OP_ARGS);
 	}
+	if (kind == StructKind::Yield)
+	{
+		check_arity(exactly(1), static_cast<size_t>(stack_top - args));
+		JET_MUSTTAIL return op_enter_yield<tail>(VM_OP_ARGS);
+	}
+	JET_MUSTTAIL return die_not_callable(VM_OP_ARGS);
 }
 
 JET_NOINLINE JET_PRESERVE_NONE static void op_gc_slow(VM_OP_PARAMS)
@@ -736,13 +829,34 @@ enum class IterResult
 	Invalid,
 };
 
+JET_PRESERVE_NONE static void op_iter_next_coro(VM_OP_PARAMS);
+
 template <typename Op, int outputs>
 JET_PRESERVE_NONE static void op_iter_impl(VM_OP_PARAMS)
 {
 	Op* op = reinterpret_cast<Op*>(pc);
 	Atom value = frame_regs[op->cursor];
-	if (!value.tag_is<jet_tag::struct_>()
-	    || unbox<Struct>(value)->type->kind() != StructKind::Cursor) [[unlikely]]
+	if (!value.tag_is<jet_tag::struct_>()) [[unlikely]]
+	{
+		JET_MUSTTAIL return die_iter_expected_cursor(VM_OP_ARGS);
+	}
+	if (unbox<Struct>(value)->type->kind() == StructKind::Coro)
+	{
+		if constexpr (outputs == 1)
+		{
+			JET_PROFILE_IC_MISS(Opcode::iter_next1);
+			// The coroutine `StructType` is held by the permanent `%coroutine` `Env` binding.
+			op->ic.dispatch_key = std::bit_cast<uint64_t>(unbox<Struct>(value)->type);
+			VmOp coro_handler = op_iter_next_coro;
+			std::memcpy(pc - OPCODE_SIZE, &coro_handler, sizeof(coro_handler));
+			JET_MUSTTAIL return op_iter_next_coro(VM_OP_ARGS);
+		}
+		else
+		{
+			JET_MUSTTAIL return die_iter_bad_outputs<outputs>(VM_OP_ARGS);
+		}
+	}
+	if (unbox<Struct>(value)->type->kind() != StructKind::Cursor) [[unlikely]]
 	{
 		JET_MUSTTAIL return die_iter_expected_cursor(VM_OP_ARGS);
 	}
@@ -972,6 +1086,8 @@ FieldReceiver profile_field_receiver(Atom object)
 				case StructKind::Cursor:
 					return FieldReceiver::Cursor;
 				case StructKind::Escape:
+				case StructKind::Coro:
+				case StructKind::Yield:
 					return FieldReceiver::Other;
 			}
 		default:
@@ -984,6 +1100,70 @@ static constexpr auto& op_ldf = op_field_impl<FieldAccess::Load, FieldKeySource:
 static constexpr auto& op_stf = op_field_impl<FieldAccess::Store, FieldKeySource::Register>;
 static constexpr auto& op_ldfk = op_field_impl<FieldAccess::Load, FieldKeySource::Constant>;
 static constexpr auto& op_stfk = op_field_impl<FieldAccess::Store, FieldKeySource::Constant>;
+
+JET_NOINLINE JET_PRESERVE_NONE static void op_iter_coro_slow(VM_OP_PARAMS)
+{
+	OP_iter_next1* op = reinterpret_cast<OP_iter_next1*>(pc);
+	Coro* coro = static_cast<Coro*>(unbox<Struct>(frame_regs[op->cursor]));
+	switch (coro->state)
+	{
+		case CoroState::Completed:
+			coro->state = CoroState::Dead;
+			pc += sizeof(*op) + op->size;
+			DISPATCH();
+		case CoroState::Running:
+			if (coro->running_index < s.running.size() && s.running[coro->running_index] == coro)
+			{
+				JET_DIE("%%iter-next!: coroutine is already running");
+			}
+			// Abandoned by a crossing escape; membership can never hold again.
+			coro->state = CoroState::Dead;
+			[[fallthrough]];
+		case CoroState::Dead:
+			JET_MUSTTAIL return die_iter_exhausted(VM_OP_ARGS);
+		case CoroState::Suspended:
+			// Reached when the fast path found `running` full; grow off the fast path.
+			if (!s.running.can_push())
+			{
+				s.running.grow();
+			}
+			JET_MUSTTAIL return op_iter_next_coro(VM_OP_ARGS);
+	}
+	JET_DIE("unreachable coroutine state");
+}
+
+JET_PRESERVE_NONE static void op_iter_next_coro(VM_OP_PARAMS)
+{
+	OP_iter_next1* op = reinterpret_cast<OP_iter_next1*>(pc);
+	Atom value = frame_regs[op->cursor];
+	if (!value.tag_is<jet_tag::struct_>()
+	    || op->ic.dispatch_key != std::bit_cast<uint64_t>(unbox<Struct>(value)->type)) [[unlikely]]
+	{
+		JET_MUSTTAIL return op_iter_impl<OP_iter_next1, 1>(VM_OP_ARGS);
+	}
+	Coro* coro = static_cast<Coro*>(unbox<Struct>(value));
+	if (coro->state != CoroState::Suspended || !s.running.can_push()) [[unlikely]]
+	{
+		JET_MUSTTAIL return op_iter_coro_slow(VM_OP_ARGS);
+	}
+
+	coro->state = CoroState::Running;
+	coro->running_index = static_cast<uint32_t>(s.running.size());
+	s.running.push_unchecked() = coro;
+	coro->dst = op->dst;
+	Code* next = pc + sizeof(*op);
+	coro->consequent_pc = next;
+	frame->code = next;
+
+	s.stack_top = stack_top;
+	s.switch_stack(coro->stack);
+	stack_base = s.stack_base;
+	frame = &s.frames.back();
+	frame_regs = stack_base + frame->base;
+	stack_top = stack_base + frame->top;
+	pc = frame->code;
+	DISPATCH();
+}
 
 static constexpr auto& op_iter_next1 = op_iter_impl<OP_iter_next1, 1>;
 static constexpr auto& op_iter_next2 = op_iter_impl<OP_iter_next2, 2>;
@@ -1057,12 +1237,22 @@ JET_NOINLINE static VmOp resolve_callee(Atom callee, size_t nargs, CallTail tail
 		check_arity(a, nargs);
 		return t->ops().constructor;
 	}
-	if (!is_escape(callee)) [[unlikely]]
+	if (!is_type<jet::Type::Struct>(callee)) [[unlikely]]
 	{
 		return &die_not_callable;
 	}
-	check_arity(exactly(1), nargs);
-	return &op_enter_escape;
+	StructKind kind = unbox<Struct>(callee)->type->kind();
+	if (kind == StructKind::Escape)
+	{
+		check_arity(exactly(1), nargs);
+		return &op_enter_escape;
+	}
+	if (kind == StructKind::Yield)
+	{
+		check_arity(exactly(1), nargs);
+		return tail == CallTail::Yes ? &op_enter_yield<CallTail::Yes> : &op_enter_yield<CallTail::No>;
+	}
+	return &die_not_callable;
 }
 
 JET_PRESERVE_NONE static void op_mov(VM_OP_PARAMS)
@@ -1326,7 +1516,7 @@ JET_PRESERVE_NONE static void op_reset(VM_OP_PARAMS)
 	void* mem = s.gc.alloc(sizeof(Escape), jet_tag::struct_, type->destructor_id());
 	uint32_t n_frames = static_cast<uint32_t>(s.frames.size());
 	uint16_t result_reg = static_cast<uint16_t>(op->w + 1);
-	Escape* escape = new (mem) Escape{type, pc, n_frames, result_reg};
+	Escape* escape = new (mem) Escape{type, pc, s.running.back(), n_frames, result_reg};
 	VmOp retk = dispatch_table[static_cast<int>(Opcode::retk)];
 	Struct* operand = escape;
 	std::memcpy(escape->retk_code, &retk, sizeof(retk));
@@ -1343,6 +1533,79 @@ JET_PRESERVE_NONE static void op_reset(VM_OP_PARAMS)
 	stack_top = args + 1;
 	frame->code = escape->retk_code;
 	JET_MUSTTAIL return op_call_slow<CallTail::No>(VM_OP_ARGS);
+}
+
+constexpr size_t CORO_STACK_CAPACITY = 2 * STACK_SLACK;
+
+JET_PRESERVE_NONE static void op_coro(VM_OP_PARAMS)
+{
+	JET_GC_CHECK();
+	OP_coro* op = reinterpret_cast<OP_coro*>(pc);
+	pc += sizeof(*op);
+	JET_DIE_UNLESS(is_type<jet::Type::StructType>(Coro::type_atom), "coroutine type is not initialized");
+
+	Atom body = frame_regs[op->w + 1];
+	JET_DIE_UNLESS(is_type<jet::Type::Procedure>(body), "let/coro body is not a lambda");
+	Lambda* la = unbox<Lambda>(body);
+	JET_DIE_WHEN(is_nary(la->arity) || la->arity.expected != 1,
+	             "let/coro body must take exactly the yield");
+
+	StructType* coro_type = unbox<StructType>(Coro::type_atom);
+	void* coro_mem = s.gc.alloc(sizeof(Coro), jet_tag::struct_, coro_type->destructor_id());
+	Coro* coro = new (coro_mem) Coro{coro_type};
+	Atom coro_atom = Atom::make_tagged(jet_tag::struct_, coro);
+	// `window[0]` roots the coroutine across the yield allocation; `window[1]` is the result.
+	frame_regs[op->w] = coro_atom;
+	frame_regs[op->w + 1] = coro_atom;
+
+	StructType* yield_type = unbox<StructType>(Yield::type_atom);
+	void* yield_mem = s.gc.alloc(sizeof(Yield), jet_tag::struct_, yield_type->destructor_id());
+	Yield* yield = new (yield_mem) Yield{yield_type, coro};
+
+	size_t capacity = CORO_STACK_CAPACITY;
+	while (capacity < la->n_locals + STACK_SLACK)
+	{
+		capacity *= 2;
+	}
+	SavedStack& stack = coro->stack;
+	stack.storage.reset(new Atom[capacity]);
+	stack.base = stack.storage.get();
+	stack.end = stack.base + capacity;
+	stack.base[0] = Atom::make_tagged(jet_tag::struct_, yield);
+	stack.top = stack.base + la->n_locals;
+	stack.watermark = stack.top;
+	stack.frames.push({g_retc_code, nullptr, 0, 1});
+	stack.frames.push({la->code, la, 0, la->n_locals});
+	DISPATCH();
+}
+
+JET_PRESERVE_NONE static void op_retc(VM_OP_PARAMS)
+{
+	Coro* coro = s.running.back();
+	Atom value = frame_regs[0];
+	s.running.pop();
+	coro->state = CoroState::Completed;
+
+	s.take_stack(coro->stack);
+	stack_base = s.stack_base;
+	frame = &s.frames.back();
+	frame_regs = stack_base + frame->base;
+	stack_top = stack_base + frame->top;
+	frame_regs[coro->dst] = value;
+	pc = coro->consequent_pc;
+	DISPATCH();
+}
+
+JET_PRESERVE_NONE static void op_retu(VM_OP_PARAMS)
+{
+	Frame* prev = frame - 1;
+	s.frames.pop();
+	frame_regs[0] = Atom{};
+	frame = prev;
+	frame_regs = stack_base + prev->base;
+	stack_top = stack_base + prev->top;
+	pc = prev->code;
+	DISPATCH();
 }
 
 JET_PRESERVE_NONE static void op_retk(VM_OP_PARAMS)
@@ -1385,15 +1648,26 @@ JET_PRESERVE_NONE static void op_apply(VM_OP_PARAMS)
 	callee = frame_regs[op->w];
 	Atom args_list = frame_regs[op->w + 1];
 	args = frame_regs + op->w;
-	stack_top = list_to_args(args_list, args);
-	if (stack_top > s.stack_watermark) [[unlikely]]
+	// The bound must hold before any slot past the window is written; improper lists
+	// die in `cdr` during the count.
+	size_t nargs = 0;
+	for (Atom x = args_list; !is_type<jet::Type::EmptyList>(x); x = cdr(x))
 	{
-		if (stack_top > s.stack_end - STACK_SLACK) [[unlikely]]
-		{
-			JET_DIE("stack overflow (apply with too many arguments?)");
-		}
-		s.stack_watermark = stack_top;
+		++nargs;
 	}
+	if (args + nargs > s.stack_watermark) [[unlikely]]
+	{
+		if (args + nargs > s.stack_end - STACK_SLACK) [[unlikely]]
+		{
+			size_t args_offset = static_cast<size_t>(args - stack_base);
+			grow_stack(s, args + nargs);
+			stack_base = s.stack_base;
+			frame_regs = stack_base + frame->base;
+			args = stack_base + args_offset;
+		}
+		s.stack_watermark = args + nargs;
+	}
+	stack_top = list_to_args(args_list, args);
 	frame->code = pc;
 	JET_MUSTTAIL return op_call_slow<CallTail::No>(VM_OP_ARGS);
 }
@@ -1638,6 +1912,14 @@ JET_REPLICATE(X, call_self, "cself")
 	vm.frames.push({vm.halt_code, nullptr, 0, initial_stack_size});
 	vm.frames.push(init_frame);
 
+	JET_DIE_UNLESS(is_type<jet::Type::StructType>(Coro::type_atom), "coroutine type is not initialized");
+	StructType* coro_type = unbox<StructType>(Coro::type_atom);
+	void* coro_mem = vm.gc.alloc(sizeof(Coro), jet_tag::struct_, coro_type->destructor_id());
+	Coro* main_coro = new (coro_mem) Coro{coro_type};
+	main_coro->state = CoroState::Running;
+	main_coro->running_index = 0;
+	vm.running.push(main_coro);
+
 	JET_PROFILE_BEGIN();
 	Frame* frame = &vm.frames.back();
 	Code* pc = frame->code;
@@ -1671,6 +1953,14 @@ namespace
 			{
 				dispatch_table[i] = op_unknown;
 			}
+			auto&& build_return_code = [](Code* buffer, Opcode opcode)
+			{
+				VmOp handler = dispatch_table[static_cast<int>(opcode)];
+				std::memcpy(buffer, &handler, sizeof(handler));
+				buffer[VM_OP_SLOT_SIZE] = static_cast<uint8_t>(opcode);
+			};
+			build_return_code(g_retc_code, Opcode::retc);
+			build_return_code(g_retu_code, Opcode::retu);
 		}
 	} dispatch_init;
 } // namespace

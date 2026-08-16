@@ -476,6 +476,7 @@ void decode_args(FILE* out, uint8_t op, Code* p)
 			std::fprintf(out, " w=%u", reinterpret_cast<OP_apply*>(p)->w);
 			break;
 		case Opcode::reset:
+		case Opcode::coro:
 			std::fprintf(out, " w=%u", reinterpret_cast<OP_reset*>(p)->w);
 			break;
 		case Opcode::iter_next1:

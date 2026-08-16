@@ -76,7 +76,10 @@ struct Struct;
 	X(ldfk,                "ldfk")                                                                           \
 	X(stfk,                "stfk")                                                                           \
 	X(reset,               "reset")                                                                          \
-	X(retk,                "retk")
+	X(retk,                "retk")                                                                           \
+	X(coro,                "coro")                                                                           \
+	X(retc,            "retc")                                                                          \
+	X(retu,       "retu")
 
 enum class Opcode : uint8_t
 {
@@ -194,6 +197,7 @@ struct OP_reset
 {
 	uint16_t w;
 };
+using OP_coro = OP_reset;
 
 // Never emitted into a code stream: retk lives in an Escape's inline buffer.
 struct OP_retk
@@ -357,9 +361,15 @@ inline size_t opcode_step(uint8_t op, const uint8_t* operands)
 		case Opcode::apply:
 			return OPCODE_SIZE + sizeof(OP_apply);
 		case Opcode::reset:
+		case Opcode::coro:
 			return OPCODE_SIZE + sizeof(OP_reset);
 		case Opcode::retk:
 			return OPCODE_SIZE + sizeof(OP_retk);
+		// Never emitted into a code stream: they live in static buffers installed as
+		// coroutine return addresses.
+		case Opcode::retc:
+		case Opcode::retu:
+			return OPCODE_SIZE;
 		case Opcode::iter_next1:
 			return OPCODE_SIZE + sizeof(OP_iter_next1);
 		case Opcode::iter_next2:

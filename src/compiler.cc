@@ -59,6 +59,7 @@ enum class TokenKind : uint8_t
 	LetStar,
 	Letrec,
 	LetEc,
+	LetCoro,
 	Begin,
 	When,
 	Unless,
@@ -198,6 +199,7 @@ using ExprId = uint32_t;
 constexpr ExprId NO_EXPR = ~uint32_t{0};
 
 constexpr std::string_view RESET_PRIM = "%reset";
+constexpr std::string_view CORO_PRIM = "%coro";
 
 enum class ExprKind : uint8_t
 {
@@ -932,6 +934,7 @@ namespace
 				{"letrec",  TokenKind::Letrec},
 				{"letrec*", TokenKind::Letrec},
 				{"let/ec",  TokenKind::LetEc},
+				{"let/coro", TokenKind::LetCoro},
 				{"begin",   TokenKind::Begin},
 				{"when",    TokenKind::When},
 				{"unless",  TokenKind::Unless},
@@ -1349,6 +1352,8 @@ namespace
 					return parse_let_form(loc, ExprKind::Letrec);
 				case TokenKind::LetEc:
 					return parse_let_ec(loc);
+				case TokenKind::LetCoro:
+					return parse_let_coro(loc);
 				case TokenKind::Begin:
 					return parse_begin(loc);
 				case TokenKind::When:
@@ -1594,13 +1599,16 @@ namespace
 
 		// (let/ec k ((a v) ...) body ...)
 		//   ==> (%reset (lambda (k) (let ((a v) ...) body ...)))
-		// The body must be a real lambda: `reset` gives it a frame of its own, so tail
-		// calls inside it reuse that frame instead of the one holding the escape.
-		Expr* parse_let_ec(SourceLoc loc)
+		// (let/coro yield ((a v) ...) body ...)
+		//   ==> (%coro (lambda (yield) (let ((a v) ...) body ...)))
+		// The body must be a real lambda: `reset` and `coro` give it a frame of its own,
+		// so tail calls inside it reuse that frame instead of the one holding the form.
+		Expr* parse_let_control(SourceLoc loc, std::string_view prim, const char* form_name,
+		                        const char* binding_name)
 		{
 			advance();
 
-			std::string_view escape_name = expect_identifier("let/ec");
+			std::string_view bound_name = expect_identifier(form_name);
 			expect(TokenKind::LParen);
 
 			std::vector<std::string_view> names;
@@ -1608,7 +1616,7 @@ namespace
 			while (peek().kind != TokenKind::RParen)
 			{
 				expect(TokenKind::LParen);
-				names.push_back(expect_identifier("let/ec binding"));
+				names.push_back(expect_identifier(binding_name));
 				vals.push_back(parse_expr());
 				expect(TokenKind::RParen);
 			}
@@ -1626,22 +1634,32 @@ namespace
 			inner->let.vals = make_slice(vals);
 			inner->let.body = make_slice(body);
 
-			std::vector<std::string_view> params{escape_name};
+			std::vector<std::string_view> params{bound_name};
 			std::vector<Expr*> lambda_body{inner};
 			Expr* lam = make_expr(ExprKind::Lambda, loc);
 			lam->lambda.params = make_string_slice(params);
 			lam->lambda.is_variadic = false;
-			lam->lambda.lambda_name = "let/ec";
+			lam->lambda.lambda_name = form_name;
 			lam->lambda.body = make_slice(lambda_body);
 
 			Expr* proc = make_expr(ExprKind::PrimRef, loc);
-			proc->prim_ref.name = RESET_PRIM;
+			proc->prim_ref.name = prim;
 
 			std::vector<Expr*> args{lam};
 			Expr* e = make_expr(ExprKind::Call, loc);
 			e->call.proc = proc;
 			e->call.args = make_slice(args);
 			return e;
+		}
+
+		Expr* parse_let_ec(SourceLoc loc)
+		{
+			return parse_let_control(loc, RESET_PRIM, "let/ec", "let/ec binding");
+		}
+
+		Expr* parse_let_coro(SourceLoc loc)
+		{
+			return parse_let_control(loc, CORO_PRIM, "let/coro", "let/coro binding");
 		}
 
 		Expr* parse_let_form(SourceLoc loc, ExprKind kind)
@@ -2015,6 +2033,7 @@ namespace
 				case TokenKind::LetStar:
 				case TokenKind::Letrec:
 				case TokenKind::LetEc:
+				case TokenKind::LetCoro:
 				case TokenKind::Begin:
 				case TokenKind::When:
 				case TokenKind::Unless:
@@ -3739,6 +3758,15 @@ void Compiler::select_call_op(Expr* expr, Expr* current)
 		               expr->loc.line, expr->loc.col, static_cast<int>(RESET_PRIM.size()),
 		               RESET_PRIM.data());
 		sel.op = Opcode::reset;
+		return;
+	}
+
+	if (proc->kind == ExprKind::PrimRef && proc->prim_ref.name == CORO_PRIM)
+	{
+		JET_DIE_UNLESS(expr->call.args.size() == 1, "%d:%d: %.*s expects exactly one argument",
+		               expr->loc.line, expr->loc.col, static_cast<int>(CORO_PRIM.size()),
+		               CORO_PRIM.data());
+		sel.op = Opcode::coro;
 		return;
 	}
 
@@ -5474,9 +5502,10 @@ namespace
 			switch (sel.op)
 			{
 				case Opcode::reset:
+				case Opcode::coro:
 				{
-					// Two slots for one argument: slot 0 roots the escape, slot 1 carries the
-					// body closure in, the escape as its argument, and the result out.
+					// Two slots for one argument: slot 0 roots the escape or coroutine, slot 1
+					// carries the body closure in and the result out.
 					uint16_t w = alloc_window(2);
 					uint16_t result = static_cast<uint16_t>(w + 1);
 					emit_to_reg(expr->call.args[0], result);
@@ -5637,6 +5666,7 @@ namespace
 				case Opcode::call_self_0:
 				case Opcode::call_self_tail:
 				case Opcode::reset:
+				case Opcode::coro:
 					return true;
 				default:
 					return false;
@@ -6201,8 +6231,9 @@ namespace
 				}
 
 				case Opcode::reset:
+				case Opcode::coro:
 				{
-					emit_opcode(bc, Opcode::reset);
+					emit_opcode(bc, i.op);
 					OP_reset op{};
 					op.w = i.u.call.w;
 					emit_operand(bc, op);

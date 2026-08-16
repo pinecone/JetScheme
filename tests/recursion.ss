@@ -39,3 +39,7 @@
 ;; Deep tail recursion
 (define (loop n) (if (= n 0) 'done (loop (- n 1))))
 ($check (eq? 'done (loop 50000)))
+
+;; Deep non-tail recursion
+(define (sum-to n) (if (= n 0) 0 (+ n (sum-to (- n 1)))))
+($check (= 20000100000 (sum-to 200000)))

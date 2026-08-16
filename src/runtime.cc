@@ -1783,6 +1783,11 @@ static Atom slow_ref_field(Atom obj, Atom key)
 
 static Atom make_cursor(VmState& s, Atom target)
 {
+	// A coroutine is its own cursor.
+	if (is_type<jet::Type::Struct>(target) && unbox<Struct>(target)->type->kind() == StructKind::Coro)
+	{
+		return target;
+	}
 	const ObjShape* shape = shape_of(target);
 	if (!shape || !shape->iter) [[unlikely]]
 	{
@@ -1797,7 +1802,7 @@ JET_PRESERVE_NONE static void private_escape_constructor(VM_OP_PARAMS)
 	JET_DIE("escape continuations are created by let/ec, not by calling their type");
 }
 
-static bool equal_escape(EqualContext&, Struct* first, Struct* second, EqualRecur)
+static bool equal_by_identity(EqualContext&, Struct* first, Struct* second, EqualRecur)
 {
 	return first == second;
 }
@@ -1812,7 +1817,7 @@ static const StructOps escape_ops = {
 	private_escape_constructor,
 	{},
 	struct_destructor<Escape>(),
-	equal_escape,
+	equal_by_identity,
 	print_escape,
 	print_escape,
 };
@@ -1823,6 +1828,59 @@ void init_escapes(VmState& s)
 	Atom escape_type = make_struct_type(s, box(&escape_name), {}, exactly(0), escape_ops);
 	s.env.bind("%escape", escape_type);
 	Escape::type_atom = escape_type;
+}
+
+JET_PRESERVE_NONE static void private_coro_constructor(VM_OP_PARAMS)
+{
+	JET_DIE("coroutines are created by let/coro, not by calling their type");
+}
+
+JET_PRESERVE_NONE static void private_yield_constructor(VM_OP_PARAMS)
+{
+	JET_DIE("yields are created by let/coro, not by calling their type");
+}
+
+static void print_coro(Struct*, std::string& out)
+{
+	out += "#<coroutine>";
+}
+
+static void print_yield(Struct*, std::string& out)
+{
+	out += "#<yield>";
+}
+
+static const StructOps coro_ops = {
+	StructKind::Coro,
+	private_coro_constructor,
+	{},
+	struct_destructor<Coro>(),
+	equal_by_identity,
+	print_coro,
+	print_coro,
+};
+
+static const StructOps yield_ops = {
+	StructKind::Yield,
+	private_yield_constructor,
+	{},
+	struct_destructor<Yield>(),
+	equal_by_identity,
+	print_yield,
+	print_yield,
+};
+
+void init_coroutines(VmState& s)
+{
+	static const std::string coro_name = "%coroutine";
+	Atom coro_type = make_struct_type(s, box(&coro_name), {}, exactly(0), coro_ops);
+	s.env.bind("%coroutine", coro_type);
+	Coro::type_atom = coro_type;
+
+	static const std::string yield_name = "%yield";
+	Atom yield_type = make_struct_type(s, box(&yield_name), {}, exactly(0), yield_ops);
+	s.env.bind("%yield", yield_type);
+	Yield::type_atom = yield_type;
 }
 
 static Atom struct_ctor(VmState& s, Atom name, Atom names_list)
@@ -2433,6 +2491,8 @@ void init_primitives(VmState& s)
 	init_chars(s);
 	init_structs(s);
 	init_escapes(s);
+	init_coroutines(s);
+	e.bind("coroutine?", make_prim<is_kind<StructKind::Coro>>(s));
 	e.bind("ref", make_prim<slow_ref_field>(s));
 	e.bind("%iter", make_prim<make_cursor>(s));
 	e.bind("boolean?", make_prim<is_type<jet::Type::Boolean>>(s));

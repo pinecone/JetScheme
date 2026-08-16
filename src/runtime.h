@@ -91,6 +91,8 @@ enum class StructKind : uint8_t
 	HashMap,
 	Cursor,
 	Escape,
+	Coro,
+	Yield,
 };
 
 struct StructOps
@@ -166,6 +168,8 @@ struct Escape : Struct
 	inline static Atom type_atom{};
 
 	Code* resume_pc;
+	// The coroutine whose stack holds the `let/ec` frame.
+	Coro* owner;
 	uint32_t n_frames;
 	uint16_t dst;
 
@@ -173,11 +177,76 @@ struct Escape : Struct
 	// frame n_frames - 1 for exactly as long as the extent lives.
 	Code retk_code[OPCODE_SIZE + sizeof(Struct*)];
 
-	Escape(StructType* type_, Code* resume_pc_, uint32_t n_frames_, uint16_t dst_)
-		: Struct{type_}, resume_pc{resume_pc_}, n_frames{n_frames_}, dst{dst_}, retk_code{} {}
+	Escape(StructType* type_, Code* resume_pc_, Coro* owner_, uint32_t n_frames_, uint16_t dst_)
+		: Struct{type_}, resume_pc{resume_pc_}, owner{owner_}, n_frames{n_frames_}, dst{dst_},
+		retk_code{} {}
 };
 
 void init_escapes(VmState& s);
+
+enum class CoroState : uint8_t
+{
+	Suspended,
+	Running,
+	Completed,
+	Dead,
+};
+
+struct Coro : Struct
+{
+	inline static Atom type_atom{};
+
+	// Holds this coroutine's own stack while suspended and the parent's saved stack
+	// while running; `switch_stack` keeps every storage owned by exactly one holder.
+	SavedStack stack;
+	Code* consequent_pc{};
+	uint32_t running_index{};
+	uint16_t dst{};
+	CoroState state{CoroState::Suspended};
+
+	explicit Coro(StructType* type_) : Struct{type_} {}
+
+	void trace(Gc& gc)
+	{
+		if (!stack.storage)
+		{
+			return;
+		}
+		Atom* frontier = stack.top;
+		for (Frame& frame : stack.frames)
+		{
+			if (stack.base + frame.top > frontier)
+			{
+				frontier = stack.base + frame.top;
+			}
+			if (frame.closure)
+			{
+				gc.mark_atom(Atom::make_tagged(jet_tag::procedure, frame.closure).bits);
+			}
+		}
+		for (Atom* p = stack.base; p < frontier; ++p)
+		{
+			gc.mark_atom(p->bits);
+		}
+		// Same stale-slot invariant as `VmState::stack_watermark`: this scan does not
+		// reach above the frontier, so that region must be zero before the sweep.
+		std::memset(frontier, 0, static_cast<size_t>(stack.watermark - frontier) * sizeof(Atom));
+		stack.watermark = frontier;
+	}
+};
+
+struct Yield : Struct
+{
+	inline static Atom type_atom{};
+
+	Struct* target;
+
+	Yield(StructType* type_, Struct* target_) : Struct{type_}, target{target_} {}
+
+	void trace(Gc& gc) { gc.mark_atom(Atom::make_tagged(jet_tag::struct_, target).bits); }
+};
+
+void init_coroutines(VmState& s);
 
 struct CursorOps
 {
