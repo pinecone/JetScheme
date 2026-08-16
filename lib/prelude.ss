@@ -276,6 +276,7 @@
 (define hashset? (%prim "hashset?"))
 (define hashmap? (%prim "hashmap?"))
 (define coroutine? (%prim "coroutine?"))
+(define (coro/next c default) (%if/next! ((v) c) v default))
 (define hashset-length (%prim "hashset-length"))
 (define hashset-unset! (%prim "hashset-unset!"))
 (define hashmap-unset! (%prim "hashmap-unset!"))

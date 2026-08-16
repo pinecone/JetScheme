@@ -808,18 +808,18 @@ ObjShape g_shape_by_tag[jet_tag::HEAP_END] = {};
 
 JET_NOINLINE JET_PRESERVE_NONE static void die_iter_exhausted(VM_OP_PARAMS)
 {
-	JET_DIE("%%iter-next!: cursor is exhausted");
+	JET_DIE("%%if/next!: cursor is exhausted");
 }
 
 JET_NOINLINE JET_PRESERVE_NONE static void die_iter_expected_cursor(VM_OP_PARAMS)
 {
-	JET_DIE("%%iter-next!: expected a cursor");
+	JET_DIE("%%if/next!: expected a cursor");
 }
 
 template <int outputs>
 JET_NOINLINE JET_PRESERVE_NONE static void die_iter_bad_outputs(VM_OP_PARAMS)
 {
-	JET_DIE("%%iter-next!: cursor does not supply %d outputs", outputs);
+	JET_DIE("%%if/next!: cursor does not supply %d outputs", outputs);
 }
 
 enum class IterResult
@@ -829,6 +829,7 @@ enum class IterResult
 	Invalid,
 };
 
+template <typename Op, int outputs>
 JET_PRESERVE_NONE static void op_iter_next_coro(VM_OP_PARAMS);
 
 template <typename Op, int outputs>
@@ -842,19 +843,12 @@ JET_PRESERVE_NONE static void op_iter_impl(VM_OP_PARAMS)
 	}
 	if (unbox<Struct>(value)->type->kind() == StructKind::Coro)
 	{
-		if constexpr (outputs == 1)
-		{
-			JET_PROFILE_IC_MISS(Opcode::iter_next1);
-			// The coroutine `StructType` is held by the permanent `%coroutine` `Env` binding.
-			op->ic.dispatch_key = std::bit_cast<uint64_t>(unbox<Struct>(value)->type);
-			VmOp coro_handler = op_iter_next_coro;
-			std::memcpy(pc - OPCODE_SIZE, &coro_handler, sizeof(coro_handler));
-			JET_MUSTTAIL return op_iter_next_coro(VM_OP_ARGS);
-		}
-		else
-		{
-			JET_MUSTTAIL return die_iter_bad_outputs<outputs>(VM_OP_ARGS);
-		}
+		JET_PROFILE_IC_MISS(outputs == 1 ? Opcode::iter_next1 : Opcode::iter_next2);
+		// The coroutine `StructType` is held by the permanent `%coroutine` `Env` binding.
+		op->ic.dispatch_key = std::bit_cast<uint64_t>(unbox<Struct>(value)->type);
+		VmOp coro_handler = op_iter_next_coro<Op, outputs>;
+		std::memcpy(pc - OPCODE_SIZE, &coro_handler, sizeof(coro_handler));
+		JET_MUSTTAIL return op_iter_next_coro<Op, outputs>(VM_OP_ARGS);
 	}
 	if (unbox<Struct>(value)->type->kind() != StructKind::Cursor) [[unlikely]]
 	{
@@ -917,9 +911,9 @@ JET_NOINLINE JET_PRESERVE_NONE static void die_iter_vector_index(VM_OP_PARAMS)
 	VectorCursor* cursor = static_cast<VectorCursor*>(unbox<Struct>(frame_regs[op->cursor]));
 	if (!cursor->vector)
 	{
-		JET_DIE("%%iter-next!: cursor is exhausted");
+		JET_DIE("%%if/next!: cursor is exhausted");
 	}
-	JET_DIE("%%iter-next!: vector cursor index %zu exceeds size %zu",
+	JET_DIE("%%if/next!: vector cursor index %zu exceeds size %zu",
 	        cursor->vector->cursor_indices[cursor->slot], cursor->vector->size());
 }
 
@@ -950,9 +944,37 @@ struct VectorCursorAccess
 	}
 };
 
+struct VectorCursorAccess2
+{
+	using Op = OP_iter_next2;
+	using CursorType = VectorCursor;
+	static constexpr int outputs = 2;
+	static constexpr VmOp die = die_iter_vector_index;
+
+	JET_ALWAYS_INLINE static IterResult next_fast(Op* op, Atom* frame_regs, VectorCursor* cursor)
+	{
+		if (!cursor->vector) [[unlikely]]
+		{
+			return IterResult::Invalid;
+		}
+		Vec& vector = *cursor->vector;
+		size_t& cursor_index = vector.cursor_indices[cursor->slot];
+		size_t index = cursor_index;
+		size_t size = vector.size();
+		if (index >= size) [[unlikely]]
+		{
+			return index == size ? IterResult::Exhausted : IterResult::Invalid;
+		}
+		cursor_index = index + 1;
+		frame_regs[op->dst0] = Atom::from_double(static_cast<double>(index));
+		frame_regs[op->dst1] = vector.data()[index];
+		return IterResult::Yielded;
+	}
+};
+
 static const CursorOps vector_cursor_ops = {
 	op_iter_next_fast<VectorCursorAccess>,
-	nullptr,
+	op_iter_next_fast<VectorCursorAccess2>,
 };
 
 static Cursor* make_vector_cursor(VmState& s, Atom target)
@@ -990,9 +1012,37 @@ struct HashSetCursorAccess
 	}
 };
 
+struct HashSetCursorAccess2
+{
+	using Op = OP_iter_next2;
+	using CursorType = HashSetCursor;
+	static constexpr int outputs = 2;
+	static constexpr VmOp die = die_iter_exhausted;
+
+	JET_ALWAYS_INLINE static IterResult next_fast(Op* op, Atom* frame_regs, HashSetCursor* cursor)
+	{
+		if (!cursor->table) [[unlikely]]
+		{
+			return IterResult::Invalid;
+		}
+		HashSet& set = *cursor->table;
+		size_t& cursor_position = set.cursor_positions[cursor->slot];
+		size_t position = set.next_live(cursor_position);
+		if (position >= set.last) [[unlikely]]
+		{
+			return IterResult::Exhausted;
+		}
+		cursor_position = position + 1;
+		Atom element = set.entries[position - set.first].atom;
+		frame_regs[op->dst0] = element;
+		frame_regs[op->dst1] = element;
+		return IterResult::Yielded;
+	}
+};
+
 static const CursorOps hashset_cursor_ops = {
 	op_iter_next_fast<HashSetCursorAccess>,
-	nullptr,
+	op_iter_next_fast<HashSetCursorAccess2>,
 };
 
 Cursor* make_hashset_cursor(VmState& s, Atom target)
@@ -1032,8 +1082,35 @@ struct HashMapCursorAccess
 	}
 };
 
+struct HashMapCursorAccess1
+{
+	using Op = OP_iter_next1;
+	using CursorType = HashMapCursor;
+	static constexpr int outputs = 1;
+	static constexpr VmOp die = die_iter_exhausted;
+
+	JET_ALWAYS_INLINE static IterResult next_fast(Op* op, Atom* frame_regs, HashMapCursor* cursor)
+	{
+		if (!cursor->table) [[unlikely]]
+		{
+			return IterResult::Invalid;
+		}
+		HashMap& map = *cursor->table;
+		size_t& cursor_position = map.cursor_positions[cursor->slot];
+		size_t position = map.next_live(cursor_position);
+		if (position >= map.last) [[unlikely]]
+		{
+			return IterResult::Exhausted;
+		}
+		const HashMapEntry& entry = map.entries[position - map.first];
+		cursor_position = position + 1;
+		frame_regs[op->dst] = entry.value;
+		return IterResult::Yielded;
+	}
+};
+
 static const CursorOps hashmap_cursor_ops = {
-	nullptr,
+	op_iter_next_fast<HashMapCursorAccess1>,
 	op_iter_next_fast<HashMapCursorAccess>,
 };
 
@@ -1101,9 +1178,10 @@ static constexpr auto& op_stf = op_field_impl<FieldAccess::Store, FieldKeySource
 static constexpr auto& op_ldfk = op_field_impl<FieldAccess::Load, FieldKeySource::Constant>;
 static constexpr auto& op_stfk = op_field_impl<FieldAccess::Store, FieldKeySource::Constant>;
 
+template <typename Op, int outputs>
 JET_NOINLINE JET_PRESERVE_NONE static void op_iter_coro_slow(VM_OP_PARAMS)
 {
-	OP_iter_next1* op = reinterpret_cast<OP_iter_next1*>(pc);
+	Op* op = reinterpret_cast<Op*>(pc);
 	Coro* coro = static_cast<Coro*>(unbox<Struct>(frame_regs[op->cursor]));
 	switch (coro->state)
 	{
@@ -1114,7 +1192,7 @@ JET_NOINLINE JET_PRESERVE_NONE static void op_iter_coro_slow(VM_OP_PARAMS)
 		case CoroState::Running:
 			if (coro->running_index < s.running.size() && s.running[coro->running_index] == coro)
 			{
-				JET_DIE("%%iter-next!: coroutine is already running");
+				JET_DIE("%%if/next!: coroutine is already running");
 			}
 			// Abandoned by a crossing escape; membership can never hold again.
 			coro->state = CoroState::Dead;
@@ -1127,30 +1205,39 @@ JET_NOINLINE JET_PRESERVE_NONE static void op_iter_coro_slow(VM_OP_PARAMS)
 			{
 				s.running.grow();
 			}
-			JET_MUSTTAIL return op_iter_next_coro(VM_OP_ARGS);
+			JET_MUSTTAIL return op_iter_next_coro<Op, outputs>(VM_OP_ARGS);
 	}
 	JET_DIE("unreachable coroutine state");
 }
 
+template <typename Op, int outputs>
 JET_PRESERVE_NONE static void op_iter_next_coro(VM_OP_PARAMS)
 {
-	OP_iter_next1* op = reinterpret_cast<OP_iter_next1*>(pc);
+	Op* op = reinterpret_cast<Op*>(pc);
 	Atom value = frame_regs[op->cursor];
 	if (!value.tag_is<jet_tag::struct_>()
 	    || op->ic.dispatch_key != std::bit_cast<uint64_t>(unbox<Struct>(value)->type)) [[unlikely]]
 	{
-		JET_MUSTTAIL return op_iter_impl<OP_iter_next1, 1>(VM_OP_ARGS);
+		JET_MUSTTAIL return op_iter_impl<Op, outputs>(VM_OP_ARGS);
 	}
 	Coro* coro = static_cast<Coro*>(unbox<Struct>(value));
 	if (coro->state != CoroState::Suspended || !s.running.can_push()) [[unlikely]]
 	{
-		JET_MUSTTAIL return op_iter_coro_slow(VM_OP_ARGS);
+		JET_MUSTTAIL return op_iter_coro_slow<Op, outputs>(VM_OP_ARGS);
 	}
 
 	coro->state = CoroState::Running;
 	coro->running_index = static_cast<uint32_t>(s.running.size());
 	s.running.push_unchecked() = coro;
-	coro->dst = op->dst;
+	if constexpr (outputs == 2)
+	{
+		frame_regs[op->dst0] = Atom{};
+		coro->dst = op->dst1;
+	}
+	else
+	{
+		coro->dst = op->dst;
+	}
 	Code* next = pc + sizeof(*op);
 	coro->consequent_pc = next;
 	frame->code = next;

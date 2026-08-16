@@ -1315,9 +1315,9 @@ namespace
 				{
 					return parse_dollar_check(loc);
 				}
-				if (head.text == "%iter-next!")
+				if (head.text == "%if/next!")
 				{
-					return parse_iter_next(loc);
+					return parse_if_next(loc);
 				}
 				if (head.text == "quasiquote")
 				{
@@ -1531,10 +1531,10 @@ namespace
 			return e;
 		}
 
-		Expr* parse_iter_next(SourceLoc loc)
+		Expr* parse_if_next(SourceLoc loc)
 		{
 			advance();
-			Expr* cursor = parse_expr();
+			expect(TokenKind::LParen);
 			expect(TokenKind::LParen);
 			std::vector<std::string_view> names;
 			while (peek().kind == TokenKind::Variable)
@@ -1542,8 +1542,10 @@ namespace
 				names.push_back(advance().text);
 			}
 			expect(TokenKind::RParen);
+			Expr* cursor = parse_expr();
+			expect(TokenKind::RParen);
 			JET_DIE_UNLESS(names.size() == 1 || names.size() == 2,
-			               "%d:%d: %%iter-next! expects one or two output names", loc.line, loc.col);
+			               "%d:%d: if/next! expects one or two output names", loc.line, loc.col);
 			Expr* consequent = parse_expr();
 			Expr* alternate = nullptr;
 			if (peek().kind != TokenKind::RParen)

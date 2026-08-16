@@ -140,13 +140,17 @@ def main():
 
     bcs = {}
     for b in benches:
-        src = HERE / f"{b}.ss"
-        if not src.exists():
-            die(f"missing source: {src}")
+        # Each ref compiles its own worktree copy of the benchmark, so the two refs
+        # may differ in surface syntax while expressing the same workload.
+        src_old = wt_old / "bench" / f"{b}.ss"
+        src_new = wt_new / "bench" / f"{b}.ss"
+        for ref, src in ((args.ref_old, src_old), (args.ref_new, src_new)):
+            if not src.exists():
+                die(f"missing source in {ref}: {src}")
         bc_old = tmp / f"{b}.old.bc"
         bc_new = tmp / f"{b}.new.bc"
-        compile_bench(bin_old, src, bc_old)
-        compile_bench(bin_new, src, bc_new)
+        compile_bench(bin_old, src_old, bc_old)
+        compile_bench(bin_new, src_new, bc_new)
         bcs[b] = (bc_old, bc_new)
 
     name_w = max(len(b) for b in benches)
