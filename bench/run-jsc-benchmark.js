@@ -60,6 +60,10 @@ switch (benchmarkName) {
   case 'bench-astar':
     runAstar();
     break;
+  case 'bench-basic':
+    load(benchmarkFile);
+    runBasic(200);
+    break;
   case 'bench-cdjs':
     runAwfy(1000);
     break;
