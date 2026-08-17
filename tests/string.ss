@@ -24,6 +24,15 @@
 ($check (string=? "abc" (string #\a #\b #\c)))
 ($check (string=? "" (string)))
 
+;; ascii-downcase
+($check (string=? "hello" (ascii-downcase "HeLLo")))
+($check (string=? "" (ascii-downcase "")))
+($check (string=? "abc123 !" (ascii-downcase "ABC123 !")))
+(define ud "MiXeD")
+($check (string=? "mixed" (ascii-downcase ud)))
+($check (string=? "MiXeD" ud))
+($check (string=? "\xe9;" (ascii-downcase "\xe9;")))
+
 ;; copy
 ($check (string=? "ell" (substring "hello" 1 4)))
 ($check (string=? "hello" (substring "hello" 0)))

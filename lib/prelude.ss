@@ -234,6 +234,7 @@
 (define string>? (%prim "string>?"))
 (define string>=? (%prim "string>=?"))
 (define string->number (%prim "string->number"))
+(define ascii-downcase (%prim "ascii-downcase"))
 (define number->string (%prim "number->string"))
 
 ;;; characters

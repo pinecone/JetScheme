@@ -1185,6 +1185,19 @@ static Atom string_to_number(VmState& s, Atom* first, Atom* last)
 	return box(Number::trusted(static_cast<double>(v)));
 }
 
+static Atom ascii_downcase(VmState& vm, Atom str)
+{
+	String result{*slow_unbox<String>(str)};
+	for (char& ch : result)
+	{
+		if (ch >= 'A' && ch <= 'Z')
+		{
+			ch = static_cast<char>(ch + ('a' - 'A'));
+		}
+	}
+	return vm.gc.alloc_tagged<String>(std::move(result));
+}
+
 static Atom number_to_string(VmState& s, Atom* first, Atom* last)
 {
 	double n = slow_unbox<Number>(first[0]);
@@ -1220,6 +1233,7 @@ void init_strings(VmState& s)
 	e.bind("string>?", make_prim<string_folding_pred<std::greater<String>>>(s, at_least(2)));
 	e.bind("string>=?", make_prim<string_folding_pred<std::greater_equal<String>>>(s, at_least(2)));
 	e.bind("string->number", make_prim<string_to_number>(s, at_least(1)));
+	e.bind("ascii-downcase", make_prim<ascii_downcase>(s));
 	e.bind("number->string", make_prim<number_to_string>(s, at_least(1)));
 }
 
