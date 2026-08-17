@@ -58,18 +58,14 @@ static bool slurp_bytes(const string& path, vector<uint8_t>& out)
 	return true;
 }
 
-static int compile_to_bytecode(const string& source_path, const string& prelude_path,
-                               string_view built_in_prelude, CompileFlags flags, Bytecode& out)
+static Bytecode compile_source(string source, string filename, const string& prelude_path,
+                               string_view built_in_prelude, CompileFlags flags)
 {
-	string source;
-	JET_DIE_UNLESS(slurp_text(source_path, source), "error: cannot read '%s'", source_path.c_str());
 	if (!prelude_path.empty())
 	{
 		source = "(include \"" + prelude_path + "\")\n" + source;
 	}
-	string filename = source_path != "-" ? source_path : "<stdin>";
-	out = compile(std::move(source), std::move(filename), flags, built_in_prelude);
-	return 0;
+	return compile(std::move(source), std::move(filename), flags, built_in_prelude);
 }
 
 [[noreturn]] static void execute_bytecode(const CodeImage& image, int script_argc, char* script_argv[])
@@ -92,6 +88,7 @@ static void usage(FILE* o)
 		R"(usage: jet <command> [args]
   jet <file.ss> [script-args]          shorthand for 'jet run <file.ss>'
   jet run <file.ss> [script-args]      compile and execute in one step
+  jet eval <expr> [script-args]        compile and execute an inline expression
   jet compile [file.ss|-]              compile source to bytecode on stdout
   jet exec [file.bc|-] [script-args]   run pre-compiled bytecode
   jet disasm [file.ss|file.bc|-]       compile (if .ss) and disassemble
@@ -141,8 +138,9 @@ int main(int argc, char* argv[])
 		args_start = 1;
 	}
 
-	bool want_compile = (cmd == "compile" || cmd == "run" || cmd == "disasm");
-	bool want_exec = (cmd == "exec" || cmd == "run");
+	bool want_eval = (cmd == "eval");
+	bool want_compile = (cmd == "compile" || cmd == "run" || cmd == "disasm" || want_eval);
+	bool want_exec = (cmd == "exec" || cmd == "run" || want_eval);
 	bool want_disasm = (cmd == "disasm");
 	if (!want_compile && !want_exec)
 	{
@@ -192,6 +190,7 @@ int main(int argc, char* argv[])
 	}
 
 	JET_DIE_WHEN(cmd == "run" && input_path.empty(), "error: 'jet run' requires a source file");
+	JET_DIE_WHEN(want_eval && input_path.empty(), "error: 'jet eval' requires an expression");
 	if (input_path.empty())
 	{
 		input_path = "-";
@@ -208,10 +207,19 @@ int main(int argc, char* argv[])
 		{
 			built_in_prelude = {reinterpret_cast<const char*>(prelude_source), prelude_source_size};
 		}
-		if (compile_to_bytecode(input_path, prelude_path, built_in_prelude, flags, bc) != 0)
+		string source;
+		string filename;
+		if (want_eval)
 		{
-			return 1;
+			source = input_path;
+			filename = "<eval>";
 		}
+		else
+		{
+			JET_DIE_UNLESS(slurp_text(input_path, source), "error: cannot read '%s'", input_path.c_str());
+			filename = input_path != "-" ? input_path : "<stdin>";
+		}
+		bc = compile_source(std::move(source), std::move(filename), prelude_path, built_in_prelude, flags);
 	}
 	else
 	{
