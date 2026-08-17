@@ -81,3 +81,15 @@
 (define b2 (box-t 'outer b))
 ($check (eq? b (ref b2 'contents)))
 ($check (equal? "thing" (ref (ref b2 'contents) 'label)))
+
+(define rd-point (struct 'rd-point '(x y)))
+(define rdp (rd-point 3 4))
+($check (= (ref rdp 'x :default 0) 3))
+($check (= (ref rdp 'z :default 7) 7))
+
+; alternating present and absent fields through one site keeps the cache honest
+(let loop ((i 0) (total 0))
+  (if (= i 4)
+      ($check (= total 8))
+      (loop (+ i 1)
+            (+ total (ref rdp (if (even? i) 'x 'missing) :default 1)))))

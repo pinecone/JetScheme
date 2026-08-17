@@ -91,3 +91,6 @@
 
 ;; apply ref routes through slow primitive fallback
 ($check (= 99 (apply ref (list bv2 1))))
+
+($check (= (ref #u8(1 2) 1 :default 9) 2))
+($check (= (ref #u8(1 2) 5 :default 9) 9))

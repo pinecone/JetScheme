@@ -74,3 +74,19 @@
 (vector-push! gv2 'a)
 ($check (eq? 'a (vector-pop-first! gv2)))
 ($check (= 0 (vector-length gv2)))
+
+(define rdv (vector 10 20 30))
+($check (= (ref rdv 0 :default 99) 10))
+($check (= (ref rdv 2 :default 99) 30))
+($check (= (ref rdv 3 :default 99) 99))
+
+; repeated hits and misses through the same site keep the caches honest
+(let loop ((i 0) (hits 0) (defaults 0))
+  (if (= i 6)
+      (begin
+        ($check (= hits 60))
+        ($check (= defaults 3)))
+      (let ((x (ref rdv i :default 0)))
+        (loop (+ i 1)
+              (+ hits x)
+              (+ defaults (if (= x 0) 1 0))))))

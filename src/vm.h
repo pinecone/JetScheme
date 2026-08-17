@@ -599,7 +599,12 @@ struct ObjShape
 	VmOp stf_handler;
 	VmOp ldfk_handler;
 	VmOp stfk_handler;
-	Atom (*slow_ref)(Atom, Atom);
+	VmOp ldfh_handler;
+	VmOp ldfkh_handler;
+	VmOp ldfo_handler;
+	VmOp ldfko_handler;
+	Atom (*ref_or_die)(Atom, Atom);
+	Atom (*ref_or_hole)(Atom, Atom);
 	Cursor* (*iter)(VmState&, Atom);
 };
 

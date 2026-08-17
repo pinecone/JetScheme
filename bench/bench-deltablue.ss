@@ -189,16 +189,16 @@
       ((or (= k K-STAY) (= k K-EDIT)) 0)
       ((= k K-EQUALITY)
        (if (= (ref c 'dir) DIR-FORWARD)
-           (setf! (ref c 'v2) 'value (ref (ref c 'v1) 'value))
-           (setf! (ref c 'v1) 'value (ref (ref c 'v2) 'value))))
+           (setf! (ref c 'v2) 'value (ref c 'v1 'value))
+           (setf! (ref c 'v1) 'value (ref c 'v2 'value))))
       ((= k K-SCALE)
-       (let ((scale (ref (ref c 'scale) 'value))
-             (offset (ref (ref c 'offset) 'value)))
+       (let ((scale (ref c 'scale 'value))
+             (offset (ref c 'offset 'value)))
          (if (= (ref c 'dir) DIR-FORWARD)
              (setf! (ref c 'v2) 'value
-                   (+ (* (ref (ref c 'v1) 'value) scale) offset))
+                   (+ (* (ref c 'v1 'value) scale) offset))
              (setf! (ref c 'v1) 'value
-                   (/ (- (ref (ref c 'v2) 'value) offset) scale))))))))
+                   (/ (- (ref c 'v2 'value) offset) scale))))))))
 
 (define (c-recalculate! c)
   (let ((k (ref c 'kind)))
@@ -224,8 +224,8 @@
                  (str-weakest (ref c 'strength) (ref in 'walk-strength)))
            (setf! out 'stay
                  (and (ref in 'stay)
-                      (ref (ref c 'scale) 'stay)
-                      (ref (ref c 'offset) 'stay)))
+                      (ref c 'scale 'stay)
+                      (ref c 'offset 'stay)))
            (if (ref out 'stay) (c-execute! c))))))))
 
 ;; --- Constraint constructors ------------------------------------------
@@ -441,7 +441,7 @@
               (begin
                 (setf! (ref vars 0) 'value v)
                 (plan-execute! plan)
-                (assert! (= (ref (ref vars n) 'value) v) "chain")
+                (assert! (= (ref vars n 'value) v) "chain")
                 (loop (+ v 1))))))
       (destroy-constraint! edit planner))))
 
@@ -461,14 +461,14 @@
             (let lp ((j 0))
               (if (< j (- n 1))
                   (begin
-                    (assert! (= (ref (ref dests j) 'value) (+ (* (+ j 1) 5) 1000))
+                    (assert! (= (ref dests j 'value) (+ (* (+ j 1) 5) 1000))
                              "projection-3")
                     (lp (+ j 1)))))
             (planner-change-var! planner offset 2000)
             (let lp ((j 0))
               (if (< j (- n 1))
                   (begin
-                    (assert! (= (ref (ref dests j) 'value) (+ (* (+ j 1) 5) 2000))
+                    (assert! (= (ref dests j 'value) (+ (* (+ j 1) 5) 2000))
                              "projection-4")
                     (lp (+ j 1))))))
           (let ((src (make-var (+ i 1)))

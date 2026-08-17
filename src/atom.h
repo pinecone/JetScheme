@@ -84,6 +84,7 @@ constexpr uint64_t TAG_MASK = 0x0007'0000'0000'0000ULL;
 constexpr uint64_t SIGN_BIT = 0x8000'0000'0000'0000ULL;
 constexpr uint64_t PAYLOAD_MASK = 0x0000'FFFF'FFFF'FFFFULL;
 constexpr uint64_t CANONICAL_NAN = 0x7FF0'0000'0000'0001ULL;
+constexpr uint64_t HOLE_BITS = QNAN_TAG | 1;
 
 struct Number
 {
@@ -224,6 +225,16 @@ public:
 		return t > jet_tag::eof_tag && t < jet_tag::HEAP_END;
 	}
 };
+
+inline Atom hole()
+{
+	return Atom::from_bits(HOLE_BITS);
+}
+
+inline bool is_hole(Atom a)
+{
+	return a.bits == HOLE_BITS;
+}
 
 inline jet::Type Atom::type()
 {

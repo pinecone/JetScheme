@@ -78,3 +78,7 @@
 ($check (= (ref wide 0) 1))
 ($check (= (ref wide 1999) 2000))
 ($check (equal? wide (apply tuple (span 2000 '()))))
+
+(define rdt (tuple 'a 'b))
+($check (eq? (ref rdt 1 :default 'z) 'b))
+($check (eq? (ref rdt 9 :default 'z) 'z))

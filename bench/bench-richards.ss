@@ -194,7 +194,7 @@
   (cond
     ((null? (ref t 'v1)) (sched-suspend-current))
     (else
-     (let ((count (ref (ref t 'v1) 'a1)))
+     (let ((count (ref t 'v1 'a1)))
        (cond
          ((< count DATA-SIZE)
           (cond
@@ -202,7 +202,7 @@
             (else
              (let ((v (ref t 'v2)))
                (setf! t 'v2 (ref v 'link))
-               (setf! v 'a1 (ref (ref (ref t 'v1) 'a2) count))
+               (setf! v 'a1 (ref t 'v1 'a2 count))
                (setf! (ref t 'v1) 'a1 (+ count 1))
                (sched-queue v)))))
          (else

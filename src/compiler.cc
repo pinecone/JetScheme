@@ -200,6 +200,8 @@ constexpr ExprId NO_EXPR = ~uint32_t{0};
 
 constexpr std::string_view RESET_PRIM = "%reset";
 constexpr std::string_view CORO_PRIM = "%coro";
+constexpr std::string_view REF_HOLE_PRIM = "%ref-hole";
+constexpr std::string_view REF_DEFAULT_PRIM = "%ref-default";
 
 enum class ExprKind : uint8_t
 {
@@ -625,6 +627,7 @@ struct Compiler
 		enum class Kind { None, Arith, Ref };
 		Kind kind{};
 		Opcode op{};
+		Opcode op_k{};
 	};
 	PrimLowering prim_call_lowering(Expr* call);
 	void record_ref(ResolvedBinding b);
@@ -660,11 +663,12 @@ struct Compiler
 	void select_call_op(Expr* expr, Expr* current);
 	void collect_branch_fusion_facts(Program& program);
 	void select_branch_fusions();
-	void select_field_op(Expr* expr, Expr* current, Expr* receiver, Expr* key, bool is_set);
+	void select_field_op(Expr* expr, Expr* current, Expr* receiver, Expr* key, Opcode reg_op,
+	                     Opcode const_op);
 	void select_var_op(Expr* expr, Expr* current, bool is_set);
 
 	void run_anf_inline(Program& program);
-	void run_binarize_arith(Program& program);
+	void run_binarize(Program& program);
 	void run_lambda_lift(Program& program);
 
 	Bytecode compile();
@@ -1583,12 +1587,45 @@ namespace
 			return datum;
 		}
 
+		Expr* make_prim_call(std::string_view name, std::initializer_list<Expr*> call_args, SourceLoc loc)
+		{
+			Expr* prim = make_expr(ExprKind::PrimRef, loc);
+			prim->prim_ref.name = name;
+			std::vector<Expr*> args{call_args};
+			Expr* call = make_expr(ExprKind::Call, loc);
+			call->call.proc = prim;
+			call->call.args = make_slice(args);
+			return call;
+		}
+
 		Expr* parse_call(SourceLoc loc)
 		{
 			Expr* proc = parse_expr();
 			std::vector<Expr*> args;
 			while (peek().kind != TokenKind::RParen)
 			{
+				if (peek().kind == TokenKind::Variable && peek().text == ":default")
+				{
+					advance();
+					if (proc->kind != ExprKind::VarRef || proc->var_ref.name != "ref")
+					{
+						JET_DIE("%d:%d: ':default' is only valid in a ref call", loc.line, loc.col);
+					}
+					JET_DIE_WHEN(args.size() < 2, "%d:%d: ref with ':default' needs a receiver and a key",
+					             loc.line, loc.col);
+					Expr* fallback = parse_expr();
+					expect(TokenKind::RParen);
+
+					// Each inner step propagates the hole and the last step
+					// replaces it with the fallback, so a miss at any step of the key
+					// path yields the default.
+					Expr* acc = args[0];
+					for (size_t i = 1; i + 1 < args.size(); ++i)
+					{
+						acc = make_prim_call(REF_HOLE_PRIM, {acc, args[i]}, loc);
+					}
+					return make_prim_call(REF_DEFAULT_PRIM, {acc, args.back(), fallback}, loc);
+				}
 				args.push_back(parse_expr());
 			}
 			expect(TokenKind::RParen);
@@ -3246,7 +3283,7 @@ void Compiler::run_optimization_passes(Program& program)
 
 	if (flags_.specialize_ops)
 	{
-		run_binarize_arith(program);
+		run_binarize(program);
 		recompute_lambda_bindings(program);
 	}
 
@@ -3648,7 +3685,7 @@ void Compiler::select_ops_in(Expr* expr, Expr* current)
 
 		case ExprKind::SetRef:
 			walk_children(expr, [&](Expr* e) { select_ops_in(e, current); });
-			select_field_op(expr, current, expr->set_ref.obj, expr->set_ref.key, true);
+			select_field_op(expr, current, expr->set_ref.obj, expr->set_ref.key, Opcode::stf, Opcode::stfk);
 			break;
 
 		case ExprKind::IterNext:
@@ -3701,6 +3738,18 @@ Compiler::PrimLowering Compiler::prim_call_lowering(Expr* call)
 		return {};
 	}
 	Expr* proc = call->call.proc;
+	if (proc->kind == ExprKind::PrimRef)
+	{
+		if (proc->prim_ref.name == REF_HOLE_PRIM && call->call.args.size() == 2)
+		{
+			return {PrimLowering::Kind::Ref, Opcode::ldfh, Opcode::ldfkh};
+		}
+		if (proc->prim_ref.name == REF_DEFAULT_PRIM && call->call.args.size() == 3)
+		{
+			return {PrimLowering::Kind::Ref, Opcode::ldfo, Opcode::ldfko};
+		}
+		return {};
+	}
 	if (proc->kind != ExprKind::VarRef || call->call.args.size() != 2)
 	{
 		return {};
@@ -3719,7 +3768,7 @@ Compiler::PrimLowering Compiler::prim_call_lowering(Expr* call)
 	{
 		return {PrimLowering::Kind::Arith, *arith};
 	}
-	return {PrimLowering::Kind::Ref, Opcode::ldf};
+	return {PrimLowering::Kind::Ref, Opcode::ldf, Opcode::ldfk};
 }
 
 bool Compiler::is_intrinsic_callee(Expr* expr, Expr* current)
@@ -3817,7 +3866,7 @@ void Compiler::select_call_op(Expr* expr, Expr* current)
 
 	if (pl.kind == PrimLowering::Kind::Ref)
 	{
-		select_field_op(expr, current, expr->call.args[0], expr->call.args[1], false);
+		select_field_op(expr, current, expr->call.args[0], expr->call.args[1], pl.op, pl.op_k);
 		return;
 	}
 
@@ -3965,18 +4014,18 @@ void Compiler::select_branch_fusions()
 	}
 }
 
-void Compiler::select_field_op(Expr* expr, Expr* current, Expr* receiver, Expr* key, bool is_set)
+void Compiler::select_field_op(Expr* expr, Expr* current, Expr* receiver, Expr* key, Opcode reg_op,
+                               Opcode const_op)
 {
 	OpSelection& sel = selected_ops_[expr->id].emplace();
 
 	if (!flags_.specialize_ops)
 	{
-		sel.op = is_set ? Opcode::stf : Opcode::ldf;
+		sel.op = reg_op;
 		return;
 	}
 
-	bool ck = is_literal_key(key);
-	sel.op = is_set ? (ck ? Opcode::stfk : Opcode::stf) : (ck ? Opcode::ldfk : Opcode::ldf);
+	sel.op = is_literal_key(key) ? const_op : reg_op;
 }
 
 void Compiler::select_var_op(Expr* expr, Expr* current, bool is_set)
@@ -4443,14 +4492,15 @@ void Compiler::run_anf_inline(Program& program)
 namespace
 {
 
-	bool is_nary_arith(std::string_view name)
+	bool is_binarizable(std::string_view name)
 	{
-		// Must stay a subset of select_call_op's fused names: a binarized chain
-		// of calls selection cannot fuse is strictly worse than one n-ary call.
-		return name == "+" || name == "-" || name == "*" || name == "/";
+		// + - * / must stay a subset of select_call_op's fused names: a binarized
+		// chain the selection cannot fuse is strictly worse than one n-ary call.
+		// ref folds a key path into single-step field loads.
+		return name == "+" || name == "-" || name == "*" || name == "/" || name == "ref";
 	}
 
-	struct BinarizeArith
+	struct Binarize
 	{
 		Compiler& db;
 
@@ -4461,7 +4511,7 @@ namespace
 				return false;
 			}
 			std::string_view name = e->call.proc->var_ref.name;
-			return is_nary_arith(name) && db.prim_binding_lowerable(db.binding(e->call.proc), name);
+			return is_binarizable(name) && db.prim_binding_lowerable(db.binding(e->call.proc), name);
 		}
 
 		Expr* make_binary(Expr* proc, Expr* lhs, Expr* rhs, SourceLoc loc)
@@ -4493,8 +4543,8 @@ namespace
 			{
 				return;
 			}
-			// (op a b c) -> (op (op a b) c), leftward like the prim's fold, so
-			// the lowering is bit-identical for doubles.
+			// (op a b c) -> (op (op a b) c), left-nested like the prim's fold:
+			// bit-identical for arithmetic doubles, a left-to-right path for ref.
 			Slice<Expr*> args = e->call.args;
 			Expr* acc = args[0];
 			for (uint32_t i = 1; i + 1 < args.size(); ++i)
@@ -4507,9 +4557,9 @@ namespace
 
 } // namespace
 
-void Compiler::run_binarize_arith(Program& program)
+void Compiler::run_binarize(Program& program)
 {
-	BinarizeArith pass{.db = *this};
+	Binarize pass{.db = *this};
 	for (Expr* form : program.forms)
 	{
 		pass.walk(form);
@@ -5344,12 +5394,18 @@ namespace
 			return v;
 		}
 
-		void emit_field_get(Compiler::OpSelection sel, Expr* receiver, Expr* key, uint16_t dst)
+		void emit_field_get(Compiler::OpSelection sel, Expr* receiver, Expr* key, uint16_t dst,
+		                    Expr* fallback = nullptr)
 		{
 			LirInst i = inst(sel.op);
 			i.u.field.dst = dst;
 			i.u.field.obj = emit_to_any_reg(receiver);
-			i.u.field.key = sel.op == Opcode::ldfk ? intern_literal_key(key) : emit_to_any_reg(key);
+			bool ck = sel.op == Opcode::ldfk || sel.op == Opcode::ldfkh || sel.op == Opcode::ldfko;
+			i.u.field.key = ck ? intern_literal_key(key) : emit_to_any_reg(key);
+			if (fallback)
+			{
+				i.u.field.val = emit_to_any_reg(fallback);
+			}
 			emit(i);
 		}
 
@@ -5834,7 +5890,14 @@ namespace
 
 						case Opcode::ldf:
 						case Opcode::ldfk:
+						case Opcode::ldfh:
+						case Opcode::ldfkh:
 							emit_field_get(sel, expr->call.args[0], expr->call.args[1], dst);
+							break;
+						case Opcode::ldfo:
+						case Opcode::ldfko:
+							emit_field_get(sel, expr->call.args[0], expr->call.args[1], dst,
+							               expr->call.args[2]);
 							break;
 
 						default:
@@ -6350,6 +6413,52 @@ namespace
 					op.obj = i.u.field.obj;
 					op.key_idx = i.u.field.key;
 					op.val = i.u.field.val;
+					emit_operand(bc, op);
+					break;
+				}
+
+				case Opcode::ldfh:
+				{
+					emit_opcode(bc, Opcode::ldfh);
+					OP_ldfh op{};
+					op.dst = i.u.field.dst;
+					op.obj = i.u.field.obj;
+					op.key = i.u.field.key;
+					emit_operand(bc, op);
+					break;
+				}
+
+				case Opcode::ldfkh:
+				{
+					emit_opcode(bc, Opcode::ldfkh);
+					OP_ldfkh op{};
+					op.dst = i.u.field.dst;
+					op.obj = i.u.field.obj;
+					op.key_idx = i.u.field.key;
+					emit_operand(bc, op);
+					break;
+				}
+
+				case Opcode::ldfo:
+				{
+					emit_opcode(bc, Opcode::ldfo);
+					OP_ldfo op{};
+					op.dst = i.u.field.dst;
+					op.obj = i.u.field.obj;
+					op.key = i.u.field.key;
+					op.dfl = i.u.field.val;
+					emit_operand(bc, op);
+					break;
+				}
+
+				case Opcode::ldfko:
+				{
+					emit_opcode(bc, Opcode::ldfko);
+					OP_ldfko op{};
+					op.dst = i.u.field.dst;
+					op.obj = i.u.field.obj;
+					op.key_idx = i.u.field.key;
+					op.dfl = i.u.field.val;
 					emit_operand(bc, op);
 					break;
 				}

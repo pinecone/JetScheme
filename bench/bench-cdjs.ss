@@ -234,7 +234,7 @@
   (let loop ((x x))
     (cond
       ((and (not (eq? x (ref t 'root)))
-            (eq? 'red (ref (ref x 'parent) 'color)))
+            (eq? 'red (ref x 'parent 'color)))
        (let* ((p  (ref x 'parent))
               (gp (ref p 'parent)))
          (cond
@@ -253,8 +253,8 @@
                               p)
                              (else x))))
                    (setf! (ref x2 'parent) 'color 'black)
-                   (setf! (ref (ref x2 'parent) 'parent) 'color 'red)
-                   (tree-right-rotate! t (ref (ref x2 'parent) 'parent))
+                   (setf! (ref x2 'parent 'parent) 'color 'red)
+                   (tree-right-rotate! t (ref x2 'parent 'parent))
                    (loop x2))))))
            (else
             (let ((y (ref gp 'left)))
@@ -271,8 +271,8 @@
                               p)
                              (else x))))
                    (setf! (ref x2 'parent) 'color 'black)
-                   (setf! (ref (ref x2 'parent) 'parent) 'color 'red)
-                   (tree-left-rotate! t (ref (ref x2 'parent) 'parent))
+                   (setf! (ref x2 'parent 'parent) 'color 'red)
+                   (tree-left-rotate! t (ref x2 'parent 'parent))
                    (loop x2)))))))))
       (else #t))))
 
@@ -293,7 +293,7 @@
                   (else (ref y 'parent)))))
          (cond
            ((not (ref y 'parent)) (setf! t 'root x))
-           ((eq? y (ref (ref y 'parent) 'left))
+           ((eq? y (ref y 'parent 'left))
             (setf! (ref y 'parent) 'left x))
            (else
             (setf! (ref y 'parent) 'right x)))
@@ -312,7 +312,7 @@
             (cond
               ((ref z 'parent)
                (cond
-                 ((eq? z (ref (ref z 'parent) 'left))
+                 ((eq? z (ref z 'parent 'left))
                   (setf! (ref z 'parent) 'left  y))
                  (else
                   (setf! (ref z 'parent) 'right y))))
@@ -338,15 +338,15 @@
                       (else w0))))
             (cond
               ((and (or (not (ref w 'left))
-                        (eq? 'black (ref (ref w 'left) 'color)))
+                        (eq? 'black (ref w 'left 'color)))
                     (or (not (ref w 'right))
-                        (eq? 'black (ref (ref w 'right) 'color))))
+                        (eq? 'black (ref w 'right 'color))))
                (setf! w 'color 'red)
                (loop xparent (ref xparent 'parent)))
               (else
                (let ((w2 (cond
                            ((or (not (ref w 'right))
-                                (eq? 'black (ref (ref w 'right) 'color)))
+                                (eq? 'black (ref w 'right 'color)))
                             (setf! (ref w 'left) 'color 'black)
                             (setf! w 'color 'red)
                             (tree-right-rotate! t w)
@@ -370,15 +370,15 @@
                       (else w0))))
             (cond
               ((and (or (not (ref w 'right))
-                        (eq? 'black (ref (ref w 'right) 'color)))
+                        (eq? 'black (ref w 'right 'color)))
                     (or (not (ref w 'left))
-                        (eq? 'black (ref (ref w 'left) 'color))))
+                        (eq? 'black (ref w 'left 'color))))
                (setf! w 'color 'red)
                (loop xparent (ref xparent 'parent)))
               (else
                (let ((w2 (cond
                            ((or (not (ref w 'left))
-                                (eq? 'black (ref (ref w 'left) 'color)))
+                                (eq? 'black (ref w 'left 'color)))
                             (setf! (ref w 'right) 'color 'black)
                             (setf! w 'color 'red)
                             (tree-left-rotate! t w)

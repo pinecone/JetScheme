@@ -75,6 +75,10 @@ struct Struct;
 	X(stf,                 "stf")                                                                            \
 	X(ldfk,                "ldfk")                                                                           \
 	X(stfk,                "stfk")                                                                           \
+	X(ldfh,                "ldfh")                                                                           \
+	X(ldfkh,               "ldfkh")                                                                          \
+	X(ldfo,                "ldfo")                                                                           \
+	X(ldfko,               "ldfko")                                                                          \
 	X(reset,               "reset")                                                                          \
 	X(retk,                "retk")                                                                           \
 	X(coro,                "coro")                                                                           \
@@ -283,6 +287,24 @@ struct OP_stfk
 	uint16_t val;
 	FieldIc ic;
 };
+using OP_ldfh = OP_ldf;
+using OP_ldfkh = OP_ldfk;
+struct OP_ldfo
+{
+	uint16_t dst;
+	uint16_t obj;
+	uint16_t key;
+	uint16_t dfl;
+	FieldIc ic;
+};
+struct OP_ldfko
+{
+	uint16_t dst;
+	uint16_t obj;
+	uint16_t key_idx;
+	uint16_t dfl;
+	FieldIc ic;
+};
 
 #pragma pack(pop)
 
@@ -391,13 +413,19 @@ inline size_t opcode_step(uint8_t op, const uint8_t* operands)
 #undef X
 			return OPCODE_SIZE + sizeof(OP_call_self);
 		case Opcode::ldf:
+		case Opcode::ldfh:
 			return OPCODE_SIZE + sizeof(OP_ldf);
 		case Opcode::stf:
 			return OPCODE_SIZE + sizeof(OP_stf);
 		case Opcode::ldfk:
+		case Opcode::ldfkh:
 			return OPCODE_SIZE + sizeof(OP_ldfk);
 		case Opcode::stfk:
 			return OPCODE_SIZE + sizeof(OP_stfk);
+		case Opcode::ldfo:
+			return OPCODE_SIZE + sizeof(OP_ldfo);
+		case Opcode::ldfko:
+			return OPCODE_SIZE + sizeof(OP_ldfko);
 	}
 	return OPCODE_SIZE;
 }

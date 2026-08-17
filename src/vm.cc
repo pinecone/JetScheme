@@ -1177,6 +1177,10 @@ static constexpr auto& op_ldf = op_field_impl<FieldAccess::Load, FieldKeySource:
 static constexpr auto& op_stf = op_field_impl<FieldAccess::Store, FieldKeySource::Register>;
 static constexpr auto& op_ldfk = op_field_impl<FieldAccess::Load, FieldKeySource::Constant>;
 static constexpr auto& op_stfk = op_field_impl<FieldAccess::Store, FieldKeySource::Constant>;
+static constexpr auto& op_ldfh = op_field_impl<FieldAccess::Load, FieldKeySource::Register, FieldMiss::Hole>;
+static constexpr auto& op_ldfkh = op_field_impl<FieldAccess::Load, FieldKeySource::Constant, FieldMiss::Hole>;
+static constexpr auto& op_ldfo = op_field_impl<FieldAccess::Load, FieldKeySource::Register, FieldMiss::Default>;
+static constexpr auto& op_ldfko = op_field_impl<FieldAccess::Load, FieldKeySource::Constant, FieldMiss::Default>;
 
 template <typename Op, int outputs>
 JET_NOINLINE JET_PRESERVE_NONE static void op_iter_coro_slow(VM_OP_PARAMS)

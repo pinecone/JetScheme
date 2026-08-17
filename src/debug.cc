@@ -175,7 +175,8 @@ void profile_print()
 		}
 	}
 
-	constexpr Opcode field_ops[] = {Opcode::ldf, Opcode::stf, Opcode::ldfk, Opcode::stfk};
+	constexpr Opcode field_ops[] = {Opcode::ldf, Opcode::stf, Opcode::ldfk, Opcode::stfk,
+	                                Opcode::ldfh, Opcode::ldfkh, Opcode::ldfo, Opcode::ldfko};
 	constexpr const char* field_receivers[] = {
 		"vector", "string", "bytevector", "scheme", "tuple", "hashset", "hashmap", "cursor", "other",
 	};
@@ -514,6 +515,30 @@ void decode_args(FILE* out, uint8_t op, Code* p)
 		{
 			OP_stfk* o = reinterpret_cast<OP_stfk*>(p);
 			std::fprintf(out, " obj=%u k=%u val=%u", o->obj, o->key_idx, o->val);
+			break;
+		}
+		case Opcode::ldfh:
+		{
+			OP_ldfh* o = reinterpret_cast<OP_ldfh*>(p);
+			std::fprintf(out, " dst=%u obj=%u key=%u", o->dst, o->obj, o->key);
+			break;
+		}
+		case Opcode::ldfkh:
+		{
+			OP_ldfkh* o = reinterpret_cast<OP_ldfkh*>(p);
+			std::fprintf(out, " dst=%u obj=%u k=%u", o->dst, o->obj, o->key_idx);
+			break;
+		}
+		case Opcode::ldfo:
+		{
+			OP_ldfo* o = reinterpret_cast<OP_ldfo*>(p);
+			std::fprintf(out, " dst=%u obj=%u key=%u dfl=%u", o->dst, o->obj, o->key, o->dfl);
+			break;
+		}
+		case Opcode::ldfko:
+		{
+			OP_ldfko* o = reinterpret_cast<OP_ldfko*>(p);
+			std::fprintf(out, " dst=%u obj=%u k=%u dfl=%u", o->dst, o->obj, o->key_idx, o->dfl);
 			break;
 		}
 		default:

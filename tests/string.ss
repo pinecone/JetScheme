@@ -140,3 +140,6 @@
 ($check (string<? "A" "λ"))
 ($check (string<? "λ" "🎈"))
 ($check (string<? "z" "é"))
+
+($check (char=? (ref "ab" 1 :default #\z) #\b))
+($check (char=? (ref "ab" 9 :default #\z) #\z))

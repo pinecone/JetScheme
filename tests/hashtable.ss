@@ -181,3 +181,27 @@
 ($check (eq? 'nan-value (ref with-nan (sqrt -1))))
 (setf! with-nan (- (/ 1 0) (/ 1 0)) 'replaced)
 ($check (eq? 'replaced (ref with-nan (/ 0 0))))
+
+(define rdm (hashmap 'a 1))
+($check (= (ref rdm 'a :default 0) 1))
+($check (= (ref rdm 'b :default 0) 0))
+($check (eq? (ref rdm 'b :default 'nope) 'nope))
+
+($check (= (ref rdm 'b :default (+ 1 2)) 3))
+
+; hashset ref never misses: absent elements answer #f, not the default.
+(define rds (hashset 'a))
+($check (eq? (ref rds 'a :default 'z) #t))
+($check (eq? (ref rds 'b :default 'z) #f))
+
+(define rd-nested (hashmap 'a (hashmap 'b 2)))
+($check (= (ref rd-nested 'a 'b) 2))
+($check (= (ref rd-nested 'a 'b :default 0) 2))
+($check (= (ref rd-nested 'a 'c :default 5) 5))
+($check (= (ref rd-nested 'x 'b :default 5) 5))
+
+(define rd-deep (hashmap 'a (vector (hashmap 'c 42))))
+($check (= (ref rd-deep 'a 0 'c) 42))
+($check (= (ref rd-deep 'a 0 'c :default -1) 42))
+($check (= (ref rd-deep 'a 1 'c :default -1) -1))
+($check (= (ref rd-deep 'a 0 'd :default -1) -1))

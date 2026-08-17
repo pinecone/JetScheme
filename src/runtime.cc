@@ -1606,10 +1606,10 @@ JET_ALWAYS_INLINE static bool scheme_field_matches(Atom key, const FieldIc& ic)
 struct SchemeStructAccess
 {
 	static constexpr bool is_struct = true;
+	static constexpr bool caches_keys = true;
 
-	template <FieldKeySource key_source>
-	JET_ALWAYS_INLINE static bool load_fast(VmState& s, FieldOp<FieldAccess::Load, key_source>* op,
-	                                        Atom* frame_regs)
+	template <FieldKeySource key_source, typename Op>
+	JET_ALWAYS_INLINE static bool load_fast(VmState& s, Op* op, Atom* frame_regs)
 	{
 		if (!scheme_field_matches<key_source>(field_key<key_source>(s, op, frame_regs), op->ic)) [[unlikely]]
 		{
@@ -1630,6 +1630,33 @@ struct SchemeStructAccess
 			JET_MUSTTAIL return die_scheme_field<FieldAccess::Load, key_source>(VM_OP_ARGS);
 		}
 		frame_regs[op->dst] = load_scheme_field(instance, op->ic.cached_index);
+		pc += sizeof(*op);
+		DISPATCH();
+	}
+
+	static Atom load_or_hole(Atom object, Atom key)
+	{
+		Struct* instance = unbox<Struct>(object);
+		JET_DIE_UNLESS(is_type<jet::Type::Symbol>(key), "struct field access requires a symbol key");
+		int index = instance->type->find(key);
+		return index < 0 ? hole() : load_scheme_field(instance, static_cast<uint64_t>(index));
+	}
+
+	template <FieldKeySource key_source, FieldMiss miss>
+	JET_NOINLINE JET_PRESERVE_NONE static void op_load_miss(VM_OP_PARAMS)
+	{
+		FieldLoadOp<miss, key_source>* op = reinterpret_cast<FieldLoadOp<miss, key_source>*>(pc);
+		Struct* instance = unbox<Struct>(frame_regs[op->obj]);
+		Atom key = field_key<key_source>(s, op, frame_regs);
+		if (cache_field_index(instance, key, op->ic)) [[likely]]
+		{
+			frame_regs[op->dst] = load_scheme_field(instance, op->ic.cached_index);
+		}
+		else
+		{
+			JET_DIE_UNLESS(is_type<jet::Type::Symbol>(key), "struct field access requires a symbol key");
+			frame_regs[op->dst] = field_miss_value<miss, key_source>(op, frame_regs);
+		}
 		pc += sizeof(*op);
 		DISPATCH();
 	}
@@ -1665,10 +1692,18 @@ struct SchemeStructAccess
 struct TupleAccess
 {
 	static constexpr bool is_struct = true;
+	static constexpr bool caches_keys = false;
 
-	template <FieldKeySource key_source>
-	JET_ALWAYS_INLINE static bool load_fast(VmState& s, FieldOp<FieldAccess::Load, key_source>* op,
-	                                        Atom* frame_regs)
+	static Atom load_or_hole(Atom object, Atom key)
+	{
+		Tuple* tuple = static_cast<Tuple*>(unbox<Struct>(object));
+		JET_DIE_UNLESS(is_positive_integer(key), "ref expects a non-negative integer index");
+		size_t index = static_cast<size_t>(unbox<Number>(key));
+		return index < tuple->size ? tuple->elements[index] : hole();
+	}
+
+	template <FieldKeySource key_source, typename Op>
+	JET_ALWAYS_INLINE static bool load_fast(VmState& s, Op* op, Atom* frame_regs)
 	{
 		Tuple* tuple = static_cast<Tuple*>(unbox<Struct>(frame_regs[op->obj]));
 		size_t index;
@@ -1774,11 +1809,38 @@ static const StructOps tuple_ops = {
 	print_tuple<write_to>,
 };
 
-static Atom slow_ref_field(Atom obj, Atom key)
+static Atom ref_or_die_field(Atom obj, Atom key)
 {
 	const ObjShape* sh = shape_of(obj);
-	JET_DIE_UNLESS(sh && sh->slow_ref, "ref: unsupported receiver type");
-	return sh->slow_ref(obj, key);
+	JET_DIE_UNLESS(sh && sh->ref_or_die, "ref: unsupported receiver type");
+	return sh->ref_or_die(obj, key);
+}
+
+static Atom prim_ref(VmState&, Atom* first, Atom* last)
+{
+	Atom value = first[0];
+	for (Atom* key = first + 1; key != last; ++key)
+	{
+		value = ref_or_die_field(value, *key);
+	}
+	return value;
+}
+
+static Atom ref_or_hole_field(Atom obj, Atom key)
+{
+	if (is_hole(obj))
+	{
+		return obj;
+	}
+	const ObjShape* sh = shape_of(obj);
+	JET_DIE_UNLESS(sh && sh->ref_or_hole, "ref: unsupported receiver type");
+	return sh->ref_or_hole(obj, key);
+}
+
+static Atom ref_or_default_field(Atom obj, Atom key, Atom fallback)
+{
+	Atom value = ref_or_hole_field(obj, key);
+	return is_hole(value) ? fallback : value;
 }
 
 static Atom make_cursor(VmState& s, Atom target)
@@ -2096,12 +2158,18 @@ JET_ALWAYS_INLINE static FastFind hashmap_find_fast(HashMap* map, Atom key, size
 	return FastFind::Found;
 }
 
-static Atom hashmap_lookup(Struct* instance, Atom key)
+static Atom hashmap_try_lookup(Struct* instance, Atom key)
 {
 	HashMap* map = static_cast<HashMap*>(instance);
 	auto it = map->index.find(make_key(key));
-	JET_DIE_WHEN(it == map->index.end(), "ref: key not found in hashmap");
-	return map->entry(it->second).value;
+	return it == map->index.end() ? hole() : map->entry(it->second).value;
+}
+
+static Atom hashmap_lookup(Struct* instance, Atom key)
+{
+	Atom value = hashmap_try_lookup(instance, key);
+	JET_DIE_WHEN(is_hole(value), "ref: key not found in hashmap");
+	return value;
 }
 
 static void hashset_insert_key(HashSet* set, const TableKey& key)
@@ -2163,10 +2231,15 @@ static Atom table_ref(Atom object, Atom key)
 struct HashSetAccess
 {
 	static constexpr bool is_struct = true;
+	static constexpr bool caches_keys = false;
 
-	template <FieldKeySource key_source>
-	JET_ALWAYS_INLINE static bool load_fast(VmState& s, FieldOp<FieldAccess::Load, key_source>* op,
-	                                        Atom* frame_regs)
+	static Atom load_or_hole(Atom object, Atom key)
+	{
+		return hashset_lookup(unbox<Struct>(object), key);
+	}
+
+	template <FieldKeySource key_source, typename Op>
+	JET_ALWAYS_INLINE static bool load_fast(VmState& s, Op* op, Atom* frame_regs)
 	{
 		HashSet* set = static_cast<HashSet*>(unbox<Struct>(frame_regs[op->obj]));
 		FastFind found = hashset_find_fast(set, field_key<key_source>(s, op, frame_regs));
@@ -2222,10 +2295,15 @@ struct HashSetAccess
 struct HashMapAccess
 {
 	static constexpr bool is_struct = true;
+	static constexpr bool caches_keys = false;
 
-	template <FieldKeySource key_source>
-	JET_ALWAYS_INLINE static bool load_fast(VmState& s, FieldOp<FieldAccess::Load, key_source>* op,
-	                                        Atom* frame_regs)
+	static Atom load_or_hole(Atom object, Atom key)
+	{
+		return hashmap_try_lookup(unbox<Struct>(object), key);
+	}
+
+	template <FieldKeySource key_source, typename Op>
+	JET_ALWAYS_INLINE static bool load_fast(VmState& s, Op* op, Atom* frame_regs)
 	{
 		HashMap* map = static_cast<HashMap*>(unbox<Struct>(frame_regs[op->obj]));
 		size_t position;
@@ -2493,7 +2571,9 @@ void init_primitives(VmState& s)
 	init_escapes(s);
 	init_coroutines(s);
 	e.bind("coroutine?", make_prim<is_kind<StructKind::Coro>>(s));
-	e.bind("ref", make_prim<slow_ref_field>(s));
+	e.bind("ref", make_prim<prim_ref>(s, at_least(2)));
+	e.bind("%ref-hole", make_prim<ref_or_hole_field>(s));
+	e.bind("%ref-default", make_prim<ref_or_default_field>(s));
 	e.bind("%iter", make_prim<make_cursor>(s));
 	e.bind("boolean?", make_prim<is_type<jet::Type::Boolean>>(s));
 	e.bind("string?", make_prim<is_type<jet::Type::String>>(s));
