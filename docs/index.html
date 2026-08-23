@@ -21,7 +21,6 @@
 <section id="usage">
   <div class="masthead">
     <h1>JetScheme</h1>
-    <p class="tagline">A fast <a href="https://en.wikipedia.org/wiki/Scheme_(programming_language)">Scheme</a> in a single executable.</p>
     <div class="acquire" role="group" aria-label="Clone and build JetScheme">
       <code><span><span class="cmd">git</span> clone <a href="https://github.com/pinecone/JetScheme">https://github.com/pinecone/JetScheme</a></span></code>
       <code><span><span class="cmd">cd</span> JetScheme &amp;&amp; <span class="cmd">make</span></span></code>
@@ -30,37 +29,12 @@
 </section>
 
 <section id="docs">
-  <h2>Features</h2>
+  <p>A small, fast Scheme interpreter in ~10k lines of C++. It has lambdas, proper tail calls,
+  escape continuations, coroutines, structs, tuples, hash sets and maps, and mutation-safe iteration.
+  <strong>JetScheme is in pre-alpha.</strong> It is thus unfit for any particular use (other than working
+  on JetScheme).</p>
+  <!--
   <p><strong>Small &amp; fast.</strong> About 10,000 lines of C++, tuned for performance. <a class="perf-details" href="#benchmarks">(See benchmarks. <span class="benchmark-arrow">↓</span>)</a></p>
-  <figure class="scale">
-    <div class="scale-track" role="img"
-         aria-label="Speed relative to jet across both platforms: python is 2.6 times slower, lua 2.3 times slower, and jsc is 2.5 times faster.">
-      <div class="scale-axis"></div>
-
-      <div class="scale-mark scale-mark-python" style="--x:16.2%" title="python is 2.6× slower than jet">
-        <span class="scale-name">python</span>
-        <span class="scale-dot"></span>
-        <span class="scale-mult">2.6×</span>
-      </div>
-      <div class="scale-mark scale-mark-lua" style="--x:22.1%" title="lua is 2.3× slower than jet">
-        <span class="scale-name">lua</span>
-        <span class="scale-dot"></span>
-        <span class="scale-mult">2.3×</span>
-      </div>
-      <div class="scale-mark self" style="--x:50%" title="jet — the reference">
-        <span class="scale-name">jet</span>
-        <span class="scale-dot"></span>
-        <span class="scale-mult">1×</span>
-      </div>
-      <div class="scale-mark" style="--x:80.9%" title="jsc (with JIT) is 2.5× faster than jet">
-        <span class="scale-name">jsc</span>
-        <span class="scale-dot"></span>
-        <span class="scale-mult">2.5×</span>
-      </div>
-
-      <div class="scale-ends"><span>&larr; slower</span><span>faster &rarr;</span></div>
-    </div>
-  </figure>
   <p><strong>Safe iteration.</strong> Traversal remains deterministic under mutation; every remaining
   element is visited.</p>
   <p><strong>Generic accessors.</strong>
@@ -80,7 +54,9 @@
 (<span class="k">define</span> m (<span class="b">hashmap</span> '<span class="n">a</span> <span class="n">1</span>))                        <span class="c">; one key, one value</span>
 (<span class="k">setf!</span> m '<span class="n">b</span> <span class="n">2</span>)                                   <span class="c">; insert or overwrite</span>
 (<span class="b">ref</span> m '<span class="n">b</span>)                                       <span class="c">; =&gt; 2    (any legal key)</span></code></pre>
+  -->
 
+  <!--
   <h3>Numbers</h3>
   <p>All numbers are 64-bit doubles. <code>exact?</code> and
   <code>integer?</code> answer <code>#t</code> for every integral value.</p>
@@ -230,10 +206,41 @@
   <p><code>($check expr)</code> reports the source position and fails when
   <code>expr</code> is false. <code>$file</code>, <code>$line</code>, and
   <code>$col</code> give you that file, line, and column.</p>
+  -->
 </section>
 
 <section id="benchmarks">
-  <h2>Benchmarks</h2>
+  <p>Run <code><span class="cmd">make</span> ab-cross-bench</code> to compare Jet with popular language
+  runtimes on your machine:</p>
+  <figure class="scale">
+    <div class="scale-track" role="img"
+         aria-label="Speed relative to jet across both platforms: python is 2.6 times slower, lua 2.3 times slower, and jsc is 2.5 times faster.">
+      <div class="scale-axis"></div>
+
+      <div class="scale-mark scale-mark-python" style="--x:16.2%" title="python is 2.6× slower than jet">
+        <span class="scale-name">python</span>
+        <span class="scale-dot"></span>
+        <span class="scale-mult">2.6×</span>
+      </div>
+      <div class="scale-mark scale-mark-lua" style="--x:22.1%" title="lua is 2.3× slower than jet">
+        <span class="scale-name">lua</span>
+        <span class="scale-dot"></span>
+        <span class="scale-mult">2.3×</span>
+      </div>
+      <div class="scale-mark self" style="--x:50%" title="jet — the reference">
+        <span class="scale-name">jet</span>
+        <span class="scale-dot"></span>
+        <span class="scale-mult">1×</span>
+      </div>
+      <div class="scale-mark" style="--x:80.9%" title="jsc (with JIT) is 2.5× faster than jet">
+        <span class="scale-name">jsc</span>
+        <span class="scale-dot"></span>
+        <span class="scale-mult">2.5×</span>
+      </div>
+
+      <div class="scale-ends"><span>&larr; slower</span><span>faster &rarr;</span></div>
+    </div>
+  </figure>
   <div class="table-wrap" role="region" aria-label="Benchmark results" tabindex="0">
     <table aria-describedby="perf-legend">
       <caption class="visually-hidden">Benchmark runtimes in milliseconds</caption>

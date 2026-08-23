@@ -188,13 +188,15 @@ h3 {
     0 0 24px rgba(187, 154, 247, 0.24);
 }
 
+#usage {
+  margin-bottom: var(--sp-5);
+}
+
 .masthead {
   display: grid;
   grid-template-columns: minmax(0, 1fr) max-content;
-  grid-template-areas:
-    "title ."
-    "tagline acquire";
-  align-items: baseline;
+  grid-template-areas: "title acquire";
+  align-items: start;
   column-gap: var(--sp-8);
 }
 
@@ -209,16 +211,11 @@ h3 {
   color: var(--fg-dark);
   font-size: var(--fs-small);
   line-height: calc(var(--sp-4) + var(--sp-1));
+  padding-top: var(--sp-1);
 }
 
 .acquire code {
-  display: grid;
-  grid-template-columns: var(--sp-4) minmax(0, 1fr);
-}
-
-.acquire code::before {
-  content: "$";
-  color: var(--comment);
+  display: block;
 }
 
 .acquire code span {
@@ -726,7 +723,6 @@ footer {
     grid-template-columns: 1fr;
     grid-template-areas:
       "title"
-      "tagline"
       "acquire";
   }
 
