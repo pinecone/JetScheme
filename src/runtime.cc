@@ -5,6 +5,7 @@
 #include "compiler.h"
 #include <algorithm>
 #include <cassert>
+#include <cerrno>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -12,6 +13,7 @@
 #include <functional>
 #include <cctype>
 #include <charconv>
+#include <chrono>
 #include <cstdio>
 #include <iomanip>
 #include <optional>
@@ -233,6 +235,13 @@ static Atom random_seed()
 {
 	srandom(std::random_device{}());
 	return Atom{};
+}
+
+static Atom time_monotonic()
+{
+	static const std::chrono::steady_clock::time_point epoch{std::chrono::steady_clock::now()};
+	std::chrono::duration<double> elapsed{std::chrono::steady_clock::now() - epoch};
+	return box(Number::trusted(elapsed.count()));
 }
 
 void init_number(VmState& s)
@@ -1035,10 +1044,7 @@ static Atom put_buffer(std::string& buf, const char* who, Atom* first, Atom* las
 	{
 		OPort* op = static_cast<OPort*>(slow_unbox<Port>(first[1]));
 		JET_DIE_UNLESS(op->is_output(), "%s: not an output port", who);
-		for (char c : buf)
-		{
-			op->write_byte(c);
-		}
+		op->write_bytes(buf.data(), buf.size());
 		return Atom{};
 	}
 
@@ -1317,17 +1323,6 @@ void init_chars(VmState& s)
 	e.bind("digit-value", make_prim<digit_value>(s));
 }
 
-static Atom exit_(VmState& s, Atom status)
-{
-	vm_exit(s, static_cast<int>(slow_unbox<Number>(status)));
-}
-
-void init_sys(VmState& s)
-{
-	Env& e = s.env;
-	e.bind("exit", make_prim<exit_>(s));
-}
-
 static Atom close_input_port(Atom p)
 {
 	Port* port = slow_unbox<Port>(p);
@@ -1350,6 +1345,37 @@ Atom read_char(Atom p)
 	JET_DIE_UNLESS(ip->is_input(), "read-char: not an input port");
 	Character c = ip->read_byte();
 	return ip->eof() ? make_eof() : box(c);
+}
+
+static Atom read_bytes_all(VmState& s, Atom p)
+{
+	IPort* ip = static_cast<IPort*>(slow_unbox<Port>(p));
+	JET_DIE_UNLESS(ip->is_input(), "read-bytes/all: not an input port");
+
+	ByteVector result;
+	constexpr size_t chunk = 64 * 1024;
+	size_t filled = 0;
+	while (!ip->eof())
+	{
+		result.resize(filled + chunk);
+		size_t taken = ip->read_bytes(reinterpret_cast<char*>(result.data() + filled), chunk);
+		filled += taken;
+		JET_DIE_UNLESS(taken != 0 || ip->eof(), "read-bytes/all: input made no progress");
+	}
+	result.resize(filled);
+
+	return s.gc.alloc_tagged<ByteVector>(std::move(result));
+}
+
+static Atom write_bytes(Atom b, Atom p)
+{
+	OPort* op = static_cast<OPort*>(slow_unbox<Port>(p));
+	JET_DIE_UNLESS(op->is_output(), "write-bytes: not an output port");
+
+	ByteVector* bytes = slow_unbox<ByteVector>(b);
+	op->write_bytes(reinterpret_cast<const char*>(bytes->data()), bytes->size());
+
+	return Atom{};
 }
 
 static Atom write_char(Atom c, Atom p)
@@ -1388,8 +1414,10 @@ void init_port(VmState& s)
 	e.bind("close-output-port", make_prim<close_output_port>(s));
 
 	e.bind("read-char", make_prim<read_char>(s));
+	e.bind("read-bytes/all", make_prim<read_bytes_all>(s));
 
 	e.bind("write-char", make_prim<write_char>(s));
+	e.bind("write-bytes", make_prim<write_bytes>(s));
 
 	e.bind("eof-object?", make_prim<is_type<jet::Type::Eof>>(s));
 }
@@ -1397,13 +1425,6 @@ void init_port(VmState& s)
 Atom make_eof()
 {
 	return Atom::make_immediate(jet_tag::eof_tag);
-}
-
-IPortFile::IPortFile(std::string_view name) : f_{nullptr}
-{
-	std::string path{name};
-	f_ = fopen(path.c_str(), "rb");
-	JET_DIE_UNLESS(f_, "cannot open file `%.*s' for reading", static_cast<int>(name.size()), name.data());
 }
 
 IPortFile::~IPortFile()
@@ -1482,9 +1503,9 @@ OPortFile::~OPortFile()
 	}
 }
 
-void OPortFile::write_byte(char c)
+void OPortFile::write_bytes(const char* data, size_t size)
 {
-	fputc(c, f_);
+	fwrite(data, 1, size, f_);
 }
 
 void OPortFile::close()
@@ -1496,9 +1517,28 @@ void OPortFile::close()
 	}
 }
 
+static Atom open_input_file_maybe(VmState& s, Atom name)
+{
+	String& path = *slow_unbox<String>(name);
+	FILE* file = fopen(path.c_str(), "rb");
+	if (file)
+	{
+		return s.gc.alloc_tagged<IPortFile>(file);
+	}
+
+	if (errno == ENOENT || errno == ENOTDIR)
+	{
+		return box(false);
+	}
+
+	JET_DIE("cannot open file `%s' for reading: %s", path.c_str(), strerror(errno));
+}
+
 static Atom open_input_file(VmState& s, Atom name)
 {
-	return s.gc.alloc_tagged<IPortFile>(slow_unbox<String>(name)->c_str());
+	Atom port = open_input_file_maybe(s, name);
+	JET_DIE_UNLESS(is_true(port), "cannot open file `%s' for reading", slow_unbox<String>(name)->c_str());
+	return port;
 }
 
 static Atom open_output_file(VmState& s, Atom name)
@@ -1510,6 +1550,7 @@ void init_port_file(VmState& s)
 {
 	Env& e = s.env;
 	e.bind("open-input-file", make_prim<open_input_file>(s));
+	e.bind("open-input-file/maybe", make_prim<open_input_file_maybe>(s));
 	e.bind("open-output-file", make_prim<open_output_file>(s));
 }
 
@@ -2565,7 +2606,12 @@ static Atom prim_check(VmState&, Atom* first, Atom*)
 	return Atom{};
 }
 
-void init_primitives(VmState& s)
+static Atom exit_(VmState& s, Atom status)
+{
+	vm_exit(s, static_cast<int>(slow_unbox<Number>(status)));
+}
+
+void init_runtime(VmState& s)
 {
 	Env& e = s.env;
 	init_number(s);
@@ -2578,7 +2624,6 @@ void init_primitives(VmState& s)
 	init_port(s);
 	init_port_file(s);
 	init_reader(s);
-	init_sys(s);
 	init_strings(s);
 	init_chars(s);
 	init_structs(s);
@@ -2594,6 +2639,8 @@ void init_primitives(VmState& s)
 	e.bind("char?", make_prim<is_type<jet::Type::Character>>(s));
 	e.bind("procedure?", make_prim<is_procedure>(s));
 	e.bind("%check", make_prim<prim_check>(s, exactly(4)));
+	e.bind("time-monotonic", make_prim<time_monotonic>(s));
+	e.bind("exit", make_prim<exit_>(s));
 }
 
 void init_cmdline(VmState& s, int argc, char* argv[])

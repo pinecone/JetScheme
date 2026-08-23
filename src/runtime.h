@@ -170,6 +170,7 @@ struct Escape : Struct
 	Code* resume_pc;
 	// The coroutine whose stack holds the `let/ec` frame.
 	Coro* owner;
+	uint64_t host_token;
 	uint32_t n_frames;
 	uint16_t dst;
 
@@ -177,9 +178,10 @@ struct Escape : Struct
 	// frame n_frames - 1 for exactly as long as the extent lives.
 	Code retk_code[OPCODE_SIZE + sizeof(Struct*)];
 
-	Escape(StructType* type_, Code* resume_pc_, Coro* owner_, uint32_t n_frames_, uint16_t dst_)
-		: Struct{type_}, resume_pc{resume_pc_}, owner{owner_}, n_frames{n_frames_}, dst{dst_},
-		retk_code{} {}
+	Escape(StructType* type_, Code* resume_pc_, Coro* owner_, uint64_t host_token_, uint32_t n_frames_,
+	       uint16_t dst_)
+		: Struct{type_}, resume_pc{resume_pc_}, owner{owner_}, host_token{host_token_}, n_frames{n_frames_},
+	dst{dst_}, retk_code{} {}
 };
 
 void init_escapes(VmState& s);
@@ -1438,8 +1440,6 @@ void init_display_primitives(VmState& s);
 void init_strings(VmState& s);
 void init_chars(VmState& s);
 
-void init_sys(VmState& s);
-
 inline bool is_true(Atom a)
 {
 	return is_type<jet::Type::Boolean>(a) ? unbox<bool>(a) : true;
@@ -1475,7 +1475,12 @@ class OPort : public Port
 {
 public:
 	OPort() : Port{Mode::Output} {}
-	virtual void write_byte(char c) = 0;
+	virtual void write_bytes(const char* data, size_t size) = 0;
+
+	void write_byte(char value)
+	{
+		write_bytes(&value, 1);
+	}
 };
 
 void init_port(VmState& s);
@@ -1485,7 +1490,7 @@ Atom make_eof();
 class IPortFile : public IPort
 {
 public:
-	explicit IPortFile(std::string_view name);
+	explicit IPortFile(FILE* file) : f_{file} {}
 	~IPortFile() override;
 
 	char read_byte() override;
@@ -1522,7 +1527,7 @@ public:
 	explicit OPortFile(std::string_view name);
 	~OPortFile() override;
 
-	void write_byte(char c) override;
+	void write_bytes(const char* data, size_t size) override;
 	void close() override;
 
 private:
@@ -1532,7 +1537,7 @@ private:
 Atom read_char(Atom p);
 void init_port_file(VmState& s);
 
-void init_primitives(VmState& s);
+void init_runtime(VmState& s);
 void init_cmdline(VmState& s, int argc, char* argv[]);
 
 #endif

@@ -10,6 +10,8 @@
 ($check (= -3.14 (read p)))
 ($check (= 255 (read p)))
 ($check (= -31 (read p)))
+($check (= 32767 (read p)))
+($check (= -31 (read p)))
 
 ;; symbols (peculiar +, -, multi-char with special chars)
 ($check (eq? 'foo (read p)))

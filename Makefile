@@ -22,6 +22,14 @@ ASAN_RTDIR := $(shell $(CXX) -print-runtime-dir 2>/dev/null)
 JOBS ?= $(shell nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 8)
 MAKEFLAGS += -j$(JOBS)
 
+V ?= 0
+
+ifeq ($(V),1)
+	Q :=
+else
+	Q := @
+endif
+
 VARIANT ?= release
 
 SRC			 := src
@@ -59,18 +67,51 @@ CXXFLAGS := -std=c++20 -fno-exceptions -fno-rtti \
 						-Wall -Werror -pipe -Wold-style-cast -Wextra -Wno-unused-parameter \
 						$(OPT) $(PROFILE_DEF) -I$(SRC) -I$(BUILD) -Ivendor
 
-LDFLAGS	 := $(LDOPT)
+# --- Modules -------------------------------------------------------------
+
+MODULES ?= $(sort $(notdir $(patsubst %/,%,$(dir $(wildcard modules/*/module.mk)))))
+MODULE_DIRS := $(addprefix modules/,$(MODULES))
+MODULE_MKS := $(addsuffix /module.mk,$(MODULE_DIRS))
+MODULE_CC :=
+MODULE_CPP :=
+MODULE_SOKOL_CC :=
+MODULE_INIT :=
+MODULE_PRELUDE :=
+MODULE_TESTS :=
+
+include $(MODULE_MKS)
+
+UNAME_S := $(shell uname -s)
+
+ifneq ($(strip $(MODULE_SOKOL_CC)),)
+ifeq ($(UNAME_S),Darwin)
+	SOKOL_LANG := -x objective-c++
+	MODULE_LDFLAGS := -framework AppKit -framework QuartzCore -framework OpenGL -framework AudioToolbox
+else
+	SOKOL_LANG :=
+	MODULE_LDFLAGS := -pthread -lX11 -lXi -lXcursor -lGL -lasound -ldl -lm
+endif
+endif
+
+LDFLAGS	 := $(LDOPT) $(MODULE_LDFLAGS)
+
+# Third-party code, so warnings-as-errors and the house warning set do not apply.
+SOKOL_CXXFLAGS := $(filter-out -Wall -Wextra -Werror -Wold-style-cast,$(CXXFLAGS)) -w $(SOKOL_LANG)
 
 # --- Sources -------------------------------------------------------------
 
-ALL_CC	:= $(wildcard $(SRC)/*.cc)
-ALL_CPP := $(ALL_CC) $(wildcard $(SRC)/*.h)
-ALL_OBJ := $(patsubst $(SRC)/%.cc,$(OBJDIR)/%.o,$(ALL_CC))
+CORE_CC := $(wildcard $(SRC)/*.cc)
+ALL_CC := $(CORE_CC) $(MODULE_CC)
+ALL_CPP := $(ALL_CC) $(wildcard $(SRC)/*.h) $(MODULE_CPP)
+SOKOL_OBJ := $(patsubst %.cc,$(OBJDIR)/%.o,$(MODULE_SOKOL_CC))
+ALL_OBJ := $(patsubst %.cc,$(OBJDIR)/%.o,$(ALL_CC)) $(SOKOL_OBJ)
+PRELUDE_SOURCES := $(PRELUDE) $(MODULE_PRELUDE)
+MODULES_H := $(BUILD)/modules.h
 BENCHMARK_SS := $(sort $(wildcard bench/bench-*.ss))
 SANITIZE_OPTIONS ?= halt_on_error=1:print_stacktrace=1
 SANITIZE_MARKER := Sanitizer
 SANITIZE_ENV := ASAN_OPTIONS='$(SANITIZE_OPTIONS)' UBSAN_OPTIONS='$(SANITIZE_OPTIONS)' \
-								JET_TEST_DIAGNOSTICS=1
+								JET_MODULE_TESTS='$(MODULE_TESTS)' JET_TEST_DIAGNOSTICS=1
 
 DEPS := $(ALL_OBJ:.o=.d)
 
@@ -78,40 +119,42 @@ DEPS := $(ALL_OBJ:.o=.d)
 
 .PHONY: all release debug profile all-variants \
 				test test-release test-profile sanitize show-sanitizers \
-				ab-cross-bench format format-check clean tags
+				ab-cross-bench format format-check clean tags FORCE
 .DEFAULT_GOAL := all
 
 all: $(JET_BIN)
 
 release:
-	@$(MAKE) VARIANT=release
+	$(Q)$(MAKE) VARIANT=release
 
 debug:
-	@$(MAKE) VARIANT=debug
+	$(Q)$(MAKE) VARIANT=debug
 
 profile:
-	@$(MAKE) VARIANT=profile
+	$(Q)$(MAKE) VARIANT=profile
 
 all-variants:
-	@$(MAKE) VARIANT=release
-	@$(MAKE) VARIANT=debug
-	@$(MAKE) VARIANT=profile
+	$(Q)$(MAKE) VARIANT=release
+	$(Q)$(MAKE) VARIANT=debug
+	$(Q)$(MAKE) VARIANT=profile
 
 # --- Run targets (variant-aware via JET env var) --------------------
 
 # Recipe lines run in order, so a test target never builds variants in parallel.
 test:
-	@$(MAKE) test-release
-	@$(MAKE) test-profile
-	@$(MAKE) sanitize
+	$(Q)$(MAKE) test-release
+	$(Q)$(MAKE) test-profile
+	$(Q)$(MAKE) sanitize
 
 test-release:
-	@$(MAKE) VARIANT=release
-	cd tests && JET=../build/jet ./run-tests
+	$(Q)$(MAKE) VARIANT=release
+	@printf '  TEST release\n'
+	$(Q)cd tests && JET=../build/jet JET_MODULE_TESTS='$(MODULE_TESTS)' ./run-tests
 
 test-profile:
-	@$(MAKE) VARIANT=profile
-	cd tests && JET=../build/jet-profile ./run-tests
+	$(Q)$(MAKE) VARIANT=profile
+	@printf '  TEST profile\n'
+	$(Q)cd tests && JET=../build/jet-profile JET_MODULE_TESTS='$(MODULE_TESTS)' ./run-tests
 
 show-sanitizers:
 	@list=$$($(CXX) $(CXXFLAGS) -x c++ /dev/null -c -o /dev/null -### 2>&1 | tr ' ' '\n' | \
@@ -119,8 +162,9 @@ show-sanitizers:
 		printf 'sanitizers (%s): %s\n' '$(VARIANT)' "$${list:-none}"
 
 define sanitize_run
-	@$(MAKE) VARIANT=$(1) --no-print-directory show-sanitizers
-	cd tests && $(SANITIZE_ENV) JET=../$(BUILD)/jet$(2) ./run-tests
+	$(Q)$(MAKE) VARIANT=$(1) --no-print-directory show-sanitizers
+	@printf '  TEST $(1)\n'
+	$(Q)cd tests && $(SANITIZE_ENV) JET=../$(BUILD)/jet$(2) ./run-tests
 	@set -e; \
 		echo "runnin' benchmarks:"; \
 		for benchmark in $(BENCHMARK_SS); do \
@@ -139,46 +183,75 @@ define sanitize_run
 endef
 
 sanitize:
-	@$(MAKE) VARIANT=debug
+	$(Q)$(MAKE) VARIANT=debug
 	$(call sanitize_run,debug,-debug)
 
 # Builds its own worktree of REF (default HEAD), so no build dependency.
 ab-cross-bench:
-	cd bench && ./ab-cross $(REF)
+	@printf '  BENCH cross\n'
+	$(Q)cd bench && ./ab-cross $(REF)
 
 format:
-	$(UNCRUSTIFY) -q -c uncrustify.cfg --replace --no-backup $(ALL_CPP)
+	@printf '  FMT   source\n'
+	$(Q)$(UNCRUSTIFY) -q -c uncrustify.cfg --replace --no-backup $(ALL_CPP)
 
 format-check:
-	$(UNCRUSTIFY) -q -c uncrustify.cfg --check $(ALL_CPP)
+	@printf '  FMT   source\n'
+	$(Q)$(UNCRUSTIFY) -q -c uncrustify.cfg --check $(ALL_CPP)
 
 clean:
-	rm -rf $(BUILD)
+	@printf '  CLEAN build\n'
+	$(Q)rm -rf $(BUILD)
 
 # Sorted tag file so readtags can binary-search (O(log n)) instead of
 # scanning linearly. --sort=yes is ctags' default, but we pass it
 # explicitly since correctness here depends on it.
 tags: | $(BUILD)
-	ctags --sort=yes -f $(BUILD)/TAGS -R $(SRC)
+	@printf '  TAGS  %s\n' '$(BUILD)/TAGS'
+	$(Q)ctags --sort=yes -f $(BUILD)/TAGS -R $(SRC) $(MODULE_DIRS)
 
 $(JET_BIN): $(ALL_OBJ) | $(BUILD)
-	$(CXX) $(LDFLAGS) -o $@ $^
+	@printf '  LINK  %s\n' '$@'
+	$(Q)$(CXX) $(LDFLAGS) -o $@ $^
 
-$(OBJDIR)/main.o: $(PRELUDE_H)
+$(OBJDIR)/src/main.o: $(PRELUDE_H) $(MODULES_H)
 
-$(OBJDIR)/%.o: $(SRC)/%.cc Makefile | $(OBJDIR)
-	$(CXX) $(CXXFLAGS) -MMD -MP -c -o $@ $<
+$(OBJDIR)/vendor/sokol/%.o: vendor/sokol/%.cc Makefile | $(OBJDIR)
+	@printf '  CXX   %s\n' '$<'
+	$(Q)mkdir -p $(dir $@)
+	$(Q)$(CXX) $(SOKOL_CXXFLAGS) -MMD -MP -c -o $@ $<
 
-$(PRELUDE_H): $(PRELUDE) | $(BUILD)
+$(OBJDIR)/%.o: %.cc Makefile | $(OBJDIR)
+	@printf '  CXX   %s\n' '$<'
+	$(Q)mkdir -p $(dir $@)
+	$(Q)$(CXX) $(CXXFLAGS) -MMD -MP -c -o $@ $<
+
+FORCE:
+
+$(MODULES_H): FORCE Makefile $(MODULE_MKS) | $(BUILD)
+	@{ \
+		printf '%s\n' '#pragma once' 'struct VmState;'; \
+		for initializer in $(MODULE_INIT); do \
+			printf 'void %s(VmState& state);\n' "$$initializer"; \
+		done; \
+		printf '%s\n' 'inline void init_modules(VmState& state)' '{'; \
+		for initializer in $(MODULE_INIT); do \
+			printf '\t%s(state);\n' "$$initializer"; \
+		done; \
+		printf '%s\n' '}'; \
+	} > $@.tmp
+	@if cmp -s $@.tmp $@; then rm $@.tmp; else mv $@.tmp $@; fi
+
+$(PRELUDE_H): FORCE Makefile $(MODULE_MKS) $(PRELUDE_SOURCES) | $(BUILD)
 	@{ \
 		printf '%s\n' '#pragma once' '#include <cstddef>' \
 			'inline constexpr unsigned char prelude_source[] = {'; \
-		LC_ALL=C od -An -v -tx1 $< | \
+		LC_ALL=C cat $(PRELUDE_SOURCES) | od -An -v -tx1 | \
 			awk '{ for (i = 1; i <= NF; ++i) printf "0x%s,", $$i; print "" }'; \
 		printf '%s\n' '};' \
 			'inline constexpr std::size_t prelude_source_size = sizeof(prelude_source);'; \
 	} > $@.tmp
-	@mv $@.tmp $@
+	@if cmp -s $@.tmp $@; then rm $@.tmp; else mv $@.tmp $@; fi
 
 $(BUILD):
 	@mkdir -p $@

@@ -27,12 +27,35 @@
 #include <stdlib.h>
 #endif
 
+struct Compiler;
+
 struct SourceLoc
 {
 	uint32_t file_id = 0;
 	int line = 0;
 	int col = 0;
 };
+
+#define JETC_DIE(db, loc, fmt, ...)                                                                      \
+	do                                                                                                       \
+	{                                                                                                        \
+		const Compiler& compiler = db;                                                                         \
+		const SourceLoc& source_loc = loc;                                                                      \
+		JET_DIE_UNLESS(source_loc.file_id < compiler.file_table.size(), "compiler: invalid source location"); \
+		JET_DIE("%s:%d:%d: " fmt, compiler.file_table[source_loc.file_id].c_str(), source_loc.line,          \
+		        source_loc.col __VA_OPT__(, ) __VA_ARGS__);                                                      \
+	} while (0)
+
+#define JETC_DIE_WHEN(db, cond, loc, ...)                                                                \
+	do                                                                                                       \
+	{                                                                                                        \
+		if (cond) [[unlikely]]                                                                                \
+		{                                                                                                      \
+			JETC_DIE(db, loc, __VA_ARGS__);                                                                    \
+		}                                                                                                      \
+	} while (0)
+
+#define JETC_DIE_UNLESS(db, cond, loc, ...) JETC_DIE_WHEN(db, !(cond), loc, __VA_ARGS__)
 
 enum class TokenKind : uint8_t
 {
@@ -459,39 +482,6 @@ inline void append_utf8(std::string& out, uint32_t code)
 	}
 }
 
-inline char decode_char_literal(std::string_view body, SourceLoc loc)
-{
-	if (body.size() == 1)
-	{
-		return body[0];
-	}
-	struct Named
-	{
-		std::string_view name;
-		char value;
-	};
-	static constexpr Named names[] = {
-		{"alarm",     0x07},
-		{"backspace", 0x08},
-		{"delete",    0x7F},
-		{"escape",    0x1B},
-		{"newline",   0x0A},
-		{"null",      0x00},
-		{"return",    0x0D},
-		{"space",     0x20},
-		{"tab",       0x09},
-	};
-	for (Named n : names)
-	{
-		if (n.name == body)
-		{
-			return n.value;
-		}
-	}
-	JET_DIE("%d:%d: unknown character name '#\\%.*s'", loc.line, loc.col,
-	        static_cast<int>(body.size()), body.data());
-}
-
 inline bool is_ident_start(char c)
 {
 	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '!' || c == '$' || c == '%' || c == '&' ||
@@ -674,7 +664,39 @@ struct Compiler
 	Bytecode compile();
 };
 
-static std::vector<Token> lex(IPort* port, Arena& arena, uint32_t file_id);
+inline char decode_char_literal(Compiler& db, std::string_view body, SourceLoc loc)
+{
+	if (body.size() == 1)
+	{
+		return body[0];
+	}
+	struct Named
+	{
+		std::string_view name;
+		char value;
+	};
+	static constexpr Named names[] = {
+		{"alarm",     0x07},
+		{"backspace", 0x08},
+		{"delete",    0x7F},
+		{"escape",    0x1B},
+		{"newline",   0x0A},
+		{"null",      0x00},
+		{"return",    0x0D},
+		{"space",     0x20},
+		{"tab",       0x09},
+	};
+	for (Named n : names)
+	{
+		if (n.name == body)
+		{
+			return n.value;
+		}
+	}
+	JETC_DIE(db, loc, "unknown character name '#\\%.*s'", static_cast<int>(body.size()), body.data());
+}
+
+static std::vector<Token> lex(IPort* port, Compiler& db, uint32_t file_id);
 
 namespace
 {
@@ -682,7 +704,7 @@ namespace
 	struct LexState
 	{
 		IPort* port;
-		Arena& arena;
+		Compiler& db;
 		uint32_t file_id = 0;
 		int line = 1;
 		int col = 1;
@@ -690,7 +712,9 @@ namespace
 		std::vector<Token> tokens{};
 		Token pending_{};
 
-		LexState(IPort* p, Arena& a, uint32_t fid) : port{p}, arena{a}, file_id{fid} {}
+		LexState(IPort* p, Compiler& compiler, uint32_t fid) : port{p}, db{compiler}, file_id{fid}
+		{
+		}
 
 		TokenKind classify_token_text(std::string_view text)
 		{
@@ -742,7 +766,7 @@ namespace
 
 		void emit(TokenKind kind, std::string_view text, SourceLoc l) { pending_ = {kind, text, l}; }
 
-		std::string_view intern(const std::string& buf) { return arena.copy_string(buf); }
+		std::string_view intern(const std::string& buf) { return db.arena.copy_string(buf); }
 
 		void lex_string()
 		{
@@ -798,6 +822,27 @@ namespace
 					emit(TokenKind::Character, intern(buf), start);
 					break;
 
+				case 'x':
+					advance();
+					buf.clear();
+					if (!at_end() && (peek() == '+' || peek() == '-'))
+					{
+						buf += advance();
+					}
+					buf += "0x";
+					JETC_DIE_UNLESS(db, !at_end() && ((peek() >= '0' && peek() <= '9') ||
+					                                  (peek() >= 'a' && peek() <= 'f') ||
+					                                  (peek() >= 'A' && peek() <= 'F')),
+					                loc(), "invalid hexadecimal literal");
+					while (!at_end() && ((peek() >= '0' && peek() <= '9') ||
+					                     (peek() >= 'a' && peek() <= 'f') ||
+					                     (peek() >= 'A' && peek() <= 'F')))
+					{
+						buf += advance();
+					}
+					emit(TokenKind::Number, intern(buf), start);
+					break;
+
 				case '(':
 					// Leave the '(' in the stream; it lexes as LParen next.
 					emit(TokenKind::Hash, intern(buf), start);
@@ -819,7 +864,7 @@ namespace
 				emit(TokenKind::Boolean, intern(buf), start);
 				return;
 			}
-			JET_DIE_UNLESS(find_hash_form(buf) && peek() == '(', "%d:%d: invalid # syntax", line, col);
+			JETC_DIE_UNLESS(db, find_hash_form(buf) && peek() == '(', loc(), "invalid # syntax");
 			emit(TokenKind::Hash, intern(buf), start);
 		}
 
@@ -915,7 +960,7 @@ namespace
 				return;
 			}
 
-			JET_DIE("%d:%d: unexpected character '%c'", line, col, c);
+			JETC_DIE(db, loc(), "unexpected character '%c'", c);
 		}
 
 		TokenKind classify_ident(std::string_view text)
@@ -1055,9 +1100,7 @@ namespace
 		bool la_valid_ = false;
 		Token current_{};
 
-		Arena& arena;
-		std::vector<std::string>& file_table;
-		uint32_t& next_id;
+		Compiler& db;
 		std::vector<Expr*> scratch{};
 
 		Token& peek()
@@ -1097,33 +1140,33 @@ namespace
 		{
 			if (peek().kind != kind)
 			{
-				JET_DIE("%d:%d: expected token %d, got %d", peek().loc.line, peek().loc.col,
-				        static_cast<int>(kind), static_cast<int>(peek().kind));
+				JETC_DIE(db, peek().loc, "expected token %d, got %d", static_cast<int>(kind),
+				         static_cast<int>(peek().kind));
 			}
 			advance();
 		}
 
 		std::string_view expect_identifier(const char* what)
 		{
-			JET_DIE_UNLESS(peek().kind == TokenKind::Variable,
-			               "%d:%d: expected identifier for %s", peek().loc.line, peek().loc.col, what);
+			JETC_DIE_UNLESS(db, peek().kind == TokenKind::Variable, peek().loc,
+			                "expected identifier for %s", what);
 			return advance().text;
 		}
 
 		Expr* make_expr(ExprKind kind, SourceLoc loc)
 		{
-			Expr* e = arena.alloc<Expr>();
+			Expr* e = db.arena.alloc<Expr>();
 			e->kind = kind;
-			e->id = next_id++;
+			e->id = db.next_expr_id_++;
 			e->loc = loc;
 			return e;
 		}
 
-		Slice<Expr*> make_slice(std::vector<Expr*>& vec) { return arena.copy_slice(vec); }
+		Slice<Expr*> make_slice(std::vector<Expr*>& vec) { return db.arena.copy_slice(vec); }
 
 		Slice<std::string_view> make_string_slice(std::vector<std::string_view>& vec)
 		{
-			return arena.copy_slice(vec);
+			return db.arena.copy_slice(vec);
 		}
 
 		std::string_view process_string_escapes(std::string_view raw, SourceLoc loc)
@@ -1147,7 +1190,7 @@ namespace
 					continue;
 				}
 
-				JET_DIE_WHEN(i + 1 == inner.size(), "%d:%d: trailing '\\' in string", loc.line, loc.col);
+				JETC_DIE_WHEN(db, i + 1 == inner.size(), loc, "trailing '\\' in string");
 				++i;
 
 				switch (inner[i])
@@ -1180,34 +1223,33 @@ namespace
 						append_utf8(result, parse_hex_escape(inner, i, loc));
 						break;
 					default:
-						JET_DIE_UNLESS(skip_line_continuation(inner, i),
-						               "%d:%d: unknown string escape '\\%c'", loc.line, loc.col, inner[i]);
+						JETC_DIE_UNLESS(db, skip_line_continuation(inner, i), loc,
+						                "unknown string escape '\\%c'", inner[i]);
 						break;
 				}
 			}
 
-			return arena.copy_string(result);
+			return db.arena.copy_string(result);
 		}
 
 		uint32_t parse_hex_escape(std::string_view inner, size_t& i, SourceLoc loc)
 		{
 			size_t first = i + 1;
 			size_t end = inner.find(';', first);
-			JET_DIE_WHEN(end == std::string_view::npos || end == first,
-			             "%d:%d: '\\x' escape needs hex digits and a ';'", loc.line, loc.col);
+			JETC_DIE_WHEN(db, end == std::string_view::npos || end == first, loc,
+			              "'\\x' escape needs hex digits and a ';'");
 
 			uint32_t code = 0;
 			for (size_t at = first; at < end; ++at)
 			{
 				int value = hex_digit_value(inner[at]);
-				JET_DIE_WHEN(value < 0, "%d:%d: '\\x' escape has a non-hex digit '%c'", loc.line, loc.col,
-				             inner[at]);
+				JETC_DIE_WHEN(db, value < 0, loc, "'\\x' escape has a non-hex digit '%c'", inner[at]);
 				code = code * 16 + static_cast<uint32_t>(value);
-				JET_DIE_WHEN(code > 0x10FFFF, "%d:%d: '\\x' escape is above U+10FFFF", loc.line, loc.col);
+				JETC_DIE_WHEN(db, code > 0x10FFFF, loc, "'\\x' escape is above U+10FFFF");
 			}
 
-			JET_DIE_WHEN(code >= 0xD800 && code <= 0xDFFF,
-			             "%d:%d: '\\x' escape is a UTF-16 surrogate", loc.line, loc.col);
+			JETC_DIE_WHEN(db, code >= 0xD800 && code <= 0xDFFF, loc,
+			              "'\\x' escape is a UTF-16 surrogate");
 
 			i = end;
 			return code;
@@ -1263,7 +1305,7 @@ namespace
 					Expr* e = make_expr(ExprKind::CharacterLit, tok.loc);
 					std::string text = std::string{advance().text};
 					std::string_view body{text.data() + 2, text.size() - 2};
-					e->character_lit.value = decode_char_literal(body, tok.loc);
+					e->character_lit.value = decode_char_literal(db, body, tok.loc);
 					return e;
 				}
 				case TokenKind::Variable:
@@ -1287,7 +1329,7 @@ namespace
 				case TokenKind::LParen:
 					return parse_paren_form();
 				default:
-					JET_DIE("%d:%d: unexpected token", tok.loc.line, tok.loc.col);
+					JETC_DIE(db, tok.loc, "unexpected token");
 			}
 		}
 
@@ -1400,7 +1442,7 @@ namespace
 			}
 			else
 			{
-				JET_DIE("%d:%d: expected formals", loc.line, loc.col);
+				JETC_DIE(db, loc, "expected formals");
 			}
 
 			std::vector<Expr*> body;
@@ -1475,7 +1517,7 @@ namespace
 			advance();
 			if (peek().kind != TokenKind::String)
 			{
-				JET_DIE("%d:%d: %%prim expects a string literal", loc.line, loc.col);
+				JETC_DIE(db, loc, "%%prim expects a string literal");
 			}
 			std::string_view name = process_string_escapes(advance().text, loc);
 			expect(TokenKind::RParen);
@@ -1548,8 +1590,8 @@ namespace
 			expect(TokenKind::RParen);
 			Expr* cursor = parse_expr();
 			expect(TokenKind::RParen);
-			JET_DIE_UNLESS(names.size() == 1 || names.size() == 2,
-			               "%d:%d: if/next! expects one or two output names", loc.line, loc.col);
+			JETC_DIE_UNLESS(db, names.size() == 1 || names.size() == 2, loc,
+			                "if/next! expects one or two output names");
 			Expr* consequent = parse_expr();
 			Expr* alternate = nullptr;
 			if (peek().kind != TokenKind::RParen)
@@ -1609,10 +1651,10 @@ namespace
 					advance();
 					if (proc->kind != ExprKind::VarRef || proc->var_ref.name != "ref")
 					{
-						JET_DIE("%d:%d: ':default' is only valid in a ref call", loc.line, loc.col);
+						JETC_DIE(db, loc, "':default' is only valid in a ref call");
 					}
-					JET_DIE_WHEN(args.size() < 2, "%d:%d: ref with ':default' needs a receiver and a key",
-					             loc.line, loc.col);
+					JETC_DIE_WHEN(db, args.size() < 2, loc,
+					              "ref with ':default' needs a receiver and a key");
 					Expr* fallback = parse_expr();
 					expect(TokenKind::RParen);
 
@@ -1943,7 +1985,7 @@ namespace
 			advance();
 			if (peek().kind != TokenKind::String)
 			{
-				JET_DIE("%d:%d: include expects a string path", loc.line, loc.col);
+				JETC_DIE(db, loc, "include expects a string path");
 			}
 			std::string_view raw_path = advance().text;
 			expect(TokenKind::RParen);
@@ -1953,7 +1995,7 @@ namespace
 			std::string path{raw_inc_path};
 			if (path[0] != '/')
 			{
-				std::string& parent = file_table[loc.file_id];
+				std::string& parent = db.file_table[loc.file_id];
 				if (size_t slash = parent.rfind('/'); slash != std::string::npos)
 				{
 					path = parent.substr(0, slash + 1) + path;
@@ -1963,8 +2005,7 @@ namespace
 			FILE* f = fopen(path.c_str(), "rb");
 			if (!f)
 			{
-				JET_DIE("%d:%d: cannot open '%.*s'", loc.line, loc.col,
-				        static_cast<int>(path.size()), path.data());
+				JETC_DIE(db, loc, "cannot open '%.*s'", static_cast<int>(path.size()), path.data());
 			}
 			std::string source;
 			char read_buf[4096];
@@ -1975,29 +2016,25 @@ namespace
 			}
 			fclose(f);
 
-			uint32_t file_id = static_cast<uint32_t>(file_table.size());
-			file_table.push_back(std::string{path});
-			char* source_copy = static_cast<char*>(arena.alloc_raw(source.size() + 1, 1));
+			uint32_t file_id = static_cast<uint32_t>(db.file_table.size());
+			db.file_table.push_back(std::string{path});
+			char* source_copy = static_cast<char*>(db.arena.alloc_raw(source.size() + 1, 1));
 			memcpy(source_copy, source.data(), source.size());
 			source_copy[source.size()] = '\0';
 			std::string_view source_view{source_copy, source.size()};
 
 			IPortMem inc_port{source_view};
-			std::vector<Token> inc_tokens = lex(&inc_port, arena, file_id);
+			std::vector<Token> inc_tokens = lex(&inc_port, db, file_id);
 
 			ParseState inc_state{
 				.tokens = inc_tokens,
-				.arena = arena,
-				.file_table = file_table,
-				.next_id = next_id,
+				.db = db,
 			};
 			std::vector<Expr*> forms;
 			while (!inc_state.at_end())
 			{
 				forms.push_back(inc_state.parse_expr());
 			}
-			next_id = inc_state.next_id;
-
 			Expr* e = make_expr(ExprKind::Begin, loc);
 			e->begin.body = make_slice(forms);
 			return e;
@@ -2009,7 +2046,7 @@ namespace
 			advance();
 			expect(TokenKind::RParen);
 			Expr* e = make_expr(ExprKind::StringLit, loc);
-			e->string_lit.value = arena.copy_string(file_table[loc.file_id]);
+			e->string_lit.value = db.arena.copy_string(db.file_table[loc.file_id]);
 			return e;
 		}
 
@@ -2018,7 +2055,7 @@ namespace
 			Expr* e = make_expr(ExprKind::NumberLit, loc);
 			char buf[16];
 			snprintf(buf, sizeof(buf), "%d", value);
-			e->number_lit.text = arena.copy_string(buf);
+			e->number_lit.text = db.arena.copy_string(buf);
 			return e;
 		}
 
@@ -2038,10 +2075,10 @@ namespace
 			expect(TokenKind::RParen);
 
 			Expr* check_ref = make_expr(ExprKind::VarRef, loc);
-			check_ref->var_ref.name = arena.copy_string("%check");
+			check_ref->var_ref.name = db.arena.copy_string("%check");
 
 			Expr* file_lit = make_expr(ExprKind::StringLit, loc);
-			file_lit->string_lit.value = arena.copy_string(file_table[loc.file_id]);
+			file_lit->string_lit.value = db.arena.copy_string(db.file_table[loc.file_id]);
 
 			std::vector<Expr*> args{
 				test,
@@ -2096,7 +2133,7 @@ namespace
 		Expr* make_call(SourceLoc loc, std::string_view proc, std::vector<Expr*> args)
 		{
 			Expr* proc_ref = make_expr(ExprKind::VarRef, loc);
-			proc_ref->var_ref.name = arena.copy_string(proc);
+			proc_ref->var_ref.name = db.arena.copy_string(proc);
 
 			Expr* e = make_expr(ExprKind::Call, loc);
 			e->call.proc = proc_ref;
@@ -2107,7 +2144,7 @@ namespace
 		// (list 'tag inner): the reader form of a nested quasiquote level, rebuilt as data.
 		Expr* make_tagged_datum(SourceLoc loc, const char* tag, Expr* inner)
 		{
-			return make_call(loc, "list", {make_symbol(loc, arena.copy_string(tag)), inner});
+			return make_call(loc, "list", {make_symbol(loc, db.arena.copy_string(tag)), inner});
 		}
 
 		static const char* reader_tag_name(TokenKind k)
@@ -2153,8 +2190,7 @@ namespace
 					return parse_hash_form(0);
 
 				default:
-					JET_DIE_UNLESS(is_symbol_token(tok.kind), "%d:%d: unexpected token in datum",
-					               tok.loc.line, tok.loc.col);
+					JETC_DIE_UNLESS(db, is_symbol_token(tok.kind), tok.loc, "unexpected token in datum");
 					return make_symbol(tok.loc, advance().text);
 			}
 		}
@@ -2211,7 +2247,7 @@ namespace
 			if (depth == 1 && peek().kind == TokenKind::UnquoteSplicing)
 			{
 				advance();
-				return make_call(loc, "cons", {make_symbol(loc, arena.copy_string(tag)), parse_expr()});
+				return make_call(loc, "cons", {make_symbol(loc, db.arena.copy_string(tag)), parse_expr()});
 			}
 			return make_tagged_datum(loc, tag, parse_quasiquote(depth));
 		}
@@ -2241,8 +2277,8 @@ namespace
 			}
 			else if (depth == 1)
 			{
-				JET_DIE_UNLESS(!splicing || splice, "%d:%d: unquote-splicing outside of a list template",
-				               loc.line, loc.col);
+				JETC_DIE_UNLESS(db, !splicing || splice, loc,
+				                "unquote-splicing outside of a list template");
 				if (splicing)
 				{
 					*splice = true;
@@ -2283,12 +2319,10 @@ namespace
 				if (peek().kind == TokenKind::Dot)
 				{
 					advance();
-					JET_DIE_UNLESS(!items.empty(), "%d:%d: dotted pair needs a head", peek().loc.line,
-					               peek().loc.col);
+					JETC_DIE_UNLESS(db, !items.empty(), peek().loc, "dotted pair needs a head");
 					tail = parse_element(depth);
-					JET_DIE_UNLESS(peek().kind == TokenKind::RParen,
-					               "%d:%d: extra tokens after dot in dotted pair", peek().loc.line,
-					               peek().loc.col);
+					JETC_DIE_UNLESS(db, peek().kind == TokenKind::RParen, peek().loc,
+					                "extra tokens after dot in dotted pair");
 					return;
 				}
 				if (depth == 1 && peek().kind == TokenKind::UnquoteSplicing)
@@ -2315,27 +2349,27 @@ namespace
 		{
 			const HashForm* form = find_hash_form(peek().text);
 			SourceLoc loc = advance().loc;
-			JET_DIE_UNLESS(form, "%d:%d: invalid # syntax", loc.line, loc.col);
+			JETC_DIE_UNLESS(db, form, loc, "invalid # syntax");
 			expect(TokenKind::LParen);
 
 			std::vector<QqItem> items;
 			Expr* tail = nullptr;
 			parse_items(depth, items, tail);
 			expect(TokenKind::RParen);
-			JET_DIE_UNLESS(!tail, "%d:%d: dotted tail in a %s literal", loc.line, loc.col, form->constructor);
+			JETC_DIE_UNLESS(db, !tail, loc, "dotted tail in a %s literal", form->constructor);
 
 			if (has_splice(items))
 			{
 				Expr* e = make_expr(ExprKind::Apply, loc);
 				e->apply.proc = make_expr(ExprKind::VarRef, loc);
-				e->apply.proc->var_ref.name = arena.copy_string(form->constructor);
+				e->apply.proc->var_ref.name = db.arena.copy_string(form->constructor);
 				e->apply.args = build_qq_list(loc, items, nullptr);
 				return e;
 			}
 			if (form->is_key_value)
 			{
-				JET_DIE_UNLESS(items.size() % 2 == 0, "%d:%d: %s literal needs an even number of elements",
-				               loc.line, loc.col, form->constructor);
+				JETC_DIE_UNLESS(db, items.size() % 2 == 0, loc,
+				                "%s literal needs an even number of elements", form->constructor);
 			}
 			return make_call(loc, form->constructor, item_values(items));
 		}
@@ -2359,8 +2393,7 @@ namespace
 					return parse_qq_reconstruct(loc, "unquote", depth - 1);
 
 				case TokenKind::UnquoteSplicing:
-					JET_DIE_UNLESS(depth > 1, "%d:%d: unquote-splicing outside of a list template", loc.line,
-					               loc.col);
+					JETC_DIE_UNLESS(db, depth > 1, loc, "unquote-splicing outside of a list template");
 					advance();
 					return parse_qq_reconstruct(loc, "unquote-splicing", depth - 1);
 
@@ -2402,19 +2435,23 @@ namespace
 
 } // namespace
 
-static std::vector<Token> lex(IPort* port, Arena& arena, uint32_t file_id)
+static std::vector<Token> lex(IPort* port, Compiler& db, uint32_t file_id)
 {
-	LexState state{port, arena, file_id};
+	LexState state{port, db, file_id};
 	state.lex_all();
 	return std::move(state.tokens);
 }
 
 std::vector<Token>& Compiler::tokens()
 {
+	if (file_table.empty())
+	{
+		file_table.push_back(filename);
+	}
 	if (!tokens_)
 	{
 		IPortMem port{source};
-		tokens_ = lex(&port, arena, 0);
+		tokens_ = lex(&port, *this, 0);
 	}
 	return *tokens_;
 }
@@ -2432,9 +2469,7 @@ Program& Compiler::ast()
 		{
 			ParseState state{
 				.tokens = toks,
-				.arena = arena,
-				.file_table = file_table,
-				.next_id = next_expr_id_,
+				.db = *this,
 			};
 			while (!state.at_end())
 			{
@@ -2446,7 +2481,7 @@ Program& Compiler::ast()
 			uint32_t file_id = static_cast<uint32_t>(file_table.size());
 			file_table.push_back("<prelude>");
 			IPortMem port{prelude};
-			std::vector<Token> prelude_tokens = lex(&port, arena, file_id);
+			std::vector<Token> prelude_tokens = lex(&port, *this, file_id);
 			parse(prelude_tokens);
 		}
 		parse(tokens());
@@ -2490,7 +2525,7 @@ ResolvedBinding Compiler::binding(Expr* expr)
 		return bindings_[expr->id];
 	}
 
-	JET_DIE("%d:%d: unresolved binding", expr->loc.line, expr->loc.col);
+	JETC_DIE(*this, expr->loc, "unresolved binding");
 }
 
 bool Compiler::is_tail(Expr* expr)
@@ -2516,7 +2551,7 @@ Expr* Compiler::make_boolean_lit(bool value, SourceLoc loc)
 }
 
 template <typename F>
-static void walk_children(Expr* expr, F&& f)
+static void walk_children(Compiler& db, Expr* expr, F&& f)
 {
 	switch (expr->kind)
 	{
@@ -2590,8 +2625,8 @@ static void walk_children(Expr* expr, F&& f)
 			break;
 
 		default:
-			JET_DIE("%d:%d: walk_children: unhandled ExprKind %d (not ANF?)",
-			        expr->loc.line, expr->loc.col, static_cast<int>(expr->kind));
+			JETC_DIE(db, expr->loc, "walk_children: unhandled ExprKind %d (not ANF?)",
+			         static_cast<int>(expr->kind));
 	}
 }
 
@@ -2728,11 +2763,11 @@ Expr* Compiler::expand(Expr* expr)
 		case ExprKind::SetRef:
 		case ExprKind::IterNext:
 		case ExprKind::If:
-			walk_children(expr, [&](Expr*& c) { c = expand(c); });
+			walk_children(*this, expr, [&](Expr*& c) { c = expand(c); });
 			return expr;
 
 		case ExprKind::Lambda:
-			walk_children(expr, [&](Expr*& c) { c = expand(c); });
+			walk_children(*this, expr, [&](Expr*& c) { c = expand(c); });
 			expr->lambda.body = hoist_defines_in_body(expr->lambda.body, expr->loc);
 			return expr;
 
@@ -2746,7 +2781,7 @@ Expr* Compiler::expand(Expr* expr)
 
 Expr* Compiler::expand_let(Expr* expr)
 {
-	walk_children(expr, [&](Expr*& c) { c = expand(c); });
+	walk_children(*this, expr, [&](Expr*& c) { c = expand(c); });
 	expr->let.body = hoist_defines_in_body(expr->let.body, expr->loc);
 	return expr;
 }
@@ -2932,7 +2967,7 @@ Expr* Compiler::compute_anf(Expr* expr)
 
 		case ExprKind::Lambda:
 		case ExprKind::Let:
-			walk_children(expr, [&](Expr*& c) { c = compute_anf(c); });
+			walk_children(*this, expr, [&](Expr*& c) { c = compute_anf(c); });
 			return expr;
 
 		case ExprKind::If:
@@ -3023,8 +3058,8 @@ Expr* Compiler::compute_anf(Expr* expr)
 		}
 
 		default:
-			JET_DIE("%d:%d: anf: unhandled ExprKind %d (surface form not expanded?)",
-			        expr->loc.line, expr->loc.col, static_cast<int>(expr->kind));
+			JETC_DIE(*this, expr->loc, "anf: unhandled ExprKind %d (surface form not expanded?)",
+			         static_cast<int>(expr->kind));
 	}
 }
 
@@ -3050,8 +3085,8 @@ void Compiler::verify_anf(Expr* expr)
 	};
 	auto check_atom = [&](Expr* e)
 	{
-		JET_DIE_UNLESS(is_anf_atom(e), "%d:%d: anf: non-atomic operand (kind %d)", e->loc.line,
-		               e->loc.col, static_cast<int>(e->kind));
+		JETC_DIE_UNLESS(*this, is_anf_atom(e), e->loc, "anf: non-atomic operand (kind %d)",
+		                static_cast<int>(e->kind));
 		verify_anf(e);
 	};
 
@@ -3061,7 +3096,7 @@ void Compiler::verify_anf(Expr* expr)
 		case ExprKind::Apply:
 		case ExprKind::SetBang:
 		case ExprKind::SetRef:
-			walk_children(expr, check_atom);
+			walk_children(*this, expr, check_atom);
 			break;
 
 		case ExprKind::If:
@@ -3083,7 +3118,7 @@ void Compiler::verify_anf(Expr* expr)
 			break;
 
 		default:
-			walk_children(expr, [&](Expr* e) { verify_anf(e); });
+			walk_children(*this, expr, [&](Expr* e) { verify_anf(e); });
 			break;
 	}
 }
@@ -3250,7 +3285,7 @@ void Compiler::collect_binding_uses_in(Expr* expr)
 			++binding_use_counts_[binding_key(b)];
 		}
 	}
-	walk_children(expr, [&](Expr* e) { collect_binding_uses_in(e); });
+	walk_children(*this, expr, [&](Expr* e) { collect_binding_uses_in(e); });
 }
 
 void Compiler::collect_binding_uses(Program& program)
@@ -3303,8 +3338,8 @@ void Compiler::compute_binding_addresses_in(Expr* expr)
 			std::optional<ResolvedBinding> found = lookup_name(expr->var_ref.name);
 			if (!found)
 			{
-				JET_DIE("%d:%d: unresolved variable '%.*s'", expr->loc.line, expr->loc.col,
-				        static_cast<int>(expr->var_ref.name.size()), expr->var_ref.name.data());
+				JETC_DIE(*this, expr->loc, "unresolved variable '%.*s'",
+				         static_cast<int>(expr->var_ref.name.size()), expr->var_ref.name.data());
 			}
 			bindings_[expr->id] = *found;
 			break;
@@ -3321,7 +3356,7 @@ void Compiler::compute_binding_addresses_in(Expr* expr)
 
 			push_lambda_scope(expr);
 			frame_names_.push_back(std::move(names));
-			walk_children(expr, [&](Expr* e) { compute_binding_addresses_in(e); });
+			walk_children(*this, expr, [&](Expr* e) { compute_binding_addresses_in(e); });
 			expr->lambda.names = arena.copy_slice(frame_names_.back());
 			frame_names_.pop_back();
 			pop_lambda_scope();
@@ -3422,15 +3457,15 @@ void Compiler::compute_binding_addresses_in(Expr* expr)
 			std::optional<ResolvedBinding> found = lookup_name(expr->set_bang.name);
 			if (!found)
 			{
-				JET_DIE("%d:%d: unresolved variable '%.*s' in set!", expr->loc.line, expr->loc.col,
-				        static_cast<int>(expr->set_bang.name.size()), expr->set_bang.name.data());
+				JETC_DIE(*this, expr->loc, "unresolved variable '%.*s' in set!",
+				         static_cast<int>(expr->set_bang.name.size()), expr->set_bang.name.data());
 			}
 			bindings_[expr->id] = *found;
 			break;
 		}
 
 		default:
-			walk_children(expr, [&](Expr* e) { compute_binding_addresses_in(e); });
+			walk_children(*this, expr, [&](Expr* e) { compute_binding_addresses_in(e); });
 			break;
 	}
 }
@@ -3448,7 +3483,7 @@ void Compiler::recompute_lambda_bindings_in(Expr* expr)
 
 		case ExprKind::Lambda:
 			push_lambda_scope(expr);
-			walk_children(expr, [&](Expr* e) { recompute_lambda_bindings_in(e); });
+			walk_children(*this, expr, [&](Expr* e) { recompute_lambda_bindings_in(e); });
 			pop_lambda_scope();
 			all_lambdas_.push_back(expr);
 			break;
@@ -3463,7 +3498,7 @@ void Compiler::recompute_lambda_bindings_in(Expr* expr)
 		}
 
 		default:
-			walk_children(expr, [&](Expr* e) { recompute_lambda_bindings_in(e); });
+			walk_children(*this, expr, [&](Expr* e) { recompute_lambda_bindings_in(e); });
 			break;
 	}
 }
@@ -3486,7 +3521,7 @@ void Compiler::collect_tail_calls(Expr* expr, bool in_tail)
 			{
 				tail_cache_[expr->id] = true;
 			}
-			walk_children(expr, [&](Expr* e) { collect_tail_calls(e, false); });
+			walk_children(*this, expr, [&](Expr* e) { collect_tail_calls(e, false); });
 			break;
 
 		case ExprKind::Lambda:
@@ -3528,7 +3563,7 @@ void Compiler::collect_tail_calls(Expr* expr, bool in_tail)
 			break;
 
 		default:
-			walk_children(expr, [&](Expr* e) { collect_tail_calls(e, false); });
+			walk_children(*this, expr, [&](Expr* e) { collect_tail_calls(e, false); });
 			break;
 	}
 }
@@ -3669,13 +3704,13 @@ void Compiler::select_ops_in(Expr* expr, Expr* current)
 			}
 			else
 			{
-				walk_children(expr, [&](Expr* e) { select_ops_in(e, current); });
+				walk_children(*this, expr, [&](Expr* e) { select_ops_in(e, current); });
 			}
 			select_call_op(expr, current);
 			break;
 
 		case ExprKind::Lambda:
-			walk_children(expr, [&](Expr* e) { select_ops_in(e, expr); });
+			walk_children(*this, expr, [&](Expr* e) { select_ops_in(e, expr); });
 			break;
 
 		case ExprKind::SetBang:
@@ -3684,20 +3719,20 @@ void Compiler::select_ops_in(Expr* expr, Expr* current)
 			break;
 
 		case ExprKind::SetRef:
-			walk_children(expr, [&](Expr* e) { select_ops_in(e, current); });
+			walk_children(*this, expr, [&](Expr* e) { select_ops_in(e, current); });
 			select_field_op(expr, current, expr->set_ref.obj, expr->set_ref.key, Opcode::stf, Opcode::stfk);
 			break;
 
 		case ExprKind::IterNext:
 		{
-			walk_children(expr, [&](Expr* e) { select_ops_in(e, current); });
+			walk_children(*this, expr, [&](Expr* e) { select_ops_in(e, current); });
 			OpSelection& sel = selected_ops_[expr->id].emplace();
 			sel.op = expr->iter_next.names.size() == 1 ? Opcode::iter_next1 : Opcode::iter_next2;
 			break;
 		}
 
 		default:
-			walk_children(expr, [&](Expr* e) { select_ops_in(e, current); });
+			walk_children(*this, expr, [&](Expr* e) { select_ops_in(e, current); });
 			break;
 	}
 }
@@ -3794,7 +3829,7 @@ void Compiler::collect_intrinsic_callees(Expr* expr, Expr* current)
 	{
 		current = expr;
 	}
-	walk_children(expr, [&](Expr* e) { collect_intrinsic_callees(e, current); });
+	walk_children(*this, expr, [&](Expr* e) { collect_intrinsic_callees(e, current); });
 }
 
 void Compiler::select_call_op(Expr* expr, Expr* current)
@@ -3805,18 +3840,16 @@ void Compiler::select_call_op(Expr* expr, Expr* current)
 
 	if (proc->kind == ExprKind::PrimRef && proc->prim_ref.name == RESET_PRIM)
 	{
-		JET_DIE_UNLESS(expr->call.args.size() == 1, "%d:%d: %.*s expects exactly one argument",
-		               expr->loc.line, expr->loc.col, static_cast<int>(RESET_PRIM.size()),
-		               RESET_PRIM.data());
+		JETC_DIE_UNLESS(*this, expr->call.args.size() == 1, expr->loc, "%.*s expects exactly one argument",
+		                static_cast<int>(RESET_PRIM.size()), RESET_PRIM.data());
 		sel.op = Opcode::reset;
 		return;
 	}
 
 	if (proc->kind == ExprKind::PrimRef && proc->prim_ref.name == CORO_PRIM)
 	{
-		JET_DIE_UNLESS(expr->call.args.size() == 1, "%d:%d: %.*s expects exactly one argument",
-		               expr->loc.line, expr->loc.col, static_cast<int>(CORO_PRIM.size()),
-		               CORO_PRIM.data());
+		JETC_DIE_UNLESS(*this, expr->call.args.size() == 1, expr->loc, "%.*s expects exactly one argument",
+		                static_cast<int>(CORO_PRIM.size()), CORO_PRIM.data());
 		sel.op = Opcode::coro;
 		return;
 	}
@@ -3948,7 +3981,7 @@ void Compiler::collect_branch_fusion_facts(Program& program)
 				}
 			}
 		}
-		walk_children(expr, [&](Expr* child) { self(child, self); });
+		walk_children(*this, expr, [&](Expr* child) { self(child, self); });
 	};
 	for (Expr* form : program.forms)
 	{
@@ -3973,7 +4006,7 @@ void Compiler::collect_branch_fusion_facts(Program& program)
 				candidate->branch = expr;
 			}
 		}
-		walk_children(expr, [&](Expr* child) { self(child, self); });
+		walk_children(*this, expr, [&](Expr* child) { self(child, self); });
 	};
 	for (Expr* form : program.forms)
 	{
@@ -4313,8 +4346,8 @@ namespace
 					break;
 				}
 				default:
-					JET_DIE("%d:%d: anf-inline: unhandled ExprKind %d in clone", orig->loc.line,
-					        orig->loc.col, static_cast<int>(orig->kind));
+					JETC_DIE(db, orig->loc, "anf-inline: unhandled ExprKind %d in clone",
+					         static_cast<int>(orig->kind));
 			}
 			return e;
 		}
@@ -4407,7 +4440,7 @@ namespace
 							}
 						}
 					}
-					walk_children(expr, [&](Expr*& c) { c = walk(c); });
+					walk_children(db, expr, [&](Expr*& c) { c = walk(c); });
 					return expr;
 				}
 
@@ -4416,14 +4449,14 @@ namespace
 				case ExprKind::SetRef:
 				case ExprKind::IterNext:
 				case ExprKind::If:
-					walk_children(expr, [&](Expr*& c) { c = walk(c); });
+					walk_children(db, expr, [&](Expr*& c) { c = walk(c); });
 					return expr;
 
 				case ExprKind::Lambda:
 				{
 					bool guard = candidate_lambdas.count(expr) && active.insert(expr).second;
 					hosts.push_back(expr);
-					walk_children(expr, [&](Expr*& c) { c = walk(c); });
+					walk_children(db, expr, [&](Expr*& c) { c = walk(c); });
 					hosts.pop_back();
 					if (guard)
 					{
@@ -4450,13 +4483,13 @@ namespace
 							}
 						}
 					}
-					walk_children(expr, [&](Expr*& c) { c = walk(c); });
+					walk_children(db, expr, [&](Expr*& c) { c = walk(c); });
 					return expr;
 				}
 
 				default:
-					JET_DIE("%d:%d: anf-inline: unhandled ExprKind %d", expr->loc.line,
-					        expr->loc.col, static_cast<int>(expr->kind));
+					JETC_DIE(db, expr->loc, "anf-inline: unhandled ExprKind %d",
+					         static_cast<int>(expr->kind));
 			}
 		}
 	};
@@ -4538,7 +4571,7 @@ namespace
 
 		void walk(Expr* e)
 		{
-			walk_children(e, [&](Expr* c) { walk(c); });
+			walk_children(db, e, [&](Expr* c) { walk(c); });
 			if (e->kind != ExprKind::Call || !lowerable(e))
 			{
 				return;
@@ -4578,7 +4611,7 @@ namespace
 			return e->kind == ExprKind::BooleanLit && !e->boolean_lit.value;
 		}
 
-		static bool name_used_as_value(Expr* expr, std::string_view name)
+		bool name_used_as_value(Expr* expr, std::string_view name)
 		{
 			switch (expr->kind)
 			{
@@ -4607,13 +4640,13 @@ namespace
 				default:
 				{
 					bool found = false;
-					walk_children(expr, [&](Expr*& c) { found = found || name_used_as_value(c, name); });
+					walk_children(db, expr, [&](Expr*& c) { found = found || name_used_as_value(c, name); });
 					return found;
 				}
 			}
 		}
 
-		static bool self_calls_all_tail(Expr* expr, std::string_view name, bool in_tail)
+		bool self_calls_all_tail(Expr* expr, std::string_view name, bool in_tail)
 		{
 			switch (expr->kind)
 			{
@@ -4680,7 +4713,10 @@ namespace
 				default:
 				{
 					bool ok = true;
-					walk_children(expr, [&](Expr*& c) { ok = ok && self_calls_all_tail(c, name, false); });
+					walk_children(db, expr, [&](Expr*& c)
+					{
+						ok = ok && self_calls_all_tail(c, name, false);
+					});
 					return ok;
 				}
 			}
@@ -4739,7 +4775,7 @@ namespace
 					{
 						collect_captures_in(c, lambda, self_name, out, seen);
 					};
-					walk_children(expr, collect_child);
+					walk_children(db, expr, collect_child);
 					return;
 				}
 			}
@@ -4789,7 +4825,7 @@ namespace
 				}
 				return;
 			}
-			walk_children(expr, [&](Expr*& c) { prepend_capture_args(c, name, captures); });
+			walk_children(db, expr, [&](Expr*& c) { prepend_capture_args(c, name, captures); });
 		}
 
 		Expr* try_lift(Expr* let_expr)
@@ -4907,7 +4943,7 @@ namespace
 
 		Expr* walk(Expr* expr)
 		{
-			walk_children(expr, [&](Expr*& c) { c = walk(c); });
+			walk_children(db, expr, [&](Expr*& c) { c = walk(c); });
 			if (expr->kind == ExprKind::Let)
 			{
 				return try_lift(expr);
@@ -5340,8 +5376,8 @@ namespace
 
 		Compiler::OpSelection selection(Expr* expr, const char* what)
 		{
-			JET_DIE_WHEN(!db.selected_ops_[expr->id], "%d:%d: codegen: %s without selection",
-			             expr->loc.line, expr->loc.col, what);
+			JETC_DIE_WHEN(db, !db.selected_ops_[expr->id], expr->loc,
+			              "codegen: %s without selection", what);
 			Compiler::OpSelection sel = *db.selected_ops_[expr->id];
 			// Coalesced homes resolve here, the single read point for selections;
 			// only these two payloads name an unboxed local register (for ldu/stu/
@@ -5375,8 +5411,8 @@ namespace
 					return v;
 				}
 				default:
-					JET_DIE("%d:%d: codegen: unexpected set! selection %d",
-					        expr->loc.line, expr->loc.col, static_cast<int>(sel.op));
+					JETC_DIE(db, expr->loc, "codegen: unexpected set! selection %d",
+					         static_cast<int>(sel.op));
 			}
 		}
 
@@ -5637,16 +5673,16 @@ namespace
 					i.u.call.idx = sel.u.call_ic_atom.idx;
 					break;
 				case Opcode::call_self_0:
-					JET_DIE_WHEN(tail, "%d:%d: codegen: self direct call in tail position escaped recur",
-					             expr->loc.line, expr->loc.col);
+					JETC_DIE_WHEN(db, tail, expr->loc,
+					              "codegen: self direct call in tail position escaped recur");
 					break;
 				case Opcode::call:
 					i.op = tail ? Opcode::tcall : Opcode::call;
 					i.u.call.callee = emit_to_any_reg(expr->call.proc);
 					break;
 				default:
-					JET_DIE("%d:%d: codegen: unexpected Call selection %d",
-					        expr->loc.line, expr->loc.col, static_cast<int>(sel.op));
+					JETC_DIE(db, expr->loc, "codegen: unexpected Call selection %d",
+					         static_cast<int>(sel.op));
 			}
 
 			uint16_t w = claim_call_window(expr, nargs);
@@ -5845,8 +5881,8 @@ namespace
 							emit_load(sel.op, dst, sel.u.var.addr);
 							break;
 						default:
-							JET_DIE("%d:%d: codegen: unexpected var selection %d",
-							        expr->loc.line, expr->loc.col, static_cast<int>(sel.op));
+							JETC_DIE(db, expr->loc, "codegen: unexpected var selection %d",
+							         static_cast<int>(sel.op));
 					}
 					break;
 				}
@@ -5970,8 +6006,8 @@ namespace
 				}
 
 				default:
-					JET_DIE("%d:%d: codegen: unhandled ExprKind %d (not ANF?)",
-					        expr->loc.line, expr->loc.col, static_cast<int>(expr->kind));
+					JETC_DIE(db, expr->loc, "codegen: unhandled ExprKind %d (not ANF?)",
+					         static_cast<int>(expr->kind));
 			}
 		}
 	};
@@ -6605,17 +6641,14 @@ namespace
 		Port* base = slow_unbox<Port>(p);
 		JET_DIE_UNLESS(base->is_input(), "read: not an input port");
 		IPort* port = static_cast<IPort*>(base);
-		Arena arena;
-		LexState lex{port, arena, 0};
+		Compiler db;
+		db.file_table.push_back("<read>");
+		LexState lex{port, db, 0};
 		lex.read_mode = true;
-		std::vector<std::string> file_table;
-		uint32_t next_id = 0;
 		ParseState parser{
 			.tokens = {},
 			.stream_lex = &lex,
-			.arena = arena,
-			.file_table = file_table,
-			.next_id = next_id,
+			.db = db,
 		};
 		if (parser.at_end())
 		{

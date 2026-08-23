@@ -16,7 +16,7 @@ fi
 pass=0
 fail=0
 failed_names=
-for file in *.ss
+for file in *.ss $JET_MODULE_TESTS
 do
     name=${file%%.*}
     printf "   $name... "

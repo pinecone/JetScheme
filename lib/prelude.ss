@@ -171,6 +171,7 @@
 (define min (%prim "min"))
 (define random (%prim "random"))
 (define random-seed (%prim "random-seed"))
+(define time-monotonic (%prim "time-monotonic"))
 
 ;;; bit ops
 (define bitwise-and (%prim "bitwise-and"))
@@ -187,10 +188,13 @@
 
 ;;; ports
 (define open-input-file (%prim "open-input-file"))
+(define open-input-file/maybe (%prim "open-input-file/maybe"))
 (define open-output-file (%prim "open-output-file"))
 (define close-input-port (%prim "close-input-port"))
 (define close-output-port (%prim "close-output-port"))
 (define read-char (%prim "read-char"))
+(define read-bytes/all (%prim "read-bytes/all"))
+(define write-bytes (%prim "write-bytes"))
 (define write-char (%prim "write-char"))
 (define input-port? (%prim "input-port?"))
 (define output-port? (%prim "output-port?"))

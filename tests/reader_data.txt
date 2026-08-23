@@ -6,6 +6,8 @@
 -3.14
 0xff
 -0x1f
+#x7fff
+#x-1f
 foo
 +
 -

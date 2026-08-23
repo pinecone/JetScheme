@@ -176,7 +176,7 @@ void profile_print()
 	}
 
 	constexpr Opcode field_ops[] = {Opcode::ldf, Opcode::stf, Opcode::ldfk, Opcode::stfk,
-	                                Opcode::ldfh, Opcode::ldfkh, Opcode::ldfo, Opcode::ldfko};
+		                            Opcode::ldfh, Opcode::ldfkh, Opcode::ldfo, Opcode::ldfko};
 	constexpr const char* field_receivers[] = {
 		"vector", "string", "bytevector", "scheme", "tuple", "hashset", "hashmap", "cursor", "other",
 	};
@@ -550,7 +550,7 @@ void decode_args(FILE* out, uint8_t op, Code* p)
 
 bool g_trace_enabled = false;
 
-void trace_step(VmState& s, Frame* /*frame*/, Code* pc, Atom* stack_top)
+void trace_step(VmState& s, Frame*, Code* pc, Atom* stack_top)
 {
 	auto&& brief = [](Atom a) -> std::string
 	{

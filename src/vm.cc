@@ -527,10 +527,12 @@ enum class CallTail
 	Yes,
 };
 
-// Return addresses installed at coroutine stack bottoms (`retc`) and at frames
-// suspended by a tail-position yield (`retu`); neither exists in compiled code.
+// Return addresses installed at coroutine stack bottoms (`retc`), at frames
+// suspended by a tail-position yield (`retu`), and under a host call
+// (`return_to_host`); none exists in compiled code.
 static Code g_retc_code[OPCODE_SIZE];
 static Code g_retu_code[OPCODE_SIZE];
+static Code g_return_to_host_code[OPCODE_SIZE];
 
 JET_NOINLINE static void grow_stack(VmState& s, Atom* needed_top)
 {
@@ -685,6 +687,7 @@ inline Arity struct_arity(StructType* t)
 JET_NOINLINE JET_PRESERVE_NONE static void op_enter_escape(VM_OP_PARAMS)
 {
 	Escape* escape = static_cast<Escape*>(unbox<Struct>(callee));
+	JET_DIE_UNLESS(escape->host_token == s.host_token, "escape crossed a host entry boundary");
 	Atom value = args[0];
 
 	Coro* owner = escape->owner;
@@ -1179,8 +1182,10 @@ static constexpr auto& op_ldfk = op_field_impl<FieldAccess::Load, FieldKeySource
 static constexpr auto& op_stfk = op_field_impl<FieldAccess::Store, FieldKeySource::Constant>;
 static constexpr auto& op_ldfh = op_field_impl<FieldAccess::Load, FieldKeySource::Register, FieldMiss::Hole>;
 static constexpr auto& op_ldfkh = op_field_impl<FieldAccess::Load, FieldKeySource::Constant, FieldMiss::Hole>;
-static constexpr auto& op_ldfo = op_field_impl<FieldAccess::Load, FieldKeySource::Register, FieldMiss::Default>;
-static constexpr auto& op_ldfko = op_field_impl<FieldAccess::Load, FieldKeySource::Constant, FieldMiss::Default>;
+static constexpr auto& op_ldfo = op_field_impl<FieldAccess::Load, FieldKeySource::Register,
+                                               FieldMiss::Default>;
+static constexpr auto& op_ldfko = op_field_impl<FieldAccess::Load, FieldKeySource::Constant,
+                                                FieldMiss::Default>;
 
 template <typename Op, int outputs>
 JET_NOINLINE JET_PRESERVE_NONE static void op_iter_coro_slow(VM_OP_PARAMS)
@@ -1607,7 +1612,7 @@ JET_PRESERVE_NONE static void op_reset(VM_OP_PARAMS)
 	void* mem = s.gc.alloc(sizeof(Escape), jet_tag::struct_, type->destructor_id());
 	uint32_t n_frames = static_cast<uint32_t>(s.frames.size());
 	uint16_t result_reg = static_cast<uint16_t>(op->w + 1);
-	Escape* escape = new (mem) Escape{type, pc, s.running.back(), n_frames, result_reg};
+	Escape* escape = new (mem) Escape{type, pc, s.running.back(), s.host_token, n_frames, result_reg};
 	VmOp retk = dispatch_table[static_cast<int>(Opcode::retk)];
 	Struct* operand = escape;
 	std::memcpy(escape->retk_code, &retk, sizeof(retk));
@@ -1685,6 +1690,12 @@ JET_PRESERVE_NONE static void op_retc(VM_OP_PARAMS)
 	frame_regs[coro->dst] = value;
 	pc = coro->consequent_pc;
 	DISPATCH();
+}
+
+JET_PRESERVE_NONE static void op_return_to_host(VM_OP_PARAMS)
+{
+	s.frames.pop();
+	// Return through the musttail dispatch chain to jet_enter_vm.
 }
 
 JET_PRESERVE_NONE static void op_retu(VM_OP_PARAMS)
@@ -2024,6 +2035,32 @@ JET_REPLICATE(X, call_self, "cself")
 	JET_DIE("vm: halt returned to eval");
 }
 
+Atom jet_enter_vm(VmState& vm, Atom proc, Atom* args, size_t n_args)
+{
+	Lambda* la = slow_unbox<Lambda>(proc);
+	check_arity(la->arity, n_args);
+
+	size_t base = static_cast<size_t>(vm.stack_top - vm.stack_base);
+	JET_DIE_WHEN(vm.stack_top + n_args > vm.stack_end - STACK_SLACK, "jet_enter_vm: stack overflow");
+
+	Atom* window = vm.stack_base + base;
+	copy_atoms<4, CopyVariadic::Yes>(window, args, n_args);
+	vm.stack_top = window + n_args;
+
+	uint64_t previous_host_token = vm.host_token;
+	JET_DIE_WHEN(++vm.next_host_token == 0, "jet_enter_vm: host token overflow");
+	vm.host_token = vm.next_host_token;
+
+	Frame& host_frame = vm.frames.push({g_return_to_host_code, nullptr, base, base + n_args});
+	op_enter_lambda_fast<CallTail::No>(vm, &host_frame, g_return_to_host_code, window + n_args, proc, window,
+	                                   vm.stack_base, window);
+
+	Atom result = vm.stack_base[base];
+	vm.stack_top = vm.stack_base + base;
+	vm.host_token = previous_host_token;
+	return result;
+}
+
 namespace
 {
 	struct dispatch_init_t
@@ -2052,6 +2089,7 @@ namespace
 			};
 			build_return_code(g_retc_code, Opcode::retc);
 			build_return_code(g_retu_code, Opcode::retu);
+			build_return_code(g_return_to_host_code, Opcode::return_to_host);
 		}
 	} dispatch_init;
 } // namespace

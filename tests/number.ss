@@ -67,6 +67,8 @@
 ($check (= -255 -0xff))
 ($check (= 31 0x1f))
 ($check (= -31 -0x1f))
+($check (= 32767 #x7fff))
+($check (= -255 #x-ff))
 
 ;; Signed decimal literals
 ($check (= 1 +1))

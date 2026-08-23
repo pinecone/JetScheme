@@ -83,7 +83,8 @@ struct Struct;
 	X(retk,                "retk")                                                                           \
 	X(coro,                "coro")                                                                           \
 	X(retc,            "retc")                                                                          \
-	X(retu,       "retu")
+	X(retu,       "retu")                                                                          \
+	X(return_to_host,      "rethost")
 
 enum class Opcode : uint8_t
 {
@@ -388,9 +389,10 @@ inline size_t opcode_step(uint8_t op, const uint8_t* operands)
 		case Opcode::retk:
 			return OPCODE_SIZE + sizeof(OP_retk);
 		// Never emitted into a code stream: they live in static buffers installed as
-		// coroutine return addresses.
+		// coroutine and host-call return addresses.
 		case Opcode::retc:
 		case Opcode::retu:
+		case Opcode::return_to_host:
 			return OPCODE_SIZE;
 		case Opcode::iter_next1:
 			return OPCODE_SIZE + sizeof(OP_iter_next1);

@@ -12,6 +12,7 @@
 #include "compiler.h"
 #include "debug.h"
 #include "error.h"
+#include "modules.h"
 #include "prelude.h"
 #include "runtime.h"
 #include "vm.h"
@@ -73,7 +74,8 @@ static Bytecode compile_source(string source, string filename, const string& pre
 	Env primitives_env;
 	VmState vm{.env = primitives_env};
 
-	init_primitives(vm);
+	init_runtime(vm);
+	init_modules(vm);
 	init_cmdline(vm, script_argc, script_argv);
 
 	LoadedProgram prog = load_program(vm, image.bytes, image.size);

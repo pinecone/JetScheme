@@ -1,0 +1,6 @@
+($check (not (dos:sound-playing? 'digi)))
+($check (not (dos:sound-playing? 'pc)))
+(dos:stop-sound 'digi)
+(dos:stop-sound 'pc)
+($check (not (dos:sound-playing? 'digi)))
+($check (not (dos:sound-playing? 'pc)))

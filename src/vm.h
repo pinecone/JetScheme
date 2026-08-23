@@ -547,6 +547,8 @@ struct VmState
 	Atom* stack_watermark{};
 	Atom* constants{};
 	size_t n_constants{};
+	uint64_t host_token{};
+	uint64_t next_host_token{};
 	// The running coroutines, innermost last. The main stack is a permanent coroutine
 	// at `running[0]` (`eval`), so `running.back()` always owns the running stack.
 	// `x` is a member when `running[x->running_index] == x` with a bounds check;
@@ -633,6 +635,8 @@ extern ObjShape g_shape_by_tag[jet_tag::HEAP_END];
 
 [[noreturn]] void eval(VmState& vm, Frame& init_frame, Atom* constants, size_t n_constants,
                        size_t initial_stack_size);
+
+Atom jet_enter_vm(VmState& vm, Atom proc, Atom* args, size_t n_args);
 
 struct LoadedProgram
 {

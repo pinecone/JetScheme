@@ -1,7 +1,22 @@
 # Third-party notices
 
 JetScheme's implementation is licensed under the MIT License in `LICENSE`.
-Benchmark sources retain their upstream licenses.
+Third-party sources retain their upstream licenses.
+
+## Wolfenstein 3D
+
+`demo/wolf3d` is a Scheme translation of the Wolfenstein 3D source code
+released by Id Software, Inc. The port is distributed under the Limited Use
+Software License Agreement in `demo/wolf3d/COPYING`.
+
+## Sokol
+
+`vendor/sokol` is from the Sokol project by Andre Weissflog.
+
+Copyright 2018 Andre Weissflog.
+
+These files are licensed under the zlib/libpng license. The complete license
+is in `vendor/sokol/LICENSE`.
 
 ## DeltaBlue
 

@@ -1,0 +1,580 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Kirill Zorin
+
+#include "dos.h"
+#include "runtime.h"
+
+#include <mutex>
+#include <vector>
+
+#define SOKOL_GLCORE
+#include "sokol/sokol_app.h"
+#include "sokol/sokol_audio.h"
+#include "sokol/sokol_gfx.h"
+#include "sokol/sokol_glue.h"
+#include "sokol/sokol_log.h"
+
+namespace
+{
+
+	constexpr int WINDOW_SCALE{3};
+	constexpr double PIXEL_ASPECT{1.2};
+	constexpr size_t PALETTE_COLORS{256};
+
+	constexpr char VERTEX_SOURCE[]{
+		"#version 410\n"
+		"in vec2 pos;\n"
+		"out vec2 uv;\n"
+		"void main() {\n"
+		"  gl_Position = vec4(pos * 2.0 - 1.0, 0.0, 1.0);\n"
+		"  uv = vec2(pos.x, 1.0 - pos.y);\n"
+		"}\n"};
+
+	constexpr char FRAGMENT_SOURCE[]{
+		"#version 410\n"
+		"uniform sampler2D indices;\n"
+		"uniform sampler2D palette;\n"
+		"in vec2 uv;\n"
+		"out vec4 color;\n"
+		"void main() {\n"
+		"  float index = texture(indices, uv).r;\n"
+		"  color = texture(palette, vec2(index * (255.0 / 256.0) + (0.5 / 256.0), 0.5));\n"
+		"}\n"};
+
+	struct Video
+	{
+		VmState* vm{};
+		Atom frame_proc{};
+		int width{};
+		int height{};
+		sg_image indices{};
+		sg_image palette{};
+		sg_view index_view{};
+		sg_view palette_view{};
+		sg_sampler sampler{};
+		sg_pipeline pipeline{};
+		sg_buffer quad{};
+		bool ready{};
+		bool palette_dirty{};
+		uint8_t rgba[PALETTE_COLORS * 4]{};
+		bool keys[SAPP_MAX_KEYCODES]{};
+		bool mouse_buttons[3]{};
+		double mouse_dx{};
+		double mouse_dy{};
+	};
+
+	Video video{};
+
+	struct Voice
+	{
+		std::vector<uint8_t> samples;
+		double step{};
+		double cursor{};
+		bool playing{};
+	};
+
+	// The DOS machine drove the Sound Blaster and the PC speaker at once, so they are separate voices.
+	constexpr size_t VOICE_DIGI{0};
+	constexpr size_t VOICE_PC{1};
+	constexpr size_t VOICE_COUNT{2};
+
+	struct Audio
+	{
+		std::mutex lock;
+		Voice voices[VOICE_COUNT];
+		float left{1.0f};
+		float right{1.0f};
+		bool started{};
+	};
+
+	constexpr int MAX_ATTENUATION{15};
+
+	Audio audio{};
+
+	float next_sample(Voice& voice)
+	{
+		if (!voice.playing)
+		{
+			return 0.0f;
+		}
+
+		size_t index = static_cast<size_t>(voice.cursor);
+		if (index >= voice.samples.size())
+		{
+			voice.playing = false;
+			return 0.0f;
+		}
+
+		voice.cursor += voice.step;
+		return (static_cast<float>(voice.samples[index]) - 128.0f) / 128.0f;
+	}
+
+	void stream_cb(float* buffer, int num_frames, int num_channels)
+	{
+		const std::lock_guard<std::mutex> held{audio.lock};
+		const float gains[2]{audio.left, audio.right};
+
+		for (int frame{0}; frame < num_frames; frame++)
+		{
+			// Only the digitized voice is positioned; the speaker had no stereo image.
+			float digi = next_sample(audio.voices[VOICE_DIGI]);
+			float pc = next_sample(audio.voices[VOICE_PC]);
+
+			for (int channel{0}; channel < num_channels; channel++)
+			{
+				buffer[frame * num_channels + channel] = digi * gains[channel & 1] + pc;
+			}
+		}
+	}
+
+	bool start_audio()
+	{
+		if (!audio.started)
+		{
+			saudio_desc desc{};
+			desc.stream_cb = stream_cb;
+			desc.num_channels = 2;
+			desc.logger.func = slog_func;
+			saudio_setup(&desc);
+
+			audio.started = true;
+		}
+
+		return saudio_isvalid();
+	}
+
+	struct KeyName
+	{
+		const char* name;
+		sapp_keycode code;
+	};
+
+	constexpr KeyName KEY_NAMES[]{
+		{"up", SAPP_KEYCODE_UP},
+		{"down", SAPP_KEYCODE_DOWN},
+		{"left", SAPP_KEYCODE_LEFT},
+		{"right", SAPP_KEYCODE_RIGHT},
+		{"escape", SAPP_KEYCODE_ESCAPE},
+		{"space", SAPP_KEYCODE_SPACE},
+		{"enter", SAPP_KEYCODE_ENTER},
+		{"tab", SAPP_KEYCODE_TAB},
+		{"backspace", SAPP_KEYCODE_BACKSPACE},
+		{"control", SAPP_KEYCODE_LEFT_CONTROL},
+		{"alt", SAPP_KEYCODE_LEFT_ALT},
+		{"shift", SAPP_KEYCODE_LEFT_SHIFT},
+		{"right-control", SAPP_KEYCODE_RIGHT_CONTROL},
+		{"right-alt", SAPP_KEYCODE_RIGHT_ALT},
+		{"right-shift", SAPP_KEYCODE_RIGHT_SHIFT},
+		{"caps-lock", SAPP_KEYCODE_CAPS_LOCK},
+		{"pause", SAPP_KEYCODE_PAUSE},
+		{"insert", SAPP_KEYCODE_INSERT},
+		{"delete", SAPP_KEYCODE_DELETE},
+		{"home", SAPP_KEYCODE_HOME},
+		{"end", SAPP_KEYCODE_END},
+		{"page-up", SAPP_KEYCODE_PAGE_UP},
+		{"page-down", SAPP_KEYCODE_PAGE_DOWN},
+		{"minus", SAPP_KEYCODE_MINUS},
+		{"equal", SAPP_KEYCODE_EQUAL},
+		{"left-bracket", SAPP_KEYCODE_LEFT_BRACKET},
+		{"right-bracket", SAPP_KEYCODE_RIGHT_BRACKET},
+		{"semicolon", SAPP_KEYCODE_SEMICOLON},
+		{"apostrophe", SAPP_KEYCODE_APOSTROPHE},
+		{"grave", SAPP_KEYCODE_GRAVE_ACCENT},
+		{"backslash", SAPP_KEYCODE_BACKSLASH},
+		{"comma", SAPP_KEYCODE_COMMA},
+		{"period", SAPP_KEYCODE_PERIOD},
+		{"slash", SAPP_KEYCODE_SLASH},
+		{"f1", SAPP_KEYCODE_F1},
+		{"f2", SAPP_KEYCODE_F2},
+		{"f3", SAPP_KEYCODE_F3},
+		{"f4", SAPP_KEYCODE_F4},
+		{"f5", SAPP_KEYCODE_F5},
+		{"f6", SAPP_KEYCODE_F6},
+		{"f7", SAPP_KEYCODE_F7},
+		{"f8", SAPP_KEYCODE_F8},
+		{"f9", SAPP_KEYCODE_F9},
+		{"f10", SAPP_KEYCODE_F10},
+		{"f11", SAPP_KEYCODE_F11},
+		{"f12", SAPP_KEYCODE_F12}};
+
+	size_t voice_index(Atom channel)
+	{
+		const std::string& name = *slow_unbox<Symbol>(channel);
+
+		if (name == "digi")
+		{
+			return VOICE_DIGI;
+		}
+		if (name == "pc")
+		{
+			return VOICE_PC;
+		}
+
+		JET_DIE("sound channel: unknown channel '%s', expected 'digi or 'pc", name.c_str());
+	}
+
+	sapp_keycode key_code(Atom key)
+	{
+		const std::string& name = *slow_unbox<Symbol>(key);
+
+		if (name.size() == 1 && name[0] >= 'a' && name[0] <= 'z')
+		{
+			return static_cast<sapp_keycode>(SAPP_KEYCODE_A + (name[0] - 'a'));
+		}
+		if (name.size() == 1 && name[0] >= '0' && name[0] <= '9')
+		{
+			return static_cast<sapp_keycode>(SAPP_KEYCODE_0 + (name[0] - '0'));
+		}
+		for (const KeyName& entry : KEY_NAMES)
+		{
+			if (name == entry.name)
+			{
+				return entry.code;
+			}
+		}
+
+		JET_DIE("key-down?: unknown key '%s'", name.c_str());
+	}
+
+	void init_cb()
+	{
+		sg_desc setup{};
+		setup.logger.func = slog_func;
+		setup.environment = sglue_environment();
+		sg_setup(&setup);
+
+		sg_image_desc index_image{};
+		index_image.type = SG_IMAGETYPE_2D;
+		index_image.usage.stream_update = true;
+		index_image.width = video.width;
+		index_image.height = video.height;
+		index_image.pixel_format = SG_PIXELFORMAT_R8;
+		video.indices = sg_make_image(&index_image);
+
+		sg_image_desc palette_image{};
+		palette_image.type = SG_IMAGETYPE_2D;
+		palette_image.usage.stream_update = true;
+		palette_image.width = static_cast<int>(PALETTE_COLORS);
+		palette_image.height = 1;
+		palette_image.pixel_format = SG_PIXELFORMAT_RGBA8;
+		video.palette = sg_make_image(&palette_image);
+
+		sg_view_desc index_view{};
+		index_view.texture.image = video.indices;
+		video.index_view = sg_make_view(&index_view);
+
+		sg_view_desc palette_view{};
+		palette_view.texture.image = video.palette;
+		video.palette_view = sg_make_view(&palette_view);
+
+		sg_sampler_desc sampler{};
+		sampler.min_filter = SG_FILTER_NEAREST;
+		sampler.mag_filter = SG_FILTER_NEAREST;
+		sampler.wrap_u = SG_WRAP_CLAMP_TO_EDGE;
+		sampler.wrap_v = SG_WRAP_CLAMP_TO_EDGE;
+		video.sampler = sg_make_sampler(&sampler);
+
+		static const float corners[]{0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f};
+		sg_buffer_desc quad{};
+		quad.size = sizeof(corners);
+		quad.usage.vertex_buffer = true;
+		quad.usage.immutable = true;
+		quad.data.ptr = corners;
+		quad.data.size = sizeof(corners);
+		video.quad = sg_make_buffer(&quad);
+
+		sg_shader_desc shader{};
+		shader.vertex_func.source = VERTEX_SOURCE;
+		shader.fragment_func.source = FRAGMENT_SOURCE;
+		shader.attrs[0].base_type = SG_SHADERATTRBASETYPE_FLOAT;
+		shader.attrs[0].glsl_name = "pos";
+		shader.samplers[0].stage = SG_SHADERSTAGE_FRAGMENT;
+		shader.samplers[0].sampler_type = SG_SAMPLERTYPE_FILTERING;
+		for (size_t slot{0}; slot < 2; slot++)
+		{
+			shader.views[slot].texture.stage = SG_SHADERSTAGE_FRAGMENT;
+			shader.views[slot].texture.image_type = SG_IMAGETYPE_2D;
+			shader.views[slot].texture.sample_type = SG_IMAGESAMPLETYPE_FLOAT;
+			shader.texture_sampler_pairs[slot].stage = SG_SHADERSTAGE_FRAGMENT;
+			shader.texture_sampler_pairs[slot].view_slot = static_cast<uint8_t>(slot);
+			shader.texture_sampler_pairs[slot].sampler_slot = 0;
+		}
+		shader.texture_sampler_pairs[0].glsl_name = "indices";
+		shader.texture_sampler_pairs[1].glsl_name = "palette";
+
+		sg_pipeline_desc pipeline{};
+		pipeline.shader = sg_make_shader(&shader);
+		pipeline.layout.attrs[0].format = SG_VERTEXFORMAT_FLOAT2;
+		pipeline.primitive_type = SG_PRIMITIVETYPE_TRIANGLE_STRIP;
+		video.pipeline = sg_make_pipeline(&pipeline);
+
+		video.ready = true;
+		video.palette_dirty = true;
+	}
+
+	void frame_cb()
+	{
+		jet_enter_vm(*video.vm, video.frame_proc, nullptr, 0);
+	}
+
+	void event_cb(const sapp_event* event)
+	{
+		if (event->type == SAPP_EVENTTYPE_MOUSE_MOVE)
+		{
+			video.mouse_dx += event->mouse_dx;
+			video.mouse_dy += event->mouse_dy;
+			return;
+		}
+		if (event->type == SAPP_EVENTTYPE_MOUSE_DOWN || event->type == SAPP_EVENTTYPE_MOUSE_UP)
+		{
+			if (event->mouse_button >= SAPP_MOUSEBUTTON_LEFT &&
+			    event->mouse_button <= SAPP_MOUSEBUTTON_MIDDLE)
+			{
+				video.mouse_buttons[event->mouse_button] = event->type == SAPP_EVENTTYPE_MOUSE_DOWN;
+			}
+			return;
+		}
+		if (event->key_code == SAPP_KEYCODE_INVALID)
+		{
+			return;
+		}
+		if (event->type == SAPP_EVENTTYPE_KEY_DOWN)
+		{
+			video.keys[event->key_code] = true;
+		}
+		else if (event->type == SAPP_EVENTTYPE_KEY_UP)
+		{
+			video.keys[event->key_code] = false;
+		}
+	}
+
+	void cleanup_cb()
+	{
+		sg_shutdown();
+		if (audio.started)
+		{
+			saudio_shutdown();
+			audio.started = false;
+		}
+	}
+
+} // namespace
+
+static Atom frame_loop(VmState& s, Atom title, Atom width, Atom height, Atom frame)
+{
+	JET_DIE_UNLESS(video.vm == nullptr, "frame-loop: already running");
+
+	video.vm = &s;
+	video.frame_proc = frame;
+	video.width = static_cast<int>(slow_unbox<Number>(width));
+	video.height = static_cast<int>(slow_unbox<Number>(height));
+	JET_DIE_UNLESS(video.width > 0 && video.height > 0, "frame-loop: window is %dx%d", video.width,
+	               video.height);
+
+	s.stack_top = s.stack_base + s.frames.back().top;
+
+	sapp_desc app{};
+	app.init_cb = init_cb;
+	app.frame_cb = frame_cb;
+	app.cleanup_cb = cleanup_cb;
+	app.event_cb = event_cb;
+	app.width = video.width * WINDOW_SCALE;
+	app.height = static_cast<int>(video.height * WINDOW_SCALE * PIXEL_ASPECT);
+	app.window_title = slow_unbox<String>(title)->c_str();
+	app.logger.func = slog_func;
+	sapp_run(&app);
+
+	vm_exit(s, 0);
+}
+
+static Atom display_framebuffer(Atom pixels)
+{
+	JET_DIE_UNLESS(video.ready, "display-framebuffer: no window; call frame-loop first");
+
+	ByteVector& bytes = *slow_unbox<ByteVector>(pixels);
+	size_t expected = static_cast<size_t>(video.width) * static_cast<size_t>(video.height);
+	JET_DIE_UNLESS(bytes.size() == expected, "display-framebuffer: %zu bytes, expected %zu", bytes.size(),
+	               expected);
+
+	sg_image_data upload{};
+	upload.mip_levels[0] = sg_range{bytes.data(), bytes.size()};
+	sg_update_image(video.indices, &upload);
+
+	if (video.palette_dirty)
+	{
+		sg_image_data palette_upload{};
+		palette_upload.mip_levels[0] = sg_range{video.rgba, sizeof(video.rgba)};
+		sg_update_image(video.palette, &palette_upload);
+		video.palette_dirty = false;
+	}
+
+	sg_pass pass{};
+	pass.action.colors[0].load_action = SG_LOADACTION_CLEAR;
+	pass.action.colors[0].clear_value = {0.0f, 0.0f, 0.0f, 1.0f};
+	pass.swapchain = sglue_swapchain();
+	sg_begin_pass(&pass);
+
+	sg_bindings bindings{};
+	bindings.vertex_buffers[0] = video.quad;
+	bindings.views[0] = video.index_view;
+	bindings.views[1] = video.palette_view;
+	bindings.samplers[0] = video.sampler;
+	sg_apply_pipeline(video.pipeline);
+	sg_apply_bindings(&bindings);
+	sg_draw(0, 4, 1);
+
+	sg_end_pass();
+	sg_commit();
+
+	return Atom{};
+}
+
+static Atom set_palette(Atom colors)
+{
+	ByteVector& bytes = *slow_unbox<ByteVector>(colors);
+	JET_DIE_UNLESS(bytes.size() == PALETTE_COLORS * 3, "set-palette: %zu bytes, expected %zu", bytes.size(),
+	               PALETTE_COLORS * 3);
+
+	for (size_t index{0}; index < PALETTE_COLORS; index++)
+	{
+		for (size_t channel{0}; channel < 3; channel++)
+		{
+			uint8_t six_bit = bytes[index * 3 + channel];
+			video.rgba[index * 4 + channel] = static_cast<uint8_t>((six_bit << 2) | (six_bit >> 4));
+		}
+		video.rgba[index * 4 + 3] = 255;
+	}
+
+	// sokol allows one update per image and frame, and a fade sets the palette many times per frame,
+	// so the upload waits for the next framebuffer display.
+	video.palette_dirty = true;
+
+	return Atom{};
+}
+
+static Atom play_sound(Atom channel, Atom pcm, Atom rate)
+{
+	size_t slot = voice_index(channel);
+	ByteVector& bytes = *slow_unbox<ByteVector>(pcm);
+	double hertz = slow_unbox<Number>(rate);
+	JET_DIE_UNLESS(hertz > 0.0, "play-sound: rate is %g", hertz);
+	JET_DIE_UNLESS(!bytes.empty(), "play-sound: no samples");
+
+	// Without a device nothing drains the voice, so it must never report itself as playing.
+	if (!start_audio())
+	{
+		return Atom{};
+	}
+
+	Voice fresh{};
+	fresh.samples.assign(bytes.begin(), bytes.end());
+	fresh.step = hertz / saudio_sample_rate();
+	fresh.playing = true;
+
+	const std::lock_guard<std::mutex> held{audio.lock};
+	audio.voices[slot] = std::move(fresh);
+
+	return Atom{};
+}
+
+static Atom set_sound_attenuation(Atom left, Atom right)
+{
+	int left_step = static_cast<int>(slow_unbox<Number>(left));
+	int right_step = static_cast<int>(slow_unbox<Number>(right));
+	JET_DIE_UNLESS(left_step >= 0 && left_step <= MAX_ATTENUATION && right_step >= 0 &&
+	               right_step <= MAX_ATTENUATION,
+	               "set-sound-attenuation: %d and %d, expected 0 to %d", left_step, right_step,
+	               MAX_ATTENUATION);
+
+	const std::lock_guard<std::mutex> held{audio.lock};
+	audio.left = static_cast<float>(MAX_ATTENUATION - left_step) / MAX_ATTENUATION;
+	audio.right = static_cast<float>(MAX_ATTENUATION - right_step) / MAX_ATTENUATION;
+
+	return Atom{};
+}
+
+static Atom stop_sound(Atom channel)
+{
+	size_t slot = voice_index(channel);
+
+	const std::lock_guard<std::mutex> held{audio.lock};
+	audio.voices[slot].playing = false;
+
+	return Atom{};
+}
+
+static bool sound_playing(Atom channel)
+{
+	size_t slot = voice_index(channel);
+
+	const std::lock_guard<std::mutex> held{audio.lock};
+	return audio.voices[slot].playing;
+}
+
+static bool key_down(Atom key)
+{
+	return video.keys[key_code(key)];
+}
+
+static Number get_mouse_motion_x()
+{
+	double delta{video.mouse_dx};
+	video.mouse_dx = 0.0;
+	return Number::from_ieee(delta);
+}
+
+static Number get_mouse_motion_y()
+{
+	double delta{video.mouse_dy};
+	video.mouse_dy = 0.0;
+	return Number::from_ieee(delta);
+}
+
+static bool mouse_button_down(Atom button)
+{
+	const std::string& name{*slow_unbox<Symbol>(button)};
+	if (name == "left")
+	{
+		return video.mouse_buttons[SAPP_MOUSEBUTTON_LEFT];
+	}
+	if (name == "right")
+	{
+		return video.mouse_buttons[SAPP_MOUSEBUTTON_RIGHT];
+	}
+	if (name == "middle")
+	{
+		return video.mouse_buttons[SAPP_MOUSEBUTTON_MIDDLE];
+	}
+
+	JET_DIE("mouse-button-down?: unknown button '%s'", name.c_str());
+}
+
+static Atom set_window_title(Atom title)
+{
+	sapp_set_window_title(slow_unbox<String>(title)->c_str());
+	return Atom{};
+}
+
+static Atom request_quit()
+{
+	sapp_request_quit();
+	return Atom{};
+}
+
+void init_dos(VmState& s)
+{
+	Env& e = s.env;
+	e.bind("dos:frame-loop", make_prim<frame_loop>(s));
+	e.bind("dos:display-framebuffer", make_prim<display_framebuffer>(s));
+	e.bind("dos:set-palette", make_prim<set_palette>(s));
+	e.bind("dos:key-down?", make_prim<key_down>(s));
+	e.bind("dos:get-mouse-motion-x", make_prim<get_mouse_motion_x>(s));
+	e.bind("dos:get-mouse-motion-y", make_prim<get_mouse_motion_y>(s));
+	e.bind("dos:mouse-button-down?", make_prim<mouse_button_down>(s));
+	e.bind("dos:play-sound", make_prim<play_sound>(s));
+	e.bind("dos:stop-sound", make_prim<stop_sound>(s));
+	e.bind("dos:set-sound-attenuation", make_prim<set_sound_attenuation>(s));
+	e.bind("dos:sound-playing?", make_prim<sound_playing>(s));
+	e.bind("dos:set-window-title", make_prim<set_window_title>(s));
+	e.bind("dos:request-quit", make_prim<request_quit>(s));
+}
