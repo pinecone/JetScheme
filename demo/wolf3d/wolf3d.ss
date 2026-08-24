@@ -22,6 +22,7 @@
 (CheckForEpisodes)
 (Patch386)
 (InitGame)
+(dos:set-screen-emulation 'crt)
 
 (define title-frames 0)
 (define title-work 0)

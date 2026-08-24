@@ -1,6 +1,7 @@
 (define dos:frame-loop (%prim "dos:frame-loop"))
 (define dos:display-framebuffer (%prim "dos:display-framebuffer"))
 (define dos:set-palette (%prim "dos:set-palette"))
+(define dos:set-screen-emulation (%prim "dos:set-screen-emulation"))
 (define dos:key-down? (%prim "dos:key-down?"))
 (define dos:get-mouse-motion-x (%prim "dos:get-mouse-motion-x"))
 (define dos:get-mouse-motion-y (%prim "dos:get-mouse-motion-y"))

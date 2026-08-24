@@ -38,7 +38,7 @@ void main() {
 }
 )"};
 
-	constexpr char FRAGMENT_SOURCE[]{
+	constexpr char PLAIN_FRAGMENT_SOURCE[]{
 		R"(
 #version 410
 uniform sampler2D indices;
@@ -51,6 +51,65 @@ void main() {
 }
 )"};
 
+	constexpr char CRT_FRAGMENT_SOURCE[]{
+		R"(
+#version 410
+uniform sampler2D indices;
+uniform sampler2D palette;
+in vec2 uv;
+out vec4 color;
+const float CURVATURE = 0.025;
+const float BASE_BLEED = 0.03;
+const float HALATION_NEAR = 0.12;
+const float HALATION_FAR = 0.04;
+const float SCANLINE_DEPTH = 0.06;
+const float MASK_LOW = 0.94;
+const float VIGNETTE_DEPTH = 0.16;
+const vec3 SHEEN_COLOR = vec3(0.055, 0.07, 0.085);
+vec3 screen_color(vec2 sample_uv) {
+  float index = texture(indices, sample_uv).r;
+  return texture(palette, vec2(index * (255.0 / 256.0) + (0.5 / 256.0), 0.5)).rgb;
+}
+void main() {
+  vec2 centered = uv * 2.0 - 1.0;
+  vec2 curved = centered * (1.0 + dot(centered, centered) * CURVATURE);
+  vec2 sample_uv = curved * 0.5 + 0.5;
+  if (any(lessThan(sample_uv, vec2(0.0))) || any(greaterThan(sample_uv, vec2(1.0)))) {
+    color = vec4(0.0, 0.0, 0.0, 1.0);
+    return;
+  }
+  vec2 texel = 1.0 / vec2(textureSize(indices, 0));
+  vec3 center = screen_color(sample_uv);
+  vec3 left = screen_color(sample_uv - vec2(texel.x, 0.0));
+  vec3 right = screen_color(sample_uv + vec2(texel.x, 0.0));
+  vec3 far_left = screen_color(sample_uv - vec2(texel.x * 2.0, 0.0));
+  vec3 far_right = screen_color(sample_uv + vec2(texel.x * 2.0, 0.0));
+  vec3 luminance = vec3(0.2126, 0.7152, 0.0722);
+  float left_glow = smoothstep(0.24, 0.82, dot(left, luminance));
+  float right_glow = smoothstep(0.24, 0.82, dot(right, luminance));
+  float far_left_glow = smoothstep(0.38, 0.95, dot(far_left, luminance));
+  float far_right_glow = smoothstep(0.38, 0.95, dot(far_right, luminance));
+  vec3 rgb = center * (1.0 - BASE_BLEED * 2.0) + (left + right) * BASE_BLEED;
+  rgb += (left * left_glow + right * right_glow) * HALATION_NEAR;
+  rgb += (far_left * far_left_glow + far_right * far_right_glow) * HALATION_FAR;
+  float row = sample_uv.y * float(textureSize(indices, 0).y);
+  float scanline = 1.0 - SCANLINE_DEPTH + SCANLINE_DEPTH * cos(row * 6.28318530718);
+  float mask_phase = mod(floor(gl_FragCoord.x), 3.0);
+  vec3 mask = mask_phase < 1.0 ? vec3(1.0, MASK_LOW, MASK_LOW) :
+              mask_phase < 2.0 ? vec3(MASK_LOW, 1.0, MASK_LOW) : vec3(MASK_LOW, MASK_LOW, 1.0);
+  float vignette = 1.0 - VIGNETTE_DEPTH * smoothstep(0.35, 1.45, dot(centered, centered));
+  float sheen = pow(max(0.0, 1.0 - length(centered - vec2(-0.45, -0.65)) / 1.25), 4.0);
+  rgb = rgb * scanline * mask * vignette + SHEEN_COLOR * sheen;
+  color = vec4(rgb, 1.0);
+}
+)"};
+
+	enum class ScreenEmulation
+	{
+		None,
+		Crt
+	};
+
 	struct Video
 	{
 		VmState* vm{};
@@ -62,8 +121,10 @@ void main() {
 		sg_view index_view{};
 		sg_view palette_view{};
 		sg_sampler sampler{};
-		sg_pipeline pipeline{};
+		sg_pipeline plain_pipeline{};
+		sg_pipeline crt_pipeline{};
 		sg_buffer quad{};
+		ScreenEmulation screen_emulation{ScreenEmulation::None};
 		bool ready{};
 		bool palette_dirty{};
 		uint8_t rgba[PALETTE_COLORS * 4]{};
@@ -324,30 +385,36 @@ void main() {
 		quad.data.size = sizeof(corners);
 		video.quad = sg_make_buffer(&quad);
 
-		sg_shader_desc shader{};
-		shader.vertex_func.source = VERTEX_SOURCE;
-		shader.fragment_func.source = FRAGMENT_SOURCE;
-		shader.attrs[0].base_type = SG_SHADERATTRBASETYPE_FLOAT;
-		shader.attrs[0].glsl_name = "pos";
-		shader.samplers[0].stage = SG_SHADERSTAGE_FRAGMENT;
-		shader.samplers[0].sampler_type = SG_SAMPLERTYPE_FILTERING;
-		for (size_t slot{0}; slot < 2; slot++)
+		auto&& make_pipeline = [](const char* fragment_source)
 		{
-			shader.views[slot].texture.stage = SG_SHADERSTAGE_FRAGMENT;
-			shader.views[slot].texture.image_type = SG_IMAGETYPE_2D;
-			shader.views[slot].texture.sample_type = SG_IMAGESAMPLETYPE_FLOAT;
-			shader.texture_sampler_pairs[slot].stage = SG_SHADERSTAGE_FRAGMENT;
-			shader.texture_sampler_pairs[slot].view_slot = static_cast<uint8_t>(slot);
-			shader.texture_sampler_pairs[slot].sampler_slot = 0;
-		}
-		shader.texture_sampler_pairs[0].glsl_name = "indices";
-		shader.texture_sampler_pairs[1].glsl_name = "palette";
+			sg_shader_desc shader{};
+			shader.vertex_func.source = VERTEX_SOURCE;
+			shader.fragment_func.source = fragment_source;
+			shader.attrs[0].base_type = SG_SHADERATTRBASETYPE_FLOAT;
+			shader.attrs[0].glsl_name = "pos";
+			shader.samplers[0].stage = SG_SHADERSTAGE_FRAGMENT;
+			shader.samplers[0].sampler_type = SG_SAMPLERTYPE_FILTERING;
+			for (size_t slot{0}; slot < 2; slot++)
+			{
+				shader.views[slot].texture.stage = SG_SHADERSTAGE_FRAGMENT;
+				shader.views[slot].texture.image_type = SG_IMAGETYPE_2D;
+				shader.views[slot].texture.sample_type = SG_IMAGESAMPLETYPE_FLOAT;
+				shader.texture_sampler_pairs[slot].stage = SG_SHADERSTAGE_FRAGMENT;
+				shader.texture_sampler_pairs[slot].view_slot = static_cast<uint8_t>(slot);
+				shader.texture_sampler_pairs[slot].sampler_slot = 0;
+			}
+			shader.texture_sampler_pairs[0].glsl_name = "indices";
+			shader.texture_sampler_pairs[1].glsl_name = "palette";
 
-		sg_pipeline_desc pipeline{};
-		pipeline.shader = sg_make_shader(&shader);
-		pipeline.layout.attrs[0].format = SG_VERTEXFORMAT_FLOAT2;
-		pipeline.primitive_type = SG_PRIMITIVETYPE_TRIANGLE_STRIP;
-		video.pipeline = sg_make_pipeline(&pipeline);
+			sg_pipeline_desc pipeline{};
+			pipeline.shader = sg_make_shader(&shader);
+			pipeline.layout.attrs[0].format = SG_VERTEXFORMAT_FLOAT2;
+			pipeline.primitive_type = SG_PRIMITIVETYPE_TRIANGLE_STRIP;
+			return sg_make_pipeline(&pipeline);
+		};
+
+		video.plain_pipeline = make_pipeline(PLAIN_FRAGMENT_SOURCE);
+		video.crt_pipeline = make_pipeline(CRT_FRAGMENT_SOURCE);
 
 		video.ready = true;
 		video.palette_dirty = true;
@@ -460,12 +527,33 @@ static Atom display_framebuffer(Atom pixels)
 	bindings.views[0] = video.index_view;
 	bindings.views[1] = video.palette_view;
 	bindings.samplers[0] = video.sampler;
-	sg_apply_pipeline(video.pipeline);
+	sg_pipeline pipeline = video.screen_emulation == ScreenEmulation::Crt ? video.crt_pipeline
+	                       :video.plain_pipeline;
+	sg_apply_pipeline(pipeline);
 	sg_apply_bindings(&bindings);
 	sg_draw(0, 4, 1);
 
 	sg_end_pass();
 	sg_commit();
+
+	return Atom{};
+}
+
+static Atom set_screen_emulation(Atom mode)
+{
+	const std::string& name = *slow_unbox<Symbol>(mode);
+	if (name == "none")
+	{
+		video.screen_emulation = ScreenEmulation::None;
+	}
+	else if (name == "crt")
+	{
+		video.screen_emulation = ScreenEmulation::Crt;
+	}
+	else
+	{
+		JET_DIE("set-screen-emulation: unknown mode '%s', expected 'none or 'crt", name.c_str());
+	}
 
 	return Atom{};
 }
@@ -646,6 +734,7 @@ void init_dos(VmState& s)
 	e.bind("dos:frame-loop", make_prim<frame_loop>(s));
 	e.bind("dos:display-framebuffer", make_prim<display_framebuffer>(s));
 	e.bind("dos:set-palette", make_prim<set_palette>(s));
+	e.bind("dos:set-screen-emulation", make_prim<set_screen_emulation>(s));
 	e.bind("dos:key-down?", make_prim<key_down>(s));
 	e.bind("dos:get-mouse-motion-x", make_prim<get_mouse_motion_x>(s));
 	e.bind("dos:get-mouse-motion-y", make_prim<get_mouse_motion_y>(s));
