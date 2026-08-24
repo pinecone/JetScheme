@@ -697,6 +697,8 @@
 (define CREDITSPIC 89)
 (define T_DEMO0 139)
 
+(define INTROSONG 7)
+
 (define (attract-screen pic delay)
   (VL_FadeOut 0 255 0 0 0 30)
   (VWB_DrawPic 0 0 pic)
@@ -729,4 +731,6 @@
           (PlayDemo (CA_CacheGrChunk (+ T_DEMO0 demo)))
           (if (= playstate ex_abort)
               #t
-              (attract (- (+ demo 1) (* 4 (truncate (/ (+ demo 1) 4))))))))))
+              (begin
+                (StartCPMusic INTROSONG)
+                (attract (- (+ demo 1) (* 4 (truncate (/ (+ demo 1) 4)))))))))))

@@ -75,6 +75,7 @@ MODULE_MKS := $(addsuffix /module.mk,$(MODULE_DIRS))
 MODULE_CC :=
 MODULE_CPP :=
 MODULE_SOKOL_CC :=
+MODULE_VENDOR_CC :=
 MODULE_INIT :=
 MODULE_PRELUDE :=
 MODULE_TESTS :=
@@ -96,7 +97,8 @@ endif
 LDFLAGS	 := $(LDOPT) $(MODULE_LDFLAGS)
 
 # Third-party code, so warnings-as-errors and the house warning set do not apply.
-SOKOL_CXXFLAGS := $(filter-out -Wall -Wextra -Werror -Wold-style-cast,$(CXXFLAGS)) -w $(SOKOL_LANG)
+VENDOR_CXXFLAGS := $(filter-out -Wall -Wextra -Werror -Wold-style-cast,$(CXXFLAGS)) -w
+SOKOL_CXXFLAGS := $(VENDOR_CXXFLAGS) $(SOKOL_LANG)
 
 # --- Sources -------------------------------------------------------------
 
@@ -104,7 +106,8 @@ CORE_CC := $(wildcard $(SRC)/*.cc)
 ALL_CC := $(CORE_CC) $(MODULE_CC)
 ALL_CPP := $(ALL_CC) $(wildcard $(SRC)/*.h) $(MODULE_CPP)
 SOKOL_OBJ := $(patsubst %.cc,$(OBJDIR)/%.o,$(MODULE_SOKOL_CC))
-ALL_OBJ := $(patsubst %.cc,$(OBJDIR)/%.o,$(ALL_CC)) $(SOKOL_OBJ)
+VENDOR_OBJ := $(patsubst %.cpp,$(OBJDIR)/%.o,$(MODULE_VENDOR_CC))
+ALL_OBJ := $(patsubst %.cc,$(OBJDIR)/%.o,$(ALL_CC)) $(SOKOL_OBJ) $(VENDOR_OBJ)
 PRELUDE_SOURCES := $(PRELUDE) $(MODULE_PRELUDE)
 MODULES_H := $(BUILD)/modules.h
 BENCHMARK_SS := $(sort $(wildcard bench/bench-*.ss))
@@ -220,6 +223,11 @@ $(OBJDIR)/vendor/sokol/%.o: vendor/sokol/%.cc Makefile | $(OBJDIR)
 	@printf '  CXX   %s\n' '$<'
 	$(Q)mkdir -p $(dir $@)
 	$(Q)$(CXX) $(SOKOL_CXXFLAGS) -MMD -MP -c -o $@ $<
+
+$(OBJDIR)/vendor/%.o: vendor/%.cpp Makefile | $(OBJDIR)
+	@printf '  CXX   %s\n' '$<'
+	$(Q)mkdir -p $(dir $@)
+	$(Q)$(CXX) $(VENDOR_CXXFLAGS) -MMD -MP -c -o $@ $<
 
 $(OBJDIR)/%.o: %.cc Makefile | $(OBJDIR)
 	@printf '  CXX   %s\n' '$<'

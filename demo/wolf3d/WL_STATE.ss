@@ -1449,12 +1449,6 @@
       (DoActor index tics)
       (loop (+ index 1)))))
 
-(define (StopMusic)
-  (SD_MusicOff))
-
-(define (StartMusic)
-  (SD_MusicOff))
-
 ;;; WL_PLAY.C:1054-1236 — palette shifting
 
 (define NUMREDSHIFTS 6)

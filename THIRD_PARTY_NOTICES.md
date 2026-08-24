@@ -18,6 +18,15 @@ Copyright 2018 Andre Weissflog.
 These files are licensed under the zlib/libpng license. The complete license
 is in `vendor/sokol/LICENSE`.
 
+## YMFM
+
+`vendor/ymfm` is from the YMFM project by Aaron Giles.
+
+Copyright 2021 Aaron Giles. All rights reserved.
+
+These files are licensed under the BSD 3-Clause License. The complete license
+is in `vendor/ymfm/LICENSE`.
+
 ## DeltaBlue
 
 `bench/bench-deltablue.ss`, `bench/bench-deltablue.lua`, and

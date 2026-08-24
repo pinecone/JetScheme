@@ -10,12 +10,6 @@
 (define (ShootSnd)
   (SD_PlaySound SHOOTSND))
 
-(define (StartCPMusic song)
-  (SD_MusicOff))
-
-(define (FreeMusic)
-  #f)
-
 ;; WL_MENU.H:16-30
 (define BORDCOLOR 41)
 (define BORD2COLOR 35)

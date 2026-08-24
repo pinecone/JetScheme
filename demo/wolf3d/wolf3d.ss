@@ -24,18 +24,21 @@
 (InitGame)
 
 (define title-frames 0)
-(define title-time (time-monotonic))
+(define title-work 0)
+(define title-update (time-monotonic))
 
-(define (update-title)
-  (set! title-frames (+ title-frames 1))
-  (let ((elapsed (- (time-monotonic) title-time)))
-    (when (>= elapsed 1)
+(define (update-title frame-start)
+  (let ((now (time-monotonic)))
+    (set! title-frames (+ title-frames 1))
+    (set! title-work (+ title-work (- now frame-start)))
+    (when (>= (- now title-update) 1)
       (dos:set-window-title
        (string-append "Wolfenstein 3D - "
-                      (number->string (/ (round (/ (* 10 title-frames) elapsed)) 10))
+                      (number->string (/ (round (/ (* 10 title-frames) title-work)) 10))
                       " fps"))
       (set! title-frames 0)
-      (set! title-time (+ title-time elapsed)))))
+      (set! title-work 0)
+      (set! title-update now))))
 
 ;; sokol allows one image update per frame, so only the driver below displays a framebuffer.
 (set! vl-vbl (lambda (count) (IN_Yield)))
@@ -45,6 +48,7 @@
 (define game
   (let/coro yield ()
     (set! in-yield yield)
+    (StartCPMusic INTROSONG)
     (PG13)
     (let outer ()
       (set! ingame #f)
@@ -53,25 +57,32 @@
       (DrawPlayScreen)
       (if loadedgame
           (begin
+            (set! startgame #f)
+            (set! loadedgame #f)
+            (StartMusic)
             (DrawLevel)
             (set! playstate ex_stillplaying))
           (start-level))
       (let play ()
         (if (game-step)
-            (outer)
+            (begin
+              (StartCPMusic INTROSONG)
+              (outer))
             (begin
               (yield #f)
               (play)))))))
 
 (define (frame)
-  (IN_PollKeyboard)
-  (CalcTics)
-  (set! TimeCount (+ TimeCount tics))
-  (coro/next game #f)
-  ;; The host presents the current visible linear RAM image.  The explicit
-  ;; display page remains for reference copies, but direct reference writes
-  ;; (including FizzleFade's per-VBL steps) must be visible immediately.
-  (dos:display-framebuffer framebuffer)
-  (update-title))
+  (let ((frame-start (time-monotonic)))
+    (IN_PollKeyboard)
+    (CalcTics)
+    (set! TimeCount (+ TimeCount tics))
+    (SD_Service)
+    (coro/next game #f)
+    ;; The host presents the current visible linear RAM image.  The explicit
+    ;; display page remains for reference copies, but direct reference writes
+    ;; (including FizzleFade's per-VBL steps) must be visible immediately.
+    (dos:display-framebuffer framebuffer)
+    (update-title frame-start)))
 
 (dos:frame-loop "Wolfenstein 3D" screenwidth screenheight frame)

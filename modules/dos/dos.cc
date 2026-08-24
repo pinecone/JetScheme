@@ -3,7 +3,13 @@
 
 #include "dos.h"
 #include "runtime.h"
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wold-style-cast"
+#include "ymfm/src/ymfm_opl.h"
+#pragma clang diagnostic pop
 
+#include <algorithm>
+#include <cmath>
 #include <mutex>
 #include <vector>
 
@@ -22,24 +28,28 @@ namespace
 	constexpr size_t PALETTE_COLORS{256};
 
 	constexpr char VERTEX_SOURCE[]{
-		"#version 410\n"
-		"in vec2 pos;\n"
-		"out vec2 uv;\n"
-		"void main() {\n"
-		"  gl_Position = vec4(pos * 2.0 - 1.0, 0.0, 1.0);\n"
-		"  uv = vec2(pos.x, 1.0 - pos.y);\n"
-		"}\n"};
+		R"(
+#version 410
+in vec2 pos;
+out vec2 uv;
+void main() {
+  gl_Position = vec4(pos * 2.0 - 1.0, 0.0, 1.0);
+  uv = vec2(pos.x, 1.0 - pos.y);
+}
+)"};
 
 	constexpr char FRAGMENT_SOURCE[]{
-		"#version 410\n"
-		"uniform sampler2D indices;\n"
-		"uniform sampler2D palette;\n"
-		"in vec2 uv;\n"
-		"out vec4 color;\n"
-		"void main() {\n"
-		"  float index = texture(indices, uv).r;\n"
-		"  color = texture(palette, vec2(index * (255.0 / 256.0) + (0.5 / 256.0), 0.5));\n"
-		"}\n"};
+		R"(
+#version 410
+uniform sampler2D indices;
+uniform sampler2D palette;
+in vec2 uv;
+out vec4 color;
+void main() {
+  float index = texture(indices, uv).r;
+  color = texture(palette, vec2(index * (255.0 / 256.0) + (0.5 / 256.0), 0.5));
+}
+)"};
 
 	struct Video
 	{
@@ -78,15 +88,25 @@ namespace
 	constexpr size_t VOICE_PC{1};
 	constexpr size_t VOICE_COUNT{2};
 
+	struct YmfmInterface : ymfm::ymfm_interface
+	{
+	};
+
 	struct Audio
 	{
 		std::mutex lock;
 		Voice voices[VOICE_COUNT];
+		YmfmInterface ymfm_interface;
+		ymfm::ym3812 adlib{ymfm_interface};
+		double adlib_step{};
+		double adlib_phase{1.0};
+		float adlib_sample{};
 		float left{1.0f};
 		float right{1.0f};
 		bool started{};
 	};
 
+	constexpr uint32_t ADLIB_CLOCK{3579545};
 	constexpr int MAX_ATTENUATION{15};
 
 	Audio audio{};
@@ -109,6 +129,26 @@ namespace
 		return (static_cast<float>(voice.samples[index]) - 128.0f) / 128.0f;
 	}
 
+	float next_adlib_sample()
+	{
+		if (audio.adlib_step == 0.0)
+		{
+			audio.adlib_step = static_cast<double>(audio.adlib.sample_rate(ADLIB_CLOCK)) /
+			                   saudio_sample_rate();
+		}
+
+		audio.adlib_phase += audio.adlib_step;
+		while (audio.adlib_phase >= 1.0)
+		{
+			ymfm::ym3812::output_data output{};
+			audio.adlib.generate(&output);
+			audio.adlib_sample = static_cast<float>(output.data[0]) / 32768.0f;
+			audio.adlib_phase -= 1.0;
+		}
+
+		return audio.adlib_sample;
+	}
+
 	void stream_cb(float* buffer, int num_frames, int num_channels)
 	{
 		const std::lock_guard<std::mutex> held{audio.lock};
@@ -116,13 +156,14 @@ namespace
 
 		for (int frame{0}; frame < num_frames; frame++)
 		{
-			// Only the digitized voice is positioned; the speaker had no stereo image.
 			float digi = next_sample(audio.voices[VOICE_DIGI]);
 			float pc = next_sample(audio.voices[VOICE_PC]);
+			float adlib = next_adlib_sample();
 
 			for (int channel{0}; channel < num_channels; channel++)
 			{
-				buffer[frame * num_channels + channel] = digi * gains[channel & 1] + pc;
+				float mixed = digi * gains[channel & 1] + pc + adlib;
+				buffer[frame * num_channels + channel] = std::clamp(mixed, -1.0f, 1.0f);
 			}
 		}
 	}
@@ -477,6 +518,44 @@ static Atom play_sound(Atom channel, Atom pcm, Atom rate)
 	return Atom{};
 }
 
+static uint8_t adlib_byte(Atom value, const char* name)
+{
+	double number = slow_unbox<Number>(value);
+	JET_DIE_UNLESS(std::isfinite(number) && number >= 0.0 && number <= 255.0 && std::floor(number) == number,
+	               "%s: %g, expected an integer from 0 to 255", name, number);
+
+	return static_cast<uint8_t>(number);
+}
+
+static bool adlib_reset()
+{
+	if (!start_audio())
+	{
+		return false;
+	}
+
+	const std::lock_guard<std::mutex> held{audio.lock};
+	audio.adlib.reset();
+	audio.adlib_step = 0.0;
+	audio.adlib_phase = 1.0;
+	audio.adlib_sample = 0.0f;
+
+	return true;
+}
+
+static Atom adlib_write(Atom register_value, Atom data_value)
+{
+	uint8_t register_byte = adlib_byte(register_value, "adlib-write register");
+	uint8_t data_byte = adlib_byte(data_value, "adlib-write value");
+	JET_DIE_UNLESS(start_audio(), "adlib-write: audio device is unavailable");
+
+	const std::lock_guard<std::mutex> held{audio.lock};
+	audio.adlib.write_address(register_byte);
+	audio.adlib.write_data(data_byte);
+
+	return Atom{};
+}
+
 static Atom set_sound_attenuation(Atom left, Atom right)
 {
 	int left_step = static_cast<int>(slow_unbox<Number>(left));
@@ -573,6 +652,8 @@ void init_dos(VmState& s)
 	e.bind("dos:mouse-button-down?", make_prim<mouse_button_down>(s));
 	e.bind("dos:play-sound", make_prim<play_sound>(s));
 	e.bind("dos:stop-sound", make_prim<stop_sound>(s));
+	e.bind("dos:adlib-reset", make_prim<adlib_reset>(s));
+	e.bind("dos:adlib-write", make_prim<adlib_write>(s));
 	e.bind("dos:set-sound-attenuation", make_prim<set_sound_attenuation>(s));
 	e.bind("dos:sound-playing?", make_prim<sound_playing>(s));
 	e.bind("dos:set-window-title", make_prim<set_window_title>(s));
