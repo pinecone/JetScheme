@@ -754,6 +754,8 @@
 (define (SD_WaitSoundDone)
   (let wait ()
     (when (SD_SoundPlaying)
+      (SD_Service)
+      (SD_Poll)
       (wait))))
 
 (define (SD_StopDigitized)
@@ -881,4 +883,4 @@
                  (SDL_ALPlaySound sound))
              (set! SoundNumber sound)
              (set! SoundPriority priority)
-             #t))))))
+             #f))))))

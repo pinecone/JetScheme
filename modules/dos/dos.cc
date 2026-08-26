@@ -121,8 +121,7 @@ void main() {
 		sg_view index_view{};
 		sg_view palette_view{};
 		sg_sampler sampler{};
-		sg_pipeline plain_pipeline{};
-		sg_pipeline crt_pipeline{};
+		sg_pipeline pipeline{};
 		sg_buffer quad{};
 		ScreenEmulation screen_emulation{ScreenEmulation::None};
 		bool ready{};
@@ -413,8 +412,10 @@ void main() {
 			return sg_make_pipeline(&pipeline);
 		};
 
-		video.plain_pipeline = make_pipeline(PLAIN_FRAGMENT_SOURCE);
-		video.crt_pipeline = make_pipeline(CRT_FRAGMENT_SOURCE);
+		const char* fragment_source = video.screen_emulation == ScreenEmulation::Crt
+		                              ? CRT_FRAGMENT_SOURCE
+		                              : PLAIN_FRAGMENT_SOURCE;
+		video.pipeline = make_pipeline(fragment_source);
 
 		video.ready = true;
 		video.palette_dirty = true;
@@ -468,9 +469,24 @@ void main() {
 
 } // namespace
 
-static Atom frame_loop(VmState& s, Atom title, Atom width, Atom height, Atom frame)
+static Atom frame_loop(VmState& s, Atom title, Atom width, Atom height, Atom emulation, Atom frame)
 {
 	JET_DIE_UNLESS(video.vm == nullptr, "frame-loop: already running");
+
+	const std::string& emulation_name = *slow_unbox<Symbol>(emulation);
+	if (emulation_name == "none")
+	{
+		video.screen_emulation = ScreenEmulation::None;
+	}
+	else if (emulation_name == "crt")
+	{
+		video.screen_emulation = ScreenEmulation::Crt;
+	}
+	else
+	{
+		JET_DIE("frame-loop: unknown screen emulation '%s', expected 'none' or 'crt'",
+		        emulation_name.c_str());
+	}
 
 	video.vm = &s;
 	video.frame_proc = frame;
@@ -488,6 +504,7 @@ static Atom frame_loop(VmState& s, Atom title, Atom width, Atom height, Atom fra
 	app.event_cb = event_cb;
 	app.width = video.width * WINDOW_SCALE;
 	app.height = static_cast<int>(video.height * WINDOW_SCALE * PIXEL_ASPECT);
+	app.fullscreen = true;
 	app.window_title = slow_unbox<String>(title)->c_str();
 	app.logger.func = slog_func;
 	sapp_run(&app);
@@ -527,33 +544,12 @@ static Atom display_framebuffer(Atom pixels)
 	bindings.views[0] = video.index_view;
 	bindings.views[1] = video.palette_view;
 	bindings.samplers[0] = video.sampler;
-	sg_pipeline pipeline = video.screen_emulation == ScreenEmulation::Crt ? video.crt_pipeline
-	                       :video.plain_pipeline;
-	sg_apply_pipeline(pipeline);
+	sg_apply_pipeline(video.pipeline);
 	sg_apply_bindings(&bindings);
 	sg_draw(0, 4, 1);
 
 	sg_end_pass();
 	sg_commit();
-
-	return Atom{};
-}
-
-static Atom set_screen_emulation(Atom mode)
-{
-	const std::string& name = *slow_unbox<Symbol>(mode);
-	if (name == "none")
-	{
-		video.screen_emulation = ScreenEmulation::None;
-	}
-	else if (name == "crt")
-	{
-		video.screen_emulation = ScreenEmulation::Crt;
-	}
-	else
-	{
-		JET_DIE("set-screen-emulation: unknown mode '%s', expected 'none or 'crt", name.c_str());
-	}
 
 	return Atom{};
 }
@@ -734,7 +730,6 @@ void init_dos(VmState& s)
 	e.bind("dos:frame-loop", make_prim<frame_loop>(s));
 	e.bind("dos:display-framebuffer", make_prim<display_framebuffer>(s));
 	e.bind("dos:set-palette", make_prim<set_palette>(s));
-	e.bind("dos:set-screen-emulation", make_prim<set_screen_emulation>(s));
 	e.bind("dos:key-down?", make_prim<key_down>(s));
 	e.bind("dos:get-mouse-motion-x", make_prim<get_mouse_motion_x>(s));
 	e.bind("dos:get-mouse-motion-y", make_prim<get_mouse_motion_y>(s));

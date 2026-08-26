@@ -16,7 +16,7 @@
 
 (define config 0)
 
-(define viewsize 15)
+(define viewsize 19)
 (define mouseadjustment 5)
 (define mouseenabled #f)
 (define joystickenabled #f)

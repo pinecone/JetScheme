@@ -22,7 +22,6 @@
 (CheckForEpisodes)
 (Patch386)
 (InitGame)
-(dos:set-screen-emulation 'crt)
 
 (define title-frames 0)
 (define title-work 0)
@@ -86,4 +85,4 @@
     (dos:display-framebuffer framebuffer)
     (update-title frame-start)))
 
-(dos:frame-loop "Wolfenstein 3D" screenwidth screenheight frame)
+(dos:frame-loop "Wolfenstein 3D" screenwidth screenheight 'crt frame)
