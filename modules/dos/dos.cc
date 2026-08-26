@@ -58,10 +58,11 @@ uniform sampler2D indices;
 uniform sampler2D palette;
 in vec2 uv;
 out vec4 color;
-const float CURVATURE = 0.025;
-const float BASE_BLEED = 0.03;
-const float HALATION_NEAR = 0.12;
-const float HALATION_FAR = 0.04;
+const float CURVATURE = 0.02;
+const float OVERSCAN = 1.0 + 2.0 * CURVATURE;
+const float BASE_BLEED = 0.035;
+const float HALATION_NEAR = 0.14;
+const float HALATION_FAR = 0.05;
 const float SCANLINE_DEPTH = 0.06;
 const float MASK_LOW = 0.94;
 const float VIGNETTE_DEPTH = 0.16;
@@ -72,7 +73,7 @@ vec3 screen_color(vec2 sample_uv) {
 }
 void main() {
   vec2 centered = uv * 2.0 - 1.0;
-  vec2 curved = centered * (1.0 + dot(centered, centered) * CURVATURE);
+  vec2 curved = centered * (1.0 + dot(centered, centered) * CURVATURE) / OVERSCAN;
   vec2 sample_uv = curved * 0.5 + 0.5;
   if (any(lessThan(sample_uv, vec2(0.0))) || any(greaterThan(sample_uv, vec2(1.0)))) {
     color = vec4(0.0, 0.0, 0.0, 1.0);
