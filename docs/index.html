@@ -10,10 +10,9 @@
 <link rel="preload" href="fonts/SourceSans3.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="fonts/SourceSans3-Italic.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="fonts/0xProto-Regular.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="preload" href="fonts/0xProto-Italic.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="fonts/0xProto-Bold.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="style.css?v=5">
-<script src="vendor/justif/auto-classic.js"></script>
+<link rel="stylesheet" href="style.css?v=7">
+<script src="vendor/justif/auto-classic.js" defer></script>
 </head>
 <body>
 <main>
@@ -33,180 +32,7 @@
   escape continuations, coroutines, structs, tuples, hash sets and maps, and mutation-safe iteration.
   <strong>JetScheme is in pre-alpha.</strong> It is thus unfit for any particular use (other than working
   on JetScheme).</p>
-  <!--
-  <p><strong>Small &amp; fast.</strong> About 10,000 lines of C++, tuned for performance. <a class="perf-details" href="#benchmarks">(See benchmarks. <span class="benchmark-arrow">↓</span>)</a></p>
-  <p><strong>Safe iteration.</strong> Traversal remains deterministic under mutation; every remaining
-  element is visited.</p>
-  <p><strong>Generic accessors.</strong>
-  <code>(ref v i)</code> reads and <code>(setf! v i x)</code> stores <code>x</code> at
-  key <code>i</code> in <code>v</code>. Vectors, strings, bytevectors, and tuples
-  take an integer index; structs take a field name; hashsets and hashmaps take any
-  legal key:</p>
-<pre><code>(<span class="k">define</span> v (<span class="b">vector</span> <span class="n">10</span> <span class="n">20</span> <span class="n">30</span>))
-(<span class="b">ref</span> v <span class="n">0</span>)                                        <span class="c">; =&gt; 10   (vector-ref)</span>
-(<span class="k">setf!</span> v <span class="n">0</span> <span class="n">99</span>)                                   <span class="c">; vector-set!</span>
-(<span class="b">ref</span> v <span class="n">0</span>)                                        <span class="c">; =&gt; 99</span>
 
-(<span class="k">define</span> pt (<span class="b">point</span> <span class="n">3</span> <span class="n">4</span>))                          <span class="c">; a point struct</span>
-(<span class="b">ref</span> pt '<span class="n">x</span>)                                      <span class="c">; =&gt; 3    (struct field read)</span>
-(<span class="k">setf!</span> pt '<span class="n">x</span> <span class="n">10</span>)                                 <span class="c">; struct field mutation</span>
-
-(<span class="k">define</span> m (<span class="b">hashmap</span> '<span class="n">a</span> <span class="n">1</span>))                        <span class="c">; one key, one value</span>
-(<span class="k">setf!</span> m '<span class="n">b</span> <span class="n">2</span>)                                   <span class="c">; insert or overwrite</span>
-(<span class="b">ref</span> m '<span class="n">b</span>)                                       <span class="c">; =&gt; 2    (any legal key)</span></code></pre>
-  -->
-
-  <!--
-  <h3>Numbers</h3>
-  <p>All numbers are 64-bit doubles. <code>exact?</code> and
-  <code>integer?</code> answer <code>#t</code> for every integral value.</p>
-  <p><code>+</code> <code>-</code> <code>*</code> <code>/</code>,
-  <code>quotient</code>, <code>remainder</code>, <code>modulo</code>,
-  <code>abs</code>, <code>square</code>, <code>expt</code>, <code>sqrt</code>,
-  <code>exp</code>, <code>log</code>, <code>sin</code>, <code>cos</code>,
-  <code>tan</code>, <code>asin</code>, <code>acos</code>, <code>atan</code>,
-  <code>floor</code>, <code>ceiling</code>, <code>truncate</code>,
-  <code>round</code>, <code>min</code>, <code>max</code>,
-  <code>random</code>, and <code>random-seed</code>.</p>
-  <p>Comparisons <code>=</code> <code>&lt;</code> <code>&lt;=</code>
-  <code>&gt;</code> <code>&gt;=</code> and predicates <code>zero?</code>,
-  <code>positive?</code>, <code>negative?</code>, <code>even?</code>,
-  <code>odd?</code>, <code>number?</code>. Convert with
-  <code>number-&gt;string</code> and <code>string-&gt;number</code>.
-  <strong>Bitwise ops</strong> — <code>bitwise-and</code>,
-  <code>bitwise-ior</code>, <code>bitwise-xor</code>, <code>bitwise-not</code>,
-  <code>arithmetic-shift</code> — operate on integral doubles.</p>
-
-  <h3>Pairs &amp; lists</h3>
-  <p><code>cons</code>, <code>car</code>, <code>cdr</code>,
-  <code>set-car!</code>, <code>set-cdr!</code>, <code>pair?</code>,
-  <code>null?</code>, <code>list</code>, <code>list?</code>, the
-  <code>caar</code>&hellip;<code>cddddr</code> combinations, and the named
-  accessors <code>first</code> through <code>fifth</code> and
-  <code>rest</code>.</p>
-  <p>List operations: <code>length</code>, <code>append</code>,
-  <code>reverse</code>, <code>take</code>, <code>drop</code>,
-  <code>last</code>, <code>concatenate</code>, <code>map</code>,
-  <code>for-each</code>, <code>filter</code>, <code>fold</code>,
-  <code>fold-right</code>, <code>reduce-right</code>, and the association-list
-  lookups <code>assq</code>, <code>assv</code>, <code>assoc</code>.</p>
-<pre><code>(<span class="k">define</span> (<span class="b">sum</span> xs)
-  (<span class="k">let</span> loop ((xs xs) (total <span class="n">0</span>))                  <span class="c">; named let — loops via tail call</span>
-    (<span class="k">if</span> (<span class="b">null?</span> xs)
-        total
-        (loop (<span class="b">cdr</span> xs) (+ total (<span class="b">car</span> xs))))))
-
-(<span class="b">displayn</span> (<span class="b">sum</span> '(<span class="n">1</span> <span class="n">2</span> <span class="n">3</span> <span class="n">4</span> <span class="n">5</span>)))                    <span class="c">; prints 15</span></code></pre>
-
-  <h3>Strings &amp; characters</h3>
-  <p>Strings are immutable and byte-level UTF-8.
-  <code>string-length</code> and <code>string-ref</code> are byte-indexed, and
-  comparison sorts by codepoint. Character classes cover ASCII.</p>
-  <p><code>string</code>, <code>make-string</code>, <code>string-append</code>,
-  <code>substring</code>, <code>string-copy</code>,
-  <code>string-length</code>; index with <code>ref</code>.
-  Comparisons are case-sensitive (<code>string=?</code>,
-  <code>string&lt;?</code>, &hellip;).</p>
-  <p>Characters: <code>char-&gt;integer</code>, <code>integer-&gt;char</code>,
-  comparisons (<code>char=?</code>, <code>char-ci=?</code>, &hellip;),
-  predicates <code>char-alphabetic?</code>,
-  <code>char-numeric?</code>, <code>char-whitespace?</code>,
-  <code>char-upper-case?</code>, <code>char-lower-case?</code>, plus
-  <code>char-upcase</code>, <code>char-downcase</code>, and
-  <code>digit-value</code>. Named literals: <code>#\space</code>,
-  <code>#\newline</code>, <code>#\tab</code>, <code>#\return</code>,
-  <code>#\null</code>, <code>#\escape</code>, <code>#\backspace</code>,
-  <code>#\delete</code>.</p>
-
-  <h3>Vectors &amp; bytevectors</h3>
-  <p><code>vector</code>, <code>make-vector</code>, <code>vector?</code>,
-  <code>vector-length</code>; <code>bytevector</code>, <code>make-bytevector</code>,
-  <code>bytevector?</code>, <code>bytevector-length</code>,
-  <code>bytevector-copy</code>, <code>bytevector-copy!</code>,
-  <code>bytevector-append</code>, plus <code>vector-ref</code>,
-  <code>vector-set!</code>, <code>bytevector-u8-ref</code>, and
-  <code>bytevector-u8-set!</code>. As literals: <code>#(1 2 3)</code> and
-  <code>#u8(1 2 3)</code>.</p>
-
-  <h3>Structs</h3>
-  <p><strong><code>struct</code>, <code>isa?</code>.</strong> Every call to
-  <code>struct</code> makes a new type. Two types with the same name and fields are
-  still different.</p>
-<pre><code>(<span class="k">define</span> <span class="b">point</span> (<span class="b">struct</span> '<span class="n">point</span> '(<span class="n">x</span> <span class="n">y</span>)))            <span class="c">; create a fresh type</span>
-(<span class="k">define</span> p (<span class="b">point</span> <span class="n">3</span> <span class="n">4</span>))                           <span class="c">; call the type to construct</span>
-(<span class="b">isa?</span> p <span class="b">point</span>)                                   <span class="c">; =&gt; #t</span>
-(<span class="b">ref</span> p '<span class="n">x</span>)                                       <span class="c">; =&gt; 3</span>
-(<span class="k">setf!</span> p '<span class="n">x</span> <span class="n">10</span>)                                  <span class="c">; mutate field</span></code></pre>
-
-  <h3>Tuples</h3>
-  <p><strong><code>tuple</code>.</strong> Constructs an immutable, fixed-size tuple,
-  indexed with <code>ref</code>. The literal form is <code>#tuple(...)</code>.</p>
-<pre><code>(<span class="k">define</span> t (<span class="b">tuple</span> '<span class="n">a</span> '<span class="n">b</span> '<span class="n">c</span>))
-(<span class="b">isa?</span> t <span class="b">tuple</span>)                                   <span class="c">; =&gt; #t</span>
-(<span class="b">ref</span> t <span class="n">1</span>)                                        <span class="c">; =&gt; b</span>
-(<span class="b">equal?</span> t #<span class="b">tuple</span>(<span class="n">a</span> <span class="n">b</span> <span class="n">c</span>))                         <span class="c">; =&gt; #t   the same tuple</span>
-`#<span class="b">tuple</span>(<span class="n">a</span> ,(+ <span class="n">1</span> <span class="n">1</span>))                              <span class="c">; =&gt; #tuple(a 2)   a template</span></code></pre>
-
-  <h3>Equality &amp; symbols</h3>
-  <p><code>eq?</code> compares identity, <code>eqv?</code> compares identity and
-  numbers by value, and <code>equal?</code> compares structures recursively. Lambdas
-  have no observable identity: all three answer <code>#f</code> for a lambda, even
-  compared with itself. There
-  are also the type-specific predicates <code>boolean=?</code>,
-  <code>symbol=?</code>, and <code>string=?</code>. Symbols convert with
-  <code>symbol-&gt;string</code> and <code>string-&gt;symbol</code>, and there are
-  <code>symbol?</code> and <code>procedure?</code>.</p>
-<pre><code>(<span class="b">eq?</span> '<span class="n">a</span> '<span class="n">a</span>)                                      <span class="c">; =&gt; #t   same symbol</span>
-(<span class="b">eq?</span> (<span class="b">string-&gt;symbol</span> <span class="s">"a"</span>) '<span class="n">a</span>)                    <span class="c">; =&gt; #t   same symbol from a string</span>
-(<span class="b">eqv?</span> <span class="n">2</span> <span class="n">2</span>)                                       <span class="c">; =&gt; #t   numbers compare by value</span>
-(<span class="b">equal?</span> '(<span class="n">1</span> <span class="n">2</span>) '(<span class="n">1</span> <span class="n">2</span>))                           <span class="c">; =&gt; #t   same contents</span>
-(<span class="b">eq?</span> '(<span class="n">1</span> <span class="n">2</span>) '(<span class="n">1</span> <span class="n">2</span>))                              <span class="c">; =&gt; #f   different pairs</span></code></pre>
-
-  <h3>Hash tables &amp; sets</h3>
-  <p><strong><code>hashset</code>, <code>hashmap</code>, <code>hashset?</code>, <code>hashmap?</code>.</strong>
-  <code>ref</code> on a hashset tells you whether the element is there, and on a hashmap
-  it raises an error when the key is absent. <code>setf!</code> sets a hashmap key to any
-  value, and a hashset element to <code>#t</code>.</p>
-  <p>The literal forms are <code>#hashset(...)</code> and <code>#hashmap(...)</code>.
-  <code>#hashmap</code> takes a key, then its value, and so on.</p>
-<pre><code>(<span class="k">define</span> m (<span class="b">hashmap</span> '<span class="n">a</span> <span class="n">1</span> '<span class="n">b</span> <span class="n">2</span>))
-(<span class="b">ref</span> m '<span class="n">a</span>)                                       <span class="c">; =&gt; 1</span>
-(<span class="k">setf!</span> m '<span class="n">c</span> <span class="n">3</span>)                                   <span class="c">; insert or overwrite</span>
-(<span class="b">ref</span> (<span class="b">hashset</span> '<span class="n">a</span>) '<span class="n">b</span>)                            <span class="c">; =&gt; #f</span>
-(<span class="b">ref</span> #<span class="b">hashmap</span>(<span class="n">a</span> <span class="n">1</span> <span class="n">b</span> <span class="n">2</span>) '<span class="n">b</span>)                       <span class="c">; =&gt; 2</span>
-(<span class="b">ref</span> #<span class="b">hashset</span>(<span class="n">a</span> <span class="n">b</span>) '<span class="n">a</span>)                           <span class="c">; =&gt; #t</span></code></pre>
-  <p><strong>Keys are immutable.</strong> Legal keys are numbers, booleans, characters,
-  the empty list, the eof object, symbols, strings, and tuples whose elements are
-  themselves legal keys. Duplicate keys collapse as a table is built, and the last value
-  wins.</p>
-
-  <h3>I/O &amp; files</h3>
-  <p><code>display</code> prints values in human-readable form. <code>write</code> prints them in code-form, which <code>read</code> can parse back. <code>newline</code> prints a newline, and
-  <code>displayn</code> is <code>display</code> followed by a newline. Each takes an
-  optional output port and defaults to stdout.</p>
-
-  <p>To read and write a file one character at a time there are
-  <code>open-input-file</code>, <code>open-output-file</code>,
-  <code>read-char</code>, <code>write-char</code>, <code>close-input-port</code>,
-  and <code>close-output-port</code>, plus the predicates
-  <code>input-port?</code>, <code>output-port?</code>, and
-  <code>eof-object?</code>.</p>
-
-  <h3>Running programs</h3>
-  <p><code>argv</code> is a vector of the script's command-line arguments, with
-  the binary and script path already stripped. <code>exit</code> ends the process.
-  The prelude is built into the executable; set <code>JET_PRELUDE</code> to another
-  prelude file, or pass <code>--no-prelude</code> to skip it.</p>
-  <p><code>jet run</code> (or just <code>jet file.ss</code>) compiles and runs a
-  program. <code>jet compile</code> writes bytecode to stdout, <code>jet exec</code>
-  runs it, and <code>jet disasm</code> disassembles either source or bytecode.
-  <code>--no-inline</code>, <code>--no-lift-lambdas</code>, and
-  <code>--no-specialize-ops</code> switch off individual optimizations. Debug
-  builds add <code>--trace</code> for an opcode-by-opcode execution trace.</p>
-  <p><code>($check expr)</code> reports the source position and fails when
-  <code>expr</code> is false. <code>$file</code>, <code>$line</code>, and
-  <code>$col</code> give you that file, line, and column.</p>
-  -->
 </section>
 
 <section id="benchmarks">
@@ -244,6 +70,10 @@
   <div class="table-wrap" role="region" aria-label="Benchmark results" tabindex="0">
     <table aria-describedby="perf-legend">
       <caption class="visually-hidden">Benchmark runtimes in milliseconds</caption>
+      <colgroup>
+        <col>
+        <col><col><col><col><col><col><col><col><col><col>
+      </colgroup>
       <thead>
         <tr><th scope="col" rowspan="2" class="hint">benchmark</th><th scope="colgroup" colspan="2" aria-label="JavaScriptCore interpreter, LLInt, no JIT">LLInt</th><th scope="colgroup" colspan="2" class="grp">python3.14</th><th scope="colgroup" colspan="2" class="grp">lua5.5</th><th scope="colgroup" colspan="2" class="grp">jet</th><th scope="colgroup" colspan="2" class="grp" aria-label="JavaScriptCore with JIT">jsc</th></tr>
         <tr><th scope="col" class="m5" aria-label="MacBook Air, Apple M5">🍎</th><th scope="col" aria-label="Steam Deck, AMD Zen 2">🎮</th><th scope="col" class="grp m5" aria-label="MacBook Air, Apple M5">🍎</th><th scope="col" aria-label="Steam Deck, AMD Zen 2">🎮</th><th scope="col" class="grp m5" aria-label="MacBook Air, Apple M5">🍎</th><th scope="col" aria-label="Steam Deck, AMD Zen 2">🎮</th><th scope="col" class="grp m5" aria-label="MacBook Air, Apple M5">🍎</th><th scope="col" aria-label="Steam Deck, AMD Zen 2">🎮</th><th scope="col" class="grp m5" aria-label="MacBook Air, Apple M5">🍎</th><th scope="col" aria-label="Steam Deck, AMD Zen 2">🎮</th></tr>
@@ -268,9 +98,8 @@
     <span class="legend-keys">
       <span><span class="legend-glyph">🍎</span>MacBook Air (M5)</span>
       <span><span class="legend-glyph">🎮</span>Steam Deck OG (Zen 2)</span>
-      <span>ms, median of 20 runs</span>
     </span>
-    <span class="legend-credit"><code>make ab-cross-bench</code> at <a class="commit" href="https://github.com/pinecone/JetScheme/commit/71a856e">71a856e<span class="ext">↗</span></a></span>
+    <span class="legend-credit"><span class="legend-units">ms, median of 20 runs</span><span class="legend-commit"><code>make ab-cross-bench</code> at <a class="commit" href="https://github.com/pinecone/JetScheme/commit/71a856e">71a856e<span class="ext">↗</span></a></span></span>
   </p>
 </section>
 
@@ -289,5 +118,130 @@
 </section>
 
 </main>
+
+<script>
+  (function () {
+    const wrap = document.querySelector(".table-wrap");
+    const table = wrap ? wrap.querySelector("table") : null;
+    const cols = table ? table.querySelectorAll("colgroup col") : null;
+    if (!wrap || !table || !cols || cols.length !== 11) { return; }
+
+    let pinned = null;
+    let narrow = false;
+    let bench_w = 0;
+    let group_w = 0;
+    let settle_timer = 0;
+    let glide_id = 0;
+    let glide_from = 0;
+    let glide_to = 0;
+    let glide_start = 0;
+    let glide_ms = 0;
+
+    function fit(force) {
+      const root = parseFloat(getComputedStyle(document.documentElement).fontSize);
+      narrow = matchMedia("(max-width: 560px)").matches;
+      bench_w = (narrow ? 5 : 6) * root;
+      const group_min = (narrow ? 4.9 : 5.9) * root;
+      const view = wrap.clientWidth;
+
+      let count = Math.floor((view - bench_w) / group_min);
+      count = Math.max(2, Math.min(5, count));
+
+      /* the 2- and 3-column layouts are tight on phones; step the numerals down */
+      table.classList.toggle("compact", count <= 3);
+
+      group_w = (view - bench_w) / count;
+      const table_w = bench_w + 5 * group_w;
+
+      table.style.tableLayout = "fixed";
+      table.style.minWidth = "0";
+      table.style.width = table_w + "px";
+      cols[0].style.width = bench_w + "px";
+      for (let i = 1; i < cols.length; i++) { cols[i].style.width = group_w / 2 + "px"; }
+
+      const target = Math.max(0, (4 - count) * group_w);
+      if (!force && pinned !== null && Math.abs(wrap.scrollLeft - pinned) > 1) { return; }
+
+      pinned = target;
+      wrap.scrollLeft = target;
+    }
+
+    function nearest_stop() {
+      const max_scroll = table.scrollWidth - wrap.clientWidth;
+      const step = Math.round(wrap.scrollLeft / group_w);
+      const stop = step * group_w;
+
+      return Math.min(Math.max(stop, 0), max_scroll);
+    }
+
+    function settle() {
+      if (dragging) { return; }
+
+      const stop = nearest_stop();
+      if (Math.abs(wrap.scrollLeft - stop) < 1) { return; }
+
+      if (matchMedia("(prefers-reduced-motion: reduce)").matches) {
+        wrap.scrollTo({ left: stop, behavior: "auto" });
+        return;
+      }
+
+      /* a rAF ease-out: scrollTo's smooth is a fixed short glide whose
+       velocity startles after momentum, so the settle gets its own curve
+       that starts at the gesture's exit speed instead of a jump */
+      glide_from = wrap.scrollLeft;
+      glide_start = performance.now();
+      glide_to = stop;
+      /* duration follows the distance, so a nudge is quick and a long
+         correction gets the full ease */
+      glide_ms = Math.min(600, Math.max(150, Math.abs(glide_to - glide_from) * 0.9));
+      cancelAnimationFrame(glide_id);
+      glide_id = requestAnimationFrame(glide);
+    }
+
+    function glide(now) {
+      const t = Math.min((now - glide_start) / glide_ms, 1);
+      const eased = 1 - Math.pow(1 - t, 5);
+      wrap.scrollLeft = glide_from + (glide_to - glide_from) * eased;
+      if (t < 1) { glide_id = requestAnimationFrame(glide); }
+    }
+
+    function queue_settle() {
+      clearTimeout(settle_timer);
+      settle_timer = setTimeout(settle, 120);
+    }
+
+    /* user scrolling interrupts the glide */
+    wrap.addEventListener("scroll", () => {
+      if (glide_id && Math.abs(wrap.scrollLeft - glide_to) > 1) {
+        cancelAnimationFrame(glide_id);
+        glide_id = 0;
+      }
+    }, { passive: true });
+
+    /* while a finger or the scrollbar is down, scroll pauses are part of the
+       gesture, so settle only after the gesture ends */
+    let dragging = false;
+    wrap.addEventListener("touchstart", () => { dragging = true; }, { passive: true });
+    wrap.addEventListener("touchend", () => { dragging = false; queue_settle(); }, { passive: true });
+    wrap.addEventListener("touchcancel", () => { dragging = false; }, { passive: true });
+    wrap.addEventListener("pointerdown", () => { dragging = true; });
+    addEventListener("pointerup", () => { if (dragging) { dragging = false; queue_settle(); } });
+    addEventListener("pointercancel", () => { dragging = false; });
+
+    fit(false);
+    /* scrollend fires only when a gesture, including trackpad momentum and a
+       scrollbar drag, is fully over; the debounced scroll fallback covers
+       browsers without it */
+    if ("onscrollend" in wrap) {
+      wrap.addEventListener("scrollend", settle);
+    } else {
+      wrap.addEventListener("scroll", queue_settle, { passive: true });
+    }
+    addEventListener("resize", () => { fit(false); queue_settle(); });
+    addEventListener("load", () => { fit(true); requestAnimationFrame(() => fit(true)); });
+    if (document.fonts) { document.fonts.ready.then(() => fit(false)); }
+  })();
+</script>
+
 </body>
 </html>

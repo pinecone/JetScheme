@@ -36,13 +36,6 @@
 }
 @font-face {
   font-family: "0xProto";
-  font-style: italic;
-  font-weight: 400;
-  font-display: swap;
-  src: url("fonts/0xProto-Italic.woff2") format("woff2");
-}
-@font-face {
-  font-family: "0xProto";
   font-style: normal;
   font-weight: 700;
   font-display: swap;
@@ -223,6 +216,12 @@ h3 {
   overflow-wrap: anywhere;
 }
 
+/* the URL breaks before itself, never inside itself */
+.acquire code a {
+  display: inline-block;
+  max-width: 100%;
+}
+
 .visually-hidden {
   position: absolute;
   width: 1px;
@@ -323,12 +322,19 @@ li::before {
   margin-right: var(--sp-2);
 }
 
-#optimizations li::before {
-  content: "💡";
-  font-size: 0.9em;
-  /* optically center the bulb on the first text line */
-  top: 0.2em;
-  filter: drop-shadow(0 0 3px rgba(255, 235, 60, 0.85));
+#optimizations li::before { content: none; }
+
+/* the bulbs want a roomy viewport, not just a wide one: a landscape
+   phone is wide but its gutter still reads as cramped, so the height
+   bound keeps them off short viewports too */
+@media (min-width: 560px) and (min-height: 560px) {
+  #optimizations li::before {
+    content: "💡";
+    font-size: 0.9em;
+    /* optically center the bulb on the first text line */
+    top: 0.2em;
+    filter: drop-shadow(0 0 3px rgba(255, 235, 60, 0.85));
+  }
 }
 
 /* Links */
@@ -420,6 +426,13 @@ pre code a.commit .ext {
   margin: var(--sp-4) 0 0;
 }
 
+/* Fewer engine groups on screen means tighter cells: the numerals step down one
+   notch so the figures keep clear space. The 0.8em machine glyph row and the
+   tfoot inherit the reduction. */
+table.compact {
+  font-size: 0.72rem;
+}
+
 table {
   border-collapse: collapse;
   width: 100%;
@@ -460,6 +473,12 @@ table {
   flex-wrap: wrap;
 }
 
+/* a key keeps its name whole and takes one line, so a wrapped key never
+   starts its line with the separator dot */
+.legend-keys > span {
+  white-space: nowrap;
+}
+
 /* typographic separators, not flex gaps: the interval between keys is
    set in ems of the legend's own type, so it holds at any size */
 .legend-keys > span + span::before {
@@ -476,6 +495,13 @@ table {
 .legend-credit {
   margin-left: auto;
   color: var(--comment);
+}
+
+/* the two credit halves share a dot separator on one line */
+.legend-commit::before {
+  content: "\00b7";
+  margin: 0 0.7em;
+  color: var(--fg-gutter);
 }
 
 .legend code {
@@ -509,6 +535,17 @@ thead th {
   border-bottom: 1px solid var(--bg-highlight);
   letter-spacing: 0.02em;
 }
+
+/* Row labels hold the left edge while the group columns scroll past. */
+thead tr:first-child th:first-child,
+tbody th,
+tfoot th {
+  position: sticky;
+  left: 0;
+  background: var(--bg);
+}
+
+thead tr:first-child th:first-child { z-index: 1; }
 
 thead th.hint {
   color: var(--fg-muted);
@@ -734,34 +771,9 @@ footer {
   }
 }
 
-/* Smaller screens */
-@media (max-width: 560px) {
-  main { padding: var(--sp-6) var(--sp-4) var(--sp-7); }
-  pre { padding-left: var(--sp-2); }
-  li::before { margin-right: var(--sp-1); }
-
-  /* no room for the flush-right credit: it drops under the keys,
-     still flush with the table's left edge */
-  .legend { justify-content: flex-start; }
-  .legend-credit { margin-left: 0; }
-
-  thead th:first-child,
-  tbody th,
-  tfoot th {
-    position: sticky;
-    left: 0;
-    background: var(--bg);
-  }
-
-  thead th:first-child { z-index: 1; }
-
-  /* every pixel of width buys separation between the two slow points */
-  .scale-track {
-    width: 100%;
-    --names: var(--sp-6);
-    height: calc(var(--names) + var(--sp-7));
-  }
-
+/* the centered python and lua labels collide once the track drops under
+   about 500px */
+@media (max-width: 640px) {
   .scale-mark-python .scale-name,
   .scale-mark-python .scale-mult {
     transform: translateX(calc(0rem - var(--sp-4)));
@@ -770,6 +782,37 @@ footer {
   .scale-mark-lua .scale-name,
   .scale-mark-lua .scale-mult {
     transform: translateX(var(--sp-4));
+  }
+}
+
+/* Smaller screens */
+@media (max-width: 560px) {
+  main { padding: var(--sp-6) var(--sp-5) var(--sp-7); }
+  pre { padding-left: var(--sp-2); }
+  li::before { margin-right: var(--sp-1); }
+
+
+  /* the legend centers three rows: machines, then the measurement unit,
+     then the provenance */
+  .legend { justify-content: center; }
+  .legend-keys { justify-content: center; }
+  .legend-credit {
+    margin-left: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--sp-1);
+  }
+  .legend-commit::before { content: none; }
+
+  /* two engine groups must fit beside the 5rem label at 320px: cells drop one padding step */
+  thead th, tbody th, tbody td, tfoot th, tfoot td { padding: var(--sp-1); }
+
+  /* every pixel of width buys separation between the two slow points */
+  .scale-track {
+    width: 100%;
+    --names: var(--sp-6);
+    height: calc(var(--names) + var(--sp-7));
   }
 
   /* too narrow for end caps on the axis -- the left one would reach the
