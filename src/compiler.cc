@@ -5,6 +5,7 @@
 #include "error.h"
 #include "runtime.h"
 #include "vm.h"
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -2506,8 +2507,6 @@ Program& Compiler::ast()
 		toplevel_lambda_->lambda.is_variadic = false;
 		toplevel_lambda_->lambda.body = {};
 		toplevel_lambda_->lambda.lambda_name = {};
-		toplevel_lambda_->lambda.names = arena.copy_slice(toplevel_names_.ordered);
-
 		resolve_bindings(*ast_);
 		run_optimization_passes(*ast_);
 		collect_tail_calls(*ast_);
@@ -3245,6 +3244,8 @@ void Compiler::compute_binding_addresses(Program& program)
 {
 	bindings_.assign(next_expr_id_ + 1, ResolvedBinding{});
 
+	// `let` re-pushes during the walk; the seed stays defines-only.
+	toplevel_lambda_->lambda.names = arena.copy_slice(toplevel_names_.ordered);
 	push_lambda_scope(toplevel_lambda_);
 	frame_names_.push_back({toplevel_lambda_->lambda.names.begin(), toplevel_lambda_->lambda.names.end()});
 	for (Expr* form : program.forms)
@@ -3252,7 +3253,6 @@ void Compiler::compute_binding_addresses(Program& program)
 		compute_binding_addresses_in(form);
 	}
 	toplevel_lambda_->lambda.names = arena.copy_slice(frame_names_.back());
-	frame_names_.pop_back();
 	pop_lambda_scope();
 }
 
@@ -3376,7 +3376,6 @@ void Compiler::compute_binding_addresses_in(Expr* expr)
 				std::unordered_map<std::string_view, size_t>& idx = lambda_name_index_.back();
 				expr->let.slot_base = static_cast<uint32_t>(frame.size());
 				expr->let.owner = lambdas_.back();
-
 				for (std::string_view name : expr->let.names)
 				{
 					size_t breadth = frame.size();
@@ -4997,14 +4996,22 @@ namespace
 		std::vector<OP_make_closure_capture> captures;
 		bool is_variadic = false;
 		uint32_t n_params = 0;
-		// Bump allocator for temps and call windows; starts at the named-register
-		// high water (static per lambda) and never shrinks.
-		uint32_t n_regs = 0;
+		// Registers [0, reg_floor) are params (identity, call convention).
+		// Above the floor, allocation is first-fit over reg_used; reg_used[i]
+		// is register reg_floor + i; the frame high water is reg_floor + reg_used.size().
+		size_t reg_floor = 0;
+		std::vector<bool> reg_used;
+
+		size_t frame_regs() const
+		{
+			return reg_floor + reg_used.size();
+		}
 		uint16_t pool_slot = 0;   // unused for the toplevel (index 0)
 		std::string_view lambda_name;
-		// Coalesced bindings: named register -> the call-window register the value
-		// actually lives in. Write-once per register (the name frame never shrinks).
-		std::unordered_map<uint16_t, uint16_t> reg_alias;
+		// Physical register per binding breadth; absent means the identity
+		// register (call results adopted as homes).
+		std::unordered_map<uint16_t, uint16_t> phys_home;
+		std::unordered_set<uint16_t> temp_regs;
 	};
 
 	struct LirProgram
@@ -5051,28 +5058,86 @@ namespace
 
 		void emit(const LirInst& i) { current_lambda().code.push_back(i); }
 
-		uint16_t alloc_reg() { return alloc_window(1); }
+		uint16_t alloc_reg()
+		{
+			LirLambda& L = current_lambda();
+			std::vector<bool>& used = L.reg_used;
+			for (size_t i = 0; i < used.size(); ++i)
+			{
+				if (!used[i])
+				{
+					used[i] = true;
+					return narrow_or_die<uint16_t>(L.reg_floor + i);
+				}
+			}
+			used.push_back(true);
+			constexpr size_t reg_limit = std::numeric_limits<uint16_t>::max();
+			JET_DIE_WHEN(L.frame_regs() > reg_limit, "codegen: frame exceeds %zu registers", reg_limit);
+			return narrow_or_die<uint16_t>(L.reg_floor + used.size() - 1);
+		}
 
 		uint16_t alloc_window(size_t n)
 		{
-			// A window holds at least the result register: a nullary call still
-			// writes its result at w.
+			// A call window sits above every live register: the VM overlays the
+			// callee's frame on the window (op_enter_lambda_fast: base = args -
+			// stack_base), so the call clobbers everything above the window's
+			// first slot. Registers above a pending window may still be handed
+			// out: whatever lands there is consumed before the pending call is
+			// emitted (ANF hoists each call's operand temps immediately before
+			// its own binding; verify_anf guards it).
 			if (n == 0)
 			{
 				n = 1;
 			}
 			LirLambda& L = current_lambda();
-			JET_DIE_WHEN(L.n_regs + n > UINT16_MAX, "codegen: frame exceeds %d registers", UINT16_MAX);
-			uint16_t w = static_cast<uint16_t>(L.n_regs);
-			L.n_regs += n;
-			return w;
+			std::vector<bool>& used = L.reg_used;
+			size_t top = 0;
+			for (size_t i = used.size(); i-- > 0;)
+			{
+				if (used[i])
+				{
+					top = i + 1;
+					break;
+				}
+			}
+			if (used.size() < top + n)
+			{
+				used.resize(top + n);
+			}
+			for (size_t i = top; i < top + n; ++i)
+			{
+				used[i] = true;
+			}
+			constexpr size_t reg_limit = std::numeric_limits<uint16_t>::max();
+			JET_DIE_WHEN(L.frame_regs() > reg_limit, "codegen: frame exceeds %zu registers", reg_limit);
+			return narrow_or_die<uint16_t>(L.reg_floor + top);
 		}
 
-		uint16_t alias(uint16_t r)
+		void release_reg(uint16_t reg)
 		{
-			std::unordered_map<uint16_t, uint16_t>& m = current_lambda().reg_alias;
-			auto it = m.find(r);
-			return it == m.end() ? r : it->second;
+			LirLambda& L = current_lambda();
+			size_t slot = reg - L.reg_floor;
+			JET_DIE_WHEN(slot >= L.reg_used.size(),
+			             "codegen: release of unallocated register %d", reg);
+			JET_DIE_WHEN(!L.reg_used[slot], "codegen: double release of register %d", reg);
+			L.reg_used[slot] = false;
+		}
+
+		void mark_temp(uint16_t reg) { current_lambda().temp_regs.insert(reg); }
+
+		void release_if_temp(uint16_t reg)
+		{
+			if (current_lambda().temp_regs.erase(reg) != 0)
+			{
+				release_reg(reg);
+			}
+		}
+
+		uint16_t physical(uint16_t breadth)
+		{
+			std::unordered_map<uint16_t, uint16_t>& m = current_lambda().phys_home;
+			auto it = m.find(breadth);
+			return it == m.end() ? breadth : it->second;
 		}
 
 		// Find-or-allocate the window for a call site; argument sinking claims it
@@ -5271,27 +5336,20 @@ namespace
 				case ExprKind::PrimRef:
 					return;
 				case ExprKind::Let:
-					emit_let_bindings(expr);
-					for (Expr* form : expr->let.body)
-					{
-						emit_ignoring_result(form);
-					}
-					return;
-				case ExprKind::SetBang:
-					emit_set_bang(expr);
-					return;
-				case ExprKind::SetRef:
-					emit_set_ref(expr);
+					emit_let_ignoring_result(expr);
 					return;
 				default:
-					emit_to_any_reg(expr);
+				{
+					uint16_t t = emit_to_any_reg(expr);
+					release_if_temp(t);
 					return;
+				}
 			}
 		}
 
 		void emit_prologue(Expr* lambda)
 		{
-			for (uint32_t i = 0; i < lambda->lambda.names.size(); ++i)
+			for (uint32_t i = 0; i < lambda->lambda.params.size(); ++i)
 			{
 				if (needs_slot(lambda, i))
 				{
@@ -5307,12 +5365,8 @@ namespace
 			prog.lambdas[idx].is_variadic = expr->lambda.is_variadic;
 			prog.lambdas[idx].n_params = expr->lambda.params.size();
 			prog.lambdas[idx].lambda_name = expr->lambda.lambda_name;
-			// names is the named-register high water (the resolver's name frame
-			// only grows); the variadic formula can exceed it by the rest slot.
-			uint32_t n_named = static_cast<uint32_t>(
-				expr->lambda.params.size() + (expr->lambda.is_variadic ? 1 : 0));
-			uint32_t n_names = static_cast<uint32_t>(expr->lambda.names.size());
-			prog.lambdas[idx].n_regs = n_named > n_names ? n_named : n_names;
+			size_t n_named = expr->lambda.params.size() + (expr->lambda.is_variadic ? 1 : 0);
+			prog.lambdas[idx].reg_floor = n_named;
 
 			outer_lambdas.push_back(expr);
 			lambda_stack.push_back(idx);
@@ -5343,7 +5397,7 @@ namespace
 				if (rb.lambda == current)
 				{
 					cap.src = static_cast<uint8_t>(CaptureSource::Local);
-					cap.idx = alias(static_cast<uint16_t>(rb.breadth));
+					cap.idx = physical(narrow_or_die<uint16_t>(rb.breadth));
 				}
 				else
 				{
@@ -5379,16 +5433,21 @@ namespace
 			JETC_DIE_WHEN(db, !db.selected_ops_[expr->id], expr->loc,
 			              "codegen: %s without selection", what);
 			Compiler::OpSelection sel = *db.selected_ops_[expr->id];
-			// Coalesced homes resolve here, the single read point for selections;
-			// only these two payloads name an unboxed local register (for ldu/stu/
-			// ldus the same field holds an upvalue index).
-			if (sel.op == Opcode::mov)
+			// Single read point for selections: these payloads name an unboxed
+			// local register (for ldu/stu/ldus the same field holds an upvalue
+			// index).
+			switch (sel.op)
 			{
-				sel.u.var.addr = alias(sel.u.var.addr);
-			}
-			else if (sel.op == Opcode::call_local_0)
-			{
-				sel.u.call_ic_atom.idx = alias(sel.u.call_ic_atom.idx);
+				case Opcode::mov:
+				case Opcode::ldd:
+				case Opcode::std:
+					sel.u.var.addr = physical(sel.u.var.addr);
+					break;
+				case Opcode::call_local_0:
+					sel.u.call_ic_atom.idx = physical(sel.u.call_ic_atom.idx);
+					break;
+				default:
+					break;
 			}
 			return sel;
 		}
@@ -5421,12 +5480,17 @@ namespace
 			Compiler::OpSelection sel = selection(expr, "SetRef");
 			LirInst i = inst(sel.op);
 			i.u.field.obj = emit_to_any_reg(expr->set_ref.obj);
-			i.u.field.key = sel.op == Opcode::stfk
-			                ? intern_literal_key(expr->set_ref.key)
-			                : emit_to_any_reg(expr->set_ref.key);
+			bool literal_key = takes_literal_key(sel.op);
+			i.u.field.key = literal_key ? intern_literal_key(expr->set_ref.key)
+			                            : emit_to_any_reg(expr->set_ref.key);
 			uint16_t v = emit_to_any_reg(expr->set_ref.value);
 			i.u.field.val = v;
 			emit(i);
+			release_if_temp(i.u.field.obj);
+			if (!literal_key)
+			{
+				release_if_temp(i.u.field.key);
+			}
 			return v;
 		}
 
@@ -5436,13 +5500,22 @@ namespace
 			LirInst i = inst(sel.op);
 			i.u.field.dst = dst;
 			i.u.field.obj = emit_to_any_reg(receiver);
-			bool ck = sel.op == Opcode::ldfk || sel.op == Opcode::ldfkh || sel.op == Opcode::ldfko;
-			i.u.field.key = ck ? intern_literal_key(key) : emit_to_any_reg(key);
+			bool literal_key = takes_literal_key(sel.op);
+			i.u.field.key = literal_key ? intern_literal_key(key) : emit_to_any_reg(key);
 			if (fallback)
 			{
 				i.u.field.val = emit_to_any_reg(fallback);
 			}
 			emit(i);
+			release_if_temp(i.u.field.obj);
+			if (!literal_key)
+			{
+				release_if_temp(i.u.field.key);
+			}
+			if (fallback)
+			{
+				release_if_temp(i.u.field.val);
+			}
 		}
 
 		void emit_window_args(Slice<Expr*>& args, uint16_t w)
@@ -5453,17 +5526,18 @@ namespace
 			}
 		}
 
-		bool is_plain_reg_ref(Expr* e, uint16_t r)
+		bool is_binding_ref(Expr* e, Expr* owner, size_t breadth)
 		{
 			if (e->kind != ExprKind::VarRef)
 			{
 				return false;
 			}
 			Compiler::OpSelection sel = selection(e, "var access");
-			return sel.op == Opcode::mov && sel.u.var.addr == r;
+			ResolvedBinding rb = db.binding(e);
+			return sel.op == Opcode::mov && rb.lambda == owner && rb.breadth == breadth;
 		}
 
-		std::optional<uint16_t> window_slot(Expr* e, uint16_t home, bool allow_self_tail = false)
+		std::optional<uint16_t> window_slot(Expr* e, Expr* owner, size_t breadth, bool allow_self_tail = false)
 		{
 			if (e->kind != ExprKind::Call)
 			{
@@ -5474,49 +5548,54 @@ namespace
 			{
 				return std::nullopt;
 			}
-			for (uint32_t i = 0; i < e->call.args.size(); ++i)
+			for (size_t i = 0; i < e->call.args.size(); ++i)
 			{
-				if (is_plain_reg_ref(e->call.args[i], home))
+				if (is_binding_ref(e->call.args[i], owner, breadth))
 				{
 					if (sel.op == Opcode::call_self_tail)
 					{
-						for (uint32_t j = 0; j < e->call.args.size(); ++j)
+						for (size_t j = 0; j < e->call.args.size(); ++j)
 						{
-							if (j != i && is_plain_reg_ref(e->call.args[j], static_cast<uint16_t>(i)))
+							if (j != i && is_binding_ref(e->call.args[j], owner, i))
 							{
 								uint16_t temp = alloc_reg();
-								emit_mov(temp, static_cast<uint16_t>(i));
-								self_tail_saves.emplace(e->id, SelfTailSave{static_cast<uint16_t>(i), temp});
+								emit_mov(temp, narrow_or_die<uint16_t>(i));
+								self_tail_saves.emplace(e->id, SelfTailSave{narrow_or_die<uint16_t>(i), temp});
 								break;
 							}
 						}
-						return static_cast<uint16_t>(i);
+						return narrow_or_die<uint16_t>(i);
 					}
-					return static_cast<uint16_t>(claim_call_window(e, e->call.args.size()) + i);
+					return narrow_or_die<uint16_t>(claim_call_window(e, e->call.args.size()) + i);
 				}
 			}
 			return std::nullopt;
 		}
 
-		void emit_let_bindings(Expr* expr)
+		void emit_let_bindings(Expr* expr, std::vector<uint16_t>& owned)
 		{
 			uint32_t sb = expr->let.slot_base;
 			uint32_t n = expr->let.names.size();
 			for (uint32_t i = 0; i < n; ++i)
 			{
-				uint16_t home = narrow_or_die<uint16_t>(sb + i);
+				uint16_t breadth = narrow_or_die<uint16_t>(sb + i);
 				Expr* val = expr->let.vals[i];
-				if (needs_slot(expr->let.owner, sb + i))
+				if (needs_slot(expr->let.owner, breadth))
 				{
+					uint16_t home = alloc_reg();
+					current_lambda().phys_home[breadth] = home;
+					owned.push_back(breadth);
 					emit_to_reg(val, home);
 					continue;
 				}
 				// ANF nests hoists, so a value is often a let-chain around the
 				// expression that produces it: emit the inner bindings here and
-				// coalesce home with the terminal itself.
+				// coalesce home with the terminal itself. Chain homes release at
+				// the outer `let` exit: the terminal consumes them after the inner
+				// emit_let_bindings returns.
 				while (val->kind == ExprKind::Let && val->let.body.size() == 1)
 				{
-					emit_let_bindings(val);
+					emit_let_bindings(val, owned);
 					val = val->let.body[0];
 				}
 				if (val->kind == ExprKind::Call)
@@ -5527,7 +5606,8 @@ namespace
 					}
 					else if (is_call_shaped(sel.op) && sel.op != Opcode::call_self_tail)
 					{
-						current_lambda().reg_alias[home] = emit_call(val, sel);
+						current_lambda().phys_home[breadth] = *emit_call(val, sel);
+						owned.push_back(breadth);
 						continue;
 					}
 				}
@@ -5535,36 +5615,72 @@ namespace
 				{
 					if (Compiler::OpSelection sel = selection(val, "var access"); sel.op == Opcode::mov)
 					{
-						current_lambda().reg_alias[home] = sel.u.var.addr;
+						current_lambda().phys_home[breadth] = sel.u.var.addr;
 						continue;
 					}
 				}
-				if (is_anf_temp(expr->let.names[i]))
+				bool anf_temp = is_anf_temp(expr->let.names[i]);
+				if (anf_temp && !db.binding_used(expr->let.owner, breadth))
 				{
-					if (!db.binding_used(expr->let.owner, sb + i))
+					emit_ignoring_result(val);
+					continue;
+				}
+				if (anf_temp)
+				{
+					if (std::optional<uint16_t> target = sink_target(expr, expr->let.owner, breadth); target)
 					{
-						emit_ignoring_result(val);
-						continue;
-					}
-					if (std::optional<uint16_t> target = sink_target(expr, home); target)
-					{
+						uint32_t uses = db.binding_use_count(expr->let.owner, breadth);
+						JETC_DIE_WHEN(db, uses != 1, expr->loc,
+						              "codegen: sunk temporary has %u uses, expected exactly 1", uses);
+						current_lambda().phys_home[breadth] = *target;
 						emit_to_reg(val, *target);
-						current_lambda().reg_alias[home] = *target;
 						continue;
 					}
 				}
+				owned.push_back(breadth);
+				uint16_t home = alloc_reg();
+				current_lambda().phys_home[breadth] = home;
 				emit_to_reg(val, home);
 			}
 			for (uint32_t i = 0; i < n; ++i)
 			{
 				if (needs_slot(expr->let.owner, sb + i))
 				{
-					emit_box(narrow_or_die<uint16_t>(sb + i));
+					emit_box(physical(narrow_or_die<uint16_t>(sb + i)));
 				}
 			}
 		}
 
-		std::optional<uint16_t> sink_target(Expr* let_expr, uint16_t home)
+		void release_let_homes(const std::vector<uint16_t>& owned)
+		{
+			for (uint16_t breadth : owned)
+			{
+				uint16_t home = physical(breadth);
+				current_lambda().phys_home.erase(breadth);
+				release_reg(home);
+			}
+		}
+
+		void emit_let(Expr* expr, uint16_t dst)
+		{
+			std::vector<uint16_t> owned;
+			emit_let_bindings(expr, owned);
+			emit_sequence_to(expr->let.body, dst);
+			release_let_homes(owned);
+		}
+
+		void emit_let_ignoring_result(Expr* expr)
+		{
+			std::vector<uint16_t> owned;
+			emit_let_bindings(expr, owned);
+			for (Expr* form : expr->let.body)
+			{
+				emit_ignoring_result(form);
+			}
+			release_let_homes(owned);
+		}
+
+		std::optional<uint16_t> sink_target(Expr* let_expr, Expr* owner, size_t breadth)
 		{
 			Expr* cur = let_expr;
 			bool direct = true;
@@ -5573,12 +5689,12 @@ namespace
 				cur = cur->let.body[0];
 				if (cur->kind != ExprKind::Let)
 				{
-					return window_slot(cur, home, direct);
+					return window_slot(cur, owner, breadth, direct);
 				}
 				direct = false;
 				for (uint32_t i = 0; i < cur->let.vals.size(); ++i)
 				{
-					if (std::optional<uint16_t> w = window_slot(cur->let.vals[i], home); w)
+					if (std::optional<uint16_t> w = window_slot(cur->let.vals[i], owner, breadth); w)
 					{
 						return w;
 					}
@@ -5587,12 +5703,13 @@ namespace
 			return std::nullopt;
 		}
 
-		uint16_t emit_call(Expr* expr, Compiler::OpSelection sel)
+		std::optional<uint16_t> emit_call(Expr* expr, Compiler::OpSelection sel)
 		{
 			bool tail = db.is_tail(expr);
 			uint16_t nargs = static_cast<uint16_t>(expr->call.args.size());
 
 			LirInst i = inst(sel.op);
+			std::optional<uint16_t> callee_temp;
 			switch (sel.op)
 			{
 				case Opcode::reset:
@@ -5601,16 +5718,19 @@ namespace
 					// Two slots for one argument: slot 0 roots the escape or coroutine, slot 1
 					// carries the body closure in and the result out.
 					uint16_t w = alloc_window(2);
-					uint16_t result = static_cast<uint16_t>(w + 1);
+					uint16_t result = narrow_or_die<uint16_t>(w + 1);
 					emit_to_reg(expr->call.args[0], result);
 					i.u.call.w = w;
 					i.u.call.nargs = 1;
 					emit(i);
+					// Slot 0 roots the escape or coroutine only while the op runs
+					// (vm.cc op_reset / op_coro); the result arrives in slot 1.
+					release_reg(w);
 					return result;
 				}
 				case Opcode::call_self_tail:
 				{
-					std::vector<uint16_t> src_reg(nargs, UINT16_MAX);
+					std::vector<std::optional<uint16_t>> src_reg(nargs, std::nullopt);
 					for (uint16_t k = 0; k < nargs; ++k)
 					{
 						if (Expr* arg = expr->call.args[k]; arg->kind == ExprKind::VarRef)
@@ -5630,25 +5750,28 @@ namespace
 					}
 					for (uint16_t k = 0; k < nargs; ++k)
 					{
-						if (uint16_t src = src_reg[k]; src < nargs && src != k && src_reg[src] != src)
+						if (std::optional<uint16_t> src = src_reg[k];
+						    src && *src < nargs && *src != k && src_reg[*src] != *src)
 						{
-							if (saved.find(src) == saved.end())
+							if (saved.find(*src) == saved.end())
 							{
 								uint16_t t = alloc_reg();
-								emit_mov(t, src);
-								saved[src] = t;
+								emit_mov(t, *src);
+								saved[*src] = t;
 							}
 						}
 					}
 					for (uint16_t k = 0; k < nargs; ++k)
 					{
-						if (uint16_t src = src_reg[k]; src == k)
+						std::optional<uint16_t> src = src_reg[k];
+						auto saved_src = src ? saved.find(*src) : saved.end();
+						if (src && *src == k)
 						{
 							continue;
 						}
-						else if (auto it = saved.find(src); it != saved.end())
+						if (saved_src != saved.end())
 						{
-							emit_mov(k, it->second);
+							emit_mov(k, saved_src->second);
 						}
 						else
 						{
@@ -5658,7 +5781,12 @@ namespace
 					i.u.call.w = 0;
 					i.u.call.nargs = nargs;
 					emit(i);
-					return 0;
+					for (const std::pair<const uint16_t, uint16_t>& save : saved)
+					{
+						release_reg(save.second);
+					}
+					self_tail_saves.erase(expr->id);
+					return std::nullopt;
 				}
 				case Opcode::call_upval_slot_0:
 					i.op = tail ? Opcode::call_upval_slot_tail_0 : Opcode::call_upval_slot_0;
@@ -5678,7 +5806,8 @@ namespace
 					break;
 				case Opcode::call:
 					i.op = tail ? Opcode::tcall : Opcode::call;
-					i.u.call.callee = emit_to_any_reg(expr->call.proc);
+					callee_temp = emit_to_any_reg(expr->call.proc);
+					i.u.call.callee = *callee_temp;
 					break;
 				default:
 					JETC_DIE(db, expr->loc, "codegen: unexpected Call selection %d",
@@ -5690,6 +5819,14 @@ namespace
 			i.u.call.w = w;
 			i.u.call.nargs = nargs;
 			emit(i);
+			if (callee_temp)
+			{
+				release_if_temp(*callee_temp);
+			}
+			for (uint16_t slot = 1; slot < nargs; ++slot)
+			{
+				release_reg(narrow_or_die<uint16_t>(w + slot));
+			}
 			return w;
 		}
 
@@ -5701,6 +5838,7 @@ namespace
 			LirInst i = inst(Opcode::apply);
 			i.u.call.w = w;
 			emit(i);
+			release_reg(narrow_or_die<uint16_t>(w + 1));
 			return w;
 		}
 
@@ -5709,21 +5847,29 @@ namespace
 			Compiler::OpSelection sel = selection(expr, "IterNext");
 			uint32_t l_alt = prog.next_label++;
 			uint32_t l_end = prog.next_label++;
+			std::vector<uint16_t> iter_homes;
+			for (size_t n = 0; n < expr->iter_next.names.size(); ++n)
+			{
+				uint16_t breadth = narrow_or_die<uint16_t>(expr->iter_next.slot_base + n);
+				iter_homes.push_back(alloc_reg());
+				current_lambda().phys_home[breadth] = iter_homes.back();
+			}
 			LirInst i = inst(sel.op);
 			i.u.iter.id = l_alt;
-			i.u.iter.cursor = emit_to_any_reg(expr->iter_next.cursor);
-			i.u.iter.dst0 = narrow_or_die<uint16_t>(expr->iter_next.slot_base);
-			if (expr->iter_next.names.size() == 2)
+			uint16_t cursor_reg = emit_to_any_reg(expr->iter_next.cursor);
+			i.u.iter.cursor = cursor_reg;
+			i.u.iter.dst0 = iter_homes[0];
+			if (iter_homes.size() == 2)
 			{
-				i.u.iter.dst1 = narrow_or_die<uint16_t>(expr->iter_next.slot_base + 1);
+				i.u.iter.dst1 = iter_homes[1];
 			}
 			emit(i);
-			for (uint32_t n = 0; n < expr->iter_next.names.size(); ++n)
+			release_if_temp(cursor_reg);
+			for (size_t n = 0; n < expr->iter_next.names.size(); ++n)
 			{
-				uint32_t reg = expr->iter_next.slot_base + n;
-				if (needs_slot(expr->iter_next.owner, reg))
+				if (needs_slot(expr->iter_next.owner, expr->iter_next.slot_base + n))
 				{
-					emit_box(narrow_or_die<uint16_t>(reg));
+					emit_box(iter_homes[n]);
 				}
 			}
 			emit_to_reg(expr->iter_next.consequent, dst);
@@ -5738,13 +5884,29 @@ namespace
 				emit_ldk(dst, intern_empty(ConstTag::Unknown));
 			}
 			emit_label(Opcode::label, l_end);
+			for (size_t n = 0; n < expr->iter_next.names.size(); ++n)
+			{
+				current_lambda().phys_home.erase(narrow_or_die<uint16_t>(expr->iter_next.slot_base + n));
+				release_reg(iter_homes[n]);
+			}
 		}
 
 		void emit_program(Program& program)
 		{
 			prog.lambdas.emplace_back();
-			prog.lambdas[0].n_regs = static_cast<uint32_t>(db.toplevel_lambda_->lambda.names.size());
-			emit_prologue(db.toplevel_lambda_);
+			// Toplevel defines are bare `set!` forms whose breadths are the frame
+			// prefix [0, toplevel_names_.ordered.size()): allocate their homes
+			// once and box needs_slot ones at entry, like params.
+			size_t n_defines = db.toplevel_names_.ordered.size();
+			for (size_t i = 0; i < n_defines; ++i)
+			{
+				uint16_t home = alloc_reg();
+				prog.lambdas[0].phys_home[narrow_or_die<uint16_t>(i)] = home;
+				if (needs_slot(db.toplevel_lambda_, i))
+				{
+					emit_box(home);
+				}
+			}
 			uint16_t r = emit_sequence_value(program.forms);
 			emit_ret(r);
 		}
@@ -5761,6 +5923,30 @@ namespace
 				case Opcode::call_self_tail:
 				case Opcode::reset:
 				case Opcode::coro:
+					return true;
+				default:
+					return false;
+			}
+		}
+
+		bool takes_literal_key(Opcode op)
+		{
+			switch (op)
+			{
+				case Opcode::addk:
+				case Opcode::subk:
+				case Opcode::mulk:
+				case Opcode::divk:
+				case Opcode::numeqk:
+				case Opcode::eqk:
+				case Opcode::ltk:
+				case Opcode::if_numeqk:
+				case Opcode::if_eqk:
+				case Opcode::if_ltk:
+				case Opcode::ldfk:
+				case Opcode::ldfkh:
+				case Opcode::ldfko:
+				case Opcode::stfk:
 					return true;
 				default:
 					return false;
@@ -5803,13 +5989,21 @@ namespace
 				{
 					if (Compiler::OpSelection sel = selection(expr, "Call"); is_call_shaped(sel.op))
 					{
-						return emit_call(expr, sel);
+						std::optional<uint16_t> result = emit_call(expr, sel);
+						JETC_DIE_WHEN(db, !result, expr->loc,
+						              "codegen: self-tail call in operand position");
+						mark_temp(*result);
+						return *result;
 					}
 					break;
 				}
 
 				case ExprKind::Apply:
-					return emit_apply(expr);
+				{
+					uint16_t result = emit_apply(expr);
+					mark_temp(result);
+					return result;
+				}
 
 				case ExprKind::SetBang:
 					return emit_set_bang(expr);
@@ -5822,6 +6016,7 @@ namespace
 			}
 			uint16_t t = alloc_reg();
 			emit_to_reg(expr, t);
+			mark_temp(t);
 			return t;
 		}
 
@@ -5876,6 +6071,7 @@ namespace
 							emit_mov(dst, sel.u.var.addr);
 							break;
 						case Opcode::ldd:
+							[[fallthrough]];
 						case Opcode::ldu:
 						case Opcode::ldus:
 							emit_load(sel.op, dst, sel.u.var.addr);
@@ -5910,10 +6106,7 @@ namespace
 						case Opcode::eqk:
 						case Opcode::ltk:
 						{
-							bool k = sel.op == Opcode::addk || sel.op == Opcode::subk
-							         || sel.op == Opcode::mulk || sel.op == Opcode::divk
-							         || sel.op == Opcode::numeqk || sel.op == Opcode::eqk ||
-							         sel.op == Opcode::ltk;
+							bool k = takes_literal_key(sel.op);
 							LirInst i = inst(sel.op);
 							i.u.arith.dst = dst;
 							i.u.arith.a = emit_to_any_reg(expr->call.args[0]);
@@ -5921,6 +6114,11 @@ namespace
 							              ? intern_literal_key(expr->call.args[1])
 							              : emit_to_any_reg(expr->call.args[1]);
 							emit(i);
+							release_if_temp(i.u.arith.a);
+							if (!k)
+							{
+								release_if_temp(i.u.arith.b);
+							}
 							break;
 						}
 
@@ -5937,35 +6135,54 @@ namespace
 							break;
 
 						default:
-							emit_mov(dst, emit_call(expr, sel));
+						{
+							// A self-tail call jumps back to the lambda entry; it is
+							// selected only in tail position, where dst is dead.
+							if (std::optional<uint16_t> result = emit_call(expr, sel))
+							{
+								emit_mov(dst, *result);
+								release_reg(*result);
+							}
 							break;
+						}
 					}
 					break;
 				}
 
 				case ExprKind::Apply:
-					emit_mov(dst, emit_apply(expr));
+				{
+					uint16_t result = emit_apply(expr);
+					emit_mov(dst, result);
+					release_reg(result);
 					break;
+				}
 
 				case ExprKind::Lambda:
 					emit_lambda_value(expr, dst);
 					break;
 
 				case ExprKind::SetBang:
-					emit_mov(dst, emit_set_bang(expr));
+				{
+					uint16_t result = emit_set_bang(expr);
+					emit_mov(dst, result);
+					release_if_temp(result);
 					break;
+				}
 
 				case ExprKind::SetRef:
-					emit_mov(dst, emit_set_ref(expr));
+				{
+					uint16_t result = emit_set_ref(expr);
+					emit_mov(dst, result);
+					release_if_temp(result);
 					break;
+				}
 
 				case ExprKind::IterNext:
 					emit_iter_next(expr, dst);
 					break;
 
 				case ExprKind::Let:
-					emit_let_bindings(expr);
-					emit_sequence_to(expr->let.body, dst);
+					emit_let(expr, dst);
 					break;
 
 				case ExprKind::If:
@@ -5979,16 +6196,21 @@ namespace
 						LirInst i = inst(sel.op);
 						i.u.if_cmp.id = l_alt;
 						i.u.if_cmp.a = emit_to_any_reg(cmp->call.args[0]);
-						i.u.if_cmp.b = sel.op == Opcode::if_numeqk || sel.op == Opcode::if_eqk
-						               || sel.op == Opcode::if_ltk
-						               ? intern_literal_key(cmp->call.args[1])
+						bool cmp_k = takes_literal_key(sel.op);
+						i.u.if_cmp.b = cmp_k ? intern_literal_key(cmp->call.args[1])
 						               : emit_to_any_reg(cmp->call.args[1]);
 						emit(i);
+						release_if_temp(i.u.if_cmp.a);
+						if (!cmp_k)
+						{
+							release_if_temp(i.u.if_cmp.b);
+						}
 					}
 					else
 					{
 						uint16_t test = emit_to_any_reg(expr->if_.test);
 						emit_label(Opcode::if_false, l_alt, test);
+						release_if_temp(test);
 					}
 					emit_to_reg(expr->if_.consequent, dst);
 					emit_label(Opcode::skip, l_end);
@@ -6087,7 +6309,7 @@ namespace
 				size_t n = static_cast<size_t>(L.n_params);
 				entry.append(reinterpret_cast<char*>(&n), sizeof(n));
 			}
-			uint16_t n_regs = static_cast<uint16_t>(L.n_regs);
+			uint16_t n_regs = narrow_or_die<uint16_t>(L.frame_regs());
 			entry.append(reinterpret_cast<char*>(&n_regs), sizeof(n_regs));
 			size_t code_size = body.size();
 			entry.append(reinterpret_cast<char*>(&code_size), sizeof(code_size));
@@ -6517,7 +6739,7 @@ namespace
 
 			// [u32 n_toplevel_slots][u32 n_pool_entries][concatenated pool entries][code...]
 			Bytecode out;
-			uint32_t n_slots = prog.lambdas[0].n_regs;
+			uint32_t n_slots = narrow_or_die<uint32_t>(prog.lambdas[0].frame_regs());
 			uint8_t* sp = reinterpret_cast<uint8_t*>(&n_slots);
 			out.insert(out.end(), sp, sp + sizeof(n_slots));
 			uint32_t n = static_cast<uint32_t>(prog.pool.size());
