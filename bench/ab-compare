@@ -139,27 +139,39 @@ def main():
     print()
 
     bcs = {}
+    skipped = []
     for b in benches:
         # Each ref compiles its own worktree copy of the benchmark, so the two refs
         # may differ in surface syntax while expressing the same workload.
         src_old = wt_old / "bench" / f"{b}.ss"
         src_new = wt_new / "bench" / f"{b}.ss"
-        for ref, src in ((args.ref_old, src_old), (args.ref_new, src_new)):
-            if not src.exists():
-                die(f"missing source in {ref}: {src}")
+        missing = [ref for ref, src in ((args.ref_old, src_old), (args.ref_new, src_new))
+                   if not src.exists()]
+        if missing:
+            skipped.append((b, missing))
+            continue
         bc_old = tmp / f"{b}.old.bc"
         bc_new = tmp / f"{b}.new.bc"
         compile_bench(bin_old, src_old, bc_old)
         compile_bench(bin_new, src_new, bc_new)
         bcs[b] = (bc_old, bc_new)
 
-    name_w = max(len(b) for b in benches)
+    if not bcs:
+        die("no benchmarks present in both revisions")
+
+    for b, missing in skipped:
+        refs = " and ".join(short(ref) for ref in missing)
+        print(f"  skipping {b}: no bench source in {refs}")
+    if skipped:
+        print()
+
+    name_w = max(len(b) for b in bcs)
     header = f"  {'bench':<{name_w}}  {'old(ms)':>9} {'new(ms)':>9}  {'delta':>7}  {'wins/ties/loss':>15}  {'p':>10}  verdict"
     print(header)
     print("  " + "-" * (len(header) - 2))
 
     ratios = []
-    for b in benches:
+    for b in bcs:
         bc_old, bc_new = bcs[b]
         time_run([str(bin_old), "exec", str(bc_old)])
         time_run([str(bin_new), "exec", str(bc_new)])
