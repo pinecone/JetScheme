@@ -1,5 +1,6 @@
 ;;; WL_DEBUG.C — debug utilities
 
+(define DebugOk #f)
 (define singlestep #f)
 (define extravbls 0)
 (define VIEWTILEX 20)

@@ -1710,10 +1710,48 @@
 ;; GFXV_WL6.H:143
 (define PAUSEDPIC 133)
 
-;; WL_PLAY.C:614-833, the pause branch. The cheats, the debug keys, and the F-key entry into
-;; the control panel wait for the control panel itself.
+;; WL_PLAY.C:613-833.
 (define (CheckKeys)
   (unless (or screenfaded demoplayback)
+    (when (and (ref Keyboard sc_M) (ref Keyboard sc_L) (ref Keyboard sc_I))
+      (set! health 100)
+      (set! ammo 99)
+      (set! keys 3)
+      (set! score 0)
+      (set! TimeCount (+ TimeCount 42000))
+      (GiveWeapon wp_chaingun)
+      (DrawHealth)
+      (DrawKeys)
+      (DrawAmmo)
+      (DrawScore)
+      (ClearMemory)
+      (Message (string-append
+                "You now have 100% Health,\n"
+                "99 Ammo and both Keys!\n\n"
+                "Note that you have basically\n"
+                "eliminated your chances of\n"
+                "getting a high score!"))
+      (IN_ClearKeysDown)
+      (IN_Ack)
+      (DrawAllPlayBorder))
+    (when (and (ref Keyboard sc_BackSpace) (ref Keyboard sc_LShift) (ref Keyboard sc_Alt)
+               (MS_CheckParm "goobers"))
+      (ClearMemory)
+      (Message "Debugging keys are\nnow available!")
+      (IN_ClearKeysDown)
+      (IN_Ack)
+      (DrawAllPlayBorderSides)
+      (set! DebugOk #t))
+    (when (and (ref Keyboard sc_B) (ref Keyboard sc_A) (ref Keyboard sc_T))
+      (ClearMemory)
+      (Message (string-append
+                "Commander Keen is also\n"
+                "available from Apogee, but\n"
+                "then, you already know\n"
+                "that - right, Cheatmeister?!"))
+      (IN_ClearKeysDown)
+      (IN_Ack)
+      (DrawAllPlayBorder))
     (if Paused
         (begin
           (VWB_DrawPic 128 64 PAUSEDPIC)
@@ -1723,15 +1761,21 @@
           (SD_MusicOn)
           (set! Paused #f))
         (let ((scan LastScan))
-          (when (or (and (>= scan sc_F1) (<= scan sc_F10)) (= scan sc_Escape))
-            (set! LastScan sc_None)
-            (set! ingame #t)
-            (StopMusic)
-            (US_ControlPanel scan)
-            (DrawPlayScreen)
-            (cond (loadedgame (set! playstate ex_loadedgame))
-                  (startgame (set! playstate ex_resetgame))
-                  (else (StartMusic))))))))
+          (if (or (and (>= scan sc_F1) (<= scan sc_F10)) (= scan sc_Escape))
+              (begin
+                (set! LastScan sc_None)
+                (set! ingame #t)
+                (StopMusic)
+                (US_ControlPanel scan)
+                (DrawPlayScreen)
+                (cond (loadedgame (set! playstate ex_loadedgame))
+                      (startgame (set! playstate ex_resetgame))
+                      (else (StartMusic))))
+              (when (and (ref Keyboard sc_Tab) DebugOk)
+                (CA_CacheGrChunk STARTFONT)
+                (set! fontnumber 0)
+                (set! fontcolor 0)
+                (DebugKeys)))))))
 
 (define (PlayLoop)
   (PollControls)

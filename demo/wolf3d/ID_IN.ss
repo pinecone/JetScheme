@@ -33,6 +33,7 @@
 (define sc_F8 66)
 (define sc_F9 67)
 (define sc_F10 68)
+(define sc_A 30)
 (define sc_N 49)
 (define sc_Y 21)
 (define sc_W 17)
