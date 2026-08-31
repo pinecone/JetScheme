@@ -185,6 +185,7 @@
   (InitStaticList)
   (SpawnDoors)
   (ScanInfoPlane)
+  (plus-level-loaded)
   (ClearAmbushMarkers)
   (CA_LoadAllSounds))
 

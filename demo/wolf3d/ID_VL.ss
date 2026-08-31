@@ -108,6 +108,7 @@
       (unless palette
         (Quit (string-append path " is not a supported GAMEPAL.OBJ")))
       (set! gamepal palette)
+      (plus-palette-loaded)
       (VL_SetPalette palette))))
 
 (define (VL_SetColor color red green blue)

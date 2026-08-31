@@ -74,7 +74,7 @@
   (- (truncate (/ (* (+ sourcex 1) rows) 64))
      (truncate (/ (* sourcex rows) 64))))
 
-(define (shape-column page leftpix sourcex screenx rows top)
+(define (shape-column page leftpix sourcex screenx rows top level emission)
   (let posts ((offset (readu16 page (+ 4 (* (- sourcex leftpix) 2)))))
     (let ((endpixel (readu16 page offset)))
       (when (> endpixel 0)
@@ -87,16 +87,16 @@
                 (when (< y limit)
                   (when (and (>= y 0) (< y viewheight))
                     (setf! framebuffer (+ (* (+ y viewtop) screenwidth) viewleft screenx)
-                           (ref page (+ topofs texel)))
+                           (plus-sprite-color (ref page (+ topofs texel)) level emission))
                     (set! sprite-pixels (+ sprite-pixels 1)))
                   (fill (+ y 1) limit)))
               (texels (+ texel 1)))))
         (posts (+ offset 6))))))
 
-(define (draw-run page leftpix sourcex x width rows top)
+(define (draw-run page leftpix sourcex x width rows top level emission)
   (let loop ((column 0))
     (when (< column width)
-      (shape-column page leftpix sourcex (+ x column) rows top)
+      (shape-column page leftpix sourcex (+ x column) rows top level emission)
       (loop (+ column 1)))))
 
 (define (trim-run x width height outward-left)
@@ -113,19 +113,23 @@
                           (list sx w outward-left))))
           (else (list x 0 #f)))))
 
-(define (place-run page leftpix sourcex x width rows top height clip outward-left)
+(define (place-run page leftpix sourcex x width rows top height clip outward-left level emission)
   (let ((run (if clip (trim-run x width height outward-left) (list x width #f))))
     (when (> (cadr run) 0)
-      (draw-run page leftpix sourcex (car run) (cadr run) rows top))
+      (draw-run page leftpix sourcex (car run) (cadr run) rows top level emission))
     (caddr run)))
 
-(define (scale-shape screenx shapenum height clip)
+(define (scale-shape screenx shapenum height clip tilex tiley)
   (let* ((page (PM_GetPage (+ PMSpriteStart shapenum)))
          (leftpix (readu16 page 0))
          (rightpix (readu16 page 2))
          (scale (truncate (/ height (if clip 8 2)))))
     (when (and (> scale 0) (<= scale maxscale))
       (let* ((rows (* scale 2))
+             (level (if clip
+                        (plus-light-level (plus-distance-level rows viewheight) tilex tiley)
+                        0))
+             (emission (if (and clip plus-enabled) (plus-light-emission shapenum) 0))
              (top (truncate (/ (- viewheight rows) 2))))
         (let left ((sourcex 31) (slinex screenx))
           (when (and (>= sourcex leftpix) (> slinex 0))
@@ -137,7 +141,8 @@
                          (visible (if (> slinex viewwidth) (- viewwidth x) clamped)))
                     (if (< visible 1)
                         (left (- sourcex 1) x)
-                        (unless (place-run page leftpix sourcex x visible rows top height clip #t)
+                        (unless (place-run page leftpix sourcex x visible rows top height clip #t level
+                                           emission)
                           (left (- sourcex 1) x))))))))
         (let right ((sourcex (if (< leftpix 31) 31 (- leftpix 1)))
                     (slinex screenx)
@@ -154,26 +159,31 @@
                           (visible (cond ((< x 0) (+ width x))
                                          ((> (+ x width) viewwidth) (- viewwidth x))
                                          (else width))))
-                     (unless (place-run page leftpix next start visible rows top height clip #f)
+                     (unless (place-run page leftpix next start visible rows top height clip #f level
+                                        emission)
                        (right next start visible)))))))))))))
 
-(define (ScaleShape screenx shapenum height)
-  (scale-shape screenx shapenum height #t))
+(define (ScaleShape screenx shapenum height tilex tiley)
+  (scale-shape screenx shapenum height #t tilex tiley))
 
 (define (SimpleScaleShape screenx shapenum height)
-  (scale-shape screenx shapenum height #f))
+  (scale-shape screenx shapenum height #f 0 0))
 
 (define MAXVISABLE 50)
 
 (define vis-x (make-vector MAXVISABLE 0))
 (define vis-height (make-vector MAXVISABLE 0))
 (define vis-shape (make-vector MAXVISABLE 0))
+(define vis-tilex (make-vector MAXVISABLE 0))
+(define vis-tiley (make-vector MAXVISABLE 0))
 (define viscount 0)
 
-(define (vis-add screenx height shapenum)
+(define (vis-add screenx height shapenum tilex tiley)
   (setf! vis-x viscount screenx)
   (setf! vis-height viscount height)
   (setf! vis-shape viscount shapenum)
+  (setf! vis-tilex viscount tilex)
+  (setf! vis-tiley viscount tiley)
   (when (< viscount (- MAXVISABLE 1))
     (set! viscount (+ viscount 1))))
 
@@ -190,7 +200,7 @@
             (if (and grab (> (bitwise-and (ref stat-flags index) FL_BONUS) 0))
                 (GetBonus index)
                 (unless (= height 0)
-                  (vis-add screenx height (ref stat-shape index)))))))
+                  (vis-add screenx height (ref stat-shape index) tilex tiley))))))
       (loop (+ index 1)))))
 
 (define (place-actors)
@@ -209,7 +219,8 @@
                 (when (not (= height 0))
                   (vis-add screenx height
                            (+ (if (= shapenum -1) (ref actor-temp1 index) shapenum)
-                              (if (actor-rotates index) (CalcRotate index screenx) 0)))
+                              (if (actor-rotates index) (CalcRotate index screenx) 0))
+                           (ref actor-tilex index) (ref actor-tiley index))
                   (setf! actor-flags index
                          (bitwise-ior (ref actor-flags index) FL_VISABLE)))))))
       (loop (+ index 1)))))

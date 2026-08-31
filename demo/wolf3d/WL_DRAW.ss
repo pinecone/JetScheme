@@ -329,6 +329,7 @@
 ;; unoccluded column in a distance row.
 (define (DrawSpans x1 x2 height)
   (let* ((psin (abs viewsin)) (pcos (abs viewcos))
+         (level (plus-distance-level height halfheight))
          (length (truncate (/ (* 32768 scale) height)))
          (xstep (truncate (/ (* psin 2) height)))
          (ystep (truncate (/ (* pcos 2) height)))
@@ -344,8 +345,12 @@
                  (tex (+ (arithmetic-shift (bitwise-and yf #x3f0000) -10)
                          (arithmetic-shift (bitwise-and xf #x3f0000) -16))))
             (when (and (>= top 0) (< bottom viewheight))
-              (setf! framebuffer (+ (* (+ viewtop top) screenwidth) viewleft x) (ref plane-ceiling tex))
-              (setf! framebuffer (+ (* (+ viewtop bottom) screenwidth) viewleft x) (ref plane-floor tex)))))
+              (let ((lit-level (plus-light-level level (bitwise-and (arithmetic-shift xf -16) 63)
+                                                   (bitwise-and (arithmetic-shift yf -16) 63))))
+                (setf! framebuffer (+ (* (+ viewtop top) screenwidth) viewleft x)
+                       (plus-color (ref plane-ceiling tex) lit-level))
+                (setf! framebuffer (+ (* (+ viewtop bottom) screenwidth) viewleft x)
+                       (plus-color (ref plane-floor tex) lit-level))))))
         (columns (+ x 1))))))
 
 (define (DrawPlanes)
@@ -400,18 +405,19 @@
       (+ (doorwall) 3)
       (vertwall tile)))
 
-(define (ScalePost pixx height page column)
+(define (ScalePost pixx height page column tilex tiley)
   (let* ((rows (scale-rows height))
+         (level (plus-light-level (plus-distance-level rows viewheight) tilex tiley))
          (top (truncate (/ (- viewheight rows) 2)))
          (texels (PM_GetPage page)))
     (let loop ((y (max top 0)) (limit (min (+ top rows) viewheight)))
       (when (< y limit)
         (setf! framebuffer (+ (* (+ y viewtop) screenwidth) viewleft pixx)
-               (ref texels (+ (* column 64) (truncate (/ (* (- y top) 64) rows)))))
+               (plus-color (ref texels (+ (* column 64) (truncate (/ (* (- y top) 64) rows)))) level))
         (loop (+ y 1) limit)))))
 
-(define (FarScalePost pixx height page column)
-  (ScalePost pixx height page column))
+(define (FarScalePost pixx height page column tilex tiley)
+  (ScalePost pixx height page column tilex tiley))
 
 (define (HitVertWall pixx tile xtile yinttile xtilestep yintercept)
   (let ((hitx (+ (* xtile TILEGLOBAL) (if (= xtilestep -1) TILEGLOBAL 0)))
@@ -430,7 +436,8 @@
       (set! last-vertical-xtile xtile)
       (set! last-vertical-tile tile)
       (set! last-vertical-texture texture)
-      (ScalePost pixx (ref wallheight pixx) (vertpage tile xtile yinttile xtilestep) column))))
+      (ScalePost pixx (ref wallheight pixx) (vertpage tile xtile yinttile xtilestep) column
+                 (- xtile xtilestep) yinttile))))
 
 (define (HitHorizWall pixx tile xinttile ytile ytilestep xintercept)
   (set! last-vertical-wall #f)
@@ -449,7 +456,8 @@
       (set! last-horizontal-ytile ytile)
       (set! last-horizontal-tile tile)
       (set! last-horizontal-texture texture)
-      (ScalePost pixx (ref wallheight pixx) (horizpage tile xinttile ytile ytilestep) column))))
+      (ScalePost pixx (ref wallheight pixx) (horizpage tile xinttile ytile ytilestep) column
+                 xinttile (- ytile ytilestep)))))
 
 (define (HitHorizDoor pixx door xmid ytile)
   (set! last-vertical-wall #f)
@@ -464,7 +472,8 @@
       (set! last-door #t)
       (set! last-door-number door)
       (set! last-door-texture texture)
-      (ScalePost pixx (ref wallheight pixx) (doorpage (ref doorlock door) #f) column))))
+      (ScalePost pixx (ref wallheight pixx) (doorpage (ref doorlock door) #f) column
+                 (ref doortilex door) ytile))))
 
 (define (HitVertDoor pixx door ymid xtile)
   (set! last-vertical-wall #f)
@@ -479,7 +488,8 @@
       (set! last-door #t)
       (set! last-door-number door)
       (set! last-door-texture texture)
-      (ScalePost pixx (ref wallheight pixx) (doorpage (ref doorlock door) #t) column))))
+      (ScalePost pixx (ref wallheight pixx) (doorpage (ref doorlock door) #t) column
+                 xtile (ref doortiley door)))))
 
 (define (HitHorizPWall pixx tile xmid ytile ytilestep)
   (set! last-vertical-wall #f)
@@ -495,7 +505,8 @@
     (set! last-pwall #t)
     (set! last-pwall-tile tile)
     (set! last-pwall-texture texture)
-    (ScalePost pixx (ref wallheight pixx) (horizpwall tile) column)))
+    (ScalePost pixx (ref wallheight pixx) (horizpwall tile) column
+               (bitwise-and (arithmetic-shift xmid -16) 63) (- ytile ytilestep))))
 
 (define (HitVertPWall pixx tile ymid xtile xtilestep)
   (set! last-vertical-wall #f)
@@ -511,7 +522,8 @@
     (set! last-pwall #t)
     (set! last-pwall-tile tile)
     (set! last-pwall-texture texture)
-    (ScalePost pixx (ref wallheight pixx) (vertpwall tile) column)))
+    (ScalePost pixx (ref wallheight pixx) (vertpwall tile) column
+               (- xtile xtilestep) (bitwise-and (arithmetic-shift ymid -16) 63))))
 
 (define (CastColumn pixx)
   (let ((angl (+ (* player-angle 10) (ref pixelangle pixx))))
@@ -638,7 +650,8 @@
                 (pick (+ index 1) (ref vis-height index) index)
                 (pick (+ index 1) least farthest))
             (begin
-              (ScaleShape (ref vis-x farthest) (ref vis-shape farthest) (ref vis-height farthest))
+              (ScaleShape (ref vis-x farthest) (ref vis-shape farthest) (ref vis-height farthest)
+                          (ref vis-tilex farthest) (ref vis-tiley farthest))
               (setf! vis-height farthest 32000))))
       (draw (+ drawn 1))))
   viscount)

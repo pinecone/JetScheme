@@ -18,6 +18,7 @@
 (include "WL_MENU.ss")
 (include "WL_MAIN.ss")
 (include "ID_VL.ss")
+(include "plus.ss")
 
 (CheckForEpisodes)
 (Patch386)

@@ -481,6 +481,7 @@
 
 (define (T_Shoot index tics)
   (when (and (areabyplayer-at (ref actor-areanumber index)) (CheckLine index))
+    (plus-flash-at (ref actor-tilex index) (ref actor-tiley index))
     (let ((dx (abs (- (ref actor-tilex index) player-tilex)))
           (dy (abs (- (ref actor-tiley index) player-tiley))))
       (let ((spread (if (> dx dy) dx dy)))
