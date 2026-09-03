@@ -321,7 +321,7 @@
                      ex_completed))
            (SD_PlaySound LEVELDONESND)
            (SD_WaitSoundDone))
-          ((and (not (ref buttonheld bt_use)) (> (bitwise-and doortile 128) 0))
+          ((and (not (ref buttonheld bt_use)) (= (bitwise-and doortile 192) 128))
            (setf! buttonheld bt_use #t)
            (OperateDoor (bitwise-and doortile 127)))
           (else
