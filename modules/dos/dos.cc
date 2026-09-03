@@ -299,9 +299,9 @@ void main() {
 		{"f11", SAPP_KEYCODE_F11},
 		{"f12", SAPP_KEYCODE_F12}};
 
-	size_t voice_index(Atom channel)
+	size_t voice_index(VmState& s, Atom channel)
 	{
-		const std::string& name = *slow_unbox<Symbol>(channel);
+		const std::string& name = *slow_unbox<Symbol>(s, channel);
 
 		if (name == "digi")
 		{
@@ -312,12 +312,12 @@ void main() {
 			return VOICE_PC;
 		}
 
-		JET_DIE("sound channel: unknown channel '%s', expected 'digi or 'pc", name.c_str());
+		JET_DIE(&s, "sound channel: unknown channel '%s', expected 'digi or 'pc", name.c_str());
 	}
 
-	sapp_keycode key_code(Atom key)
+	sapp_keycode key_code(VmState& s, Atom key)
 	{
-		const std::string& name = *slow_unbox<Symbol>(key);
+		const std::string& name = *slow_unbox<Symbol>(s, key);
 
 		if (name.size() == 1 && name[0] >= 'a' && name[0] <= 'z')
 		{
@@ -335,7 +335,7 @@ void main() {
 			}
 		}
 
-		JET_DIE("key-down?: unknown key '%s'", name.c_str());
+		JET_DIE(&s, "key-down?: unknown key '%s'", name.c_str());
 	}
 
 	void init_cb()
@@ -472,9 +472,9 @@ void main() {
 
 static Atom frame_loop(VmState& s, Atom title, Atom width, Atom height, Atom emulation, Atom frame)
 {
-	JET_DIE_UNLESS(video.vm == nullptr, "frame-loop: already running");
+	JET_DIE_UNLESS(&s, video.vm == nullptr, "frame-loop: already running");
 
-	const std::string& emulation_name = *slow_unbox<Symbol>(emulation);
+	const std::string& emulation_name = *slow_unbox<Symbol>(s, emulation);
 	if (emulation_name == "none")
 	{
 		video.screen_emulation = ScreenEmulation::None;
@@ -485,15 +485,15 @@ static Atom frame_loop(VmState& s, Atom title, Atom width, Atom height, Atom emu
 	}
 	else
 	{
-		JET_DIE("frame-loop: unknown screen emulation '%s', expected 'none' or 'crt'",
+		JET_DIE(&s, "frame-loop: unknown screen emulation '%s', expected 'none' or 'crt'",
 		        emulation_name.c_str());
 	}
 
 	video.vm = &s;
 	video.frame_proc = frame;
-	video.width = static_cast<int>(slow_unbox<Number>(width));
-	video.height = static_cast<int>(slow_unbox<Number>(height));
-	JET_DIE_UNLESS(video.width > 0 && video.height > 0, "frame-loop: window is %dx%d", video.width,
+	video.width = static_cast<int>(slow_unbox<Number>(s, width));
+	video.height = static_cast<int>(slow_unbox<Number>(s, height));
+	JET_DIE_UNLESS(&s, video.width > 0 && video.height > 0, "frame-loop: window is %dx%d", video.width,
 	               video.height);
 
 	s.stack_top = s.stack_base + s.frames.back().top;
@@ -506,20 +506,21 @@ static Atom frame_loop(VmState& s, Atom title, Atom width, Atom height, Atom emu
 	app.width = video.width * WINDOW_SCALE;
 	app.height = static_cast<int>(video.height * WINDOW_SCALE * PIXEL_ASPECT);
 	app.fullscreen = true;
-	app.window_title = slow_unbox<String>(title)->c_str();
+	app.window_title = slow_unbox<String>(s, title)->c_str();
 	app.logger.func = slog_func;
 	sapp_run(&app);
 
 	vm_exit(s, 0);
 }
 
-static Atom display_framebuffer(Atom pixels)
+static Atom display_framebuffer(VmState& s, Atom pixels)
 {
-	JET_DIE_UNLESS(video.ready, "display-framebuffer: no window; call frame-loop first");
+	JET_DIE_UNLESS(&s, video.ready, "display-framebuffer: no window; call frame-loop first");
 
-	ByteVector& bytes = *slow_unbox<ByteVector>(pixels);
+	ByteVector& bytes = *slow_unbox<ByteVector>(s, pixels);
 	size_t expected = static_cast<size_t>(video.width) * static_cast<size_t>(video.height);
-	JET_DIE_UNLESS(bytes.size() == expected, "display-framebuffer: %zu bytes, expected %zu", bytes.size(),
+	JET_DIE_UNLESS(&s, bytes.size() == expected, "display-framebuffer: %zu bytes, expected %zu",
+	               bytes.size(),
 	               expected);
 
 	sg_image_data upload{};
@@ -555,10 +556,11 @@ static Atom display_framebuffer(Atom pixels)
 	return Atom{};
 }
 
-static Atom set_palette(Atom colors)
+static Atom set_palette(VmState& s, Atom colors)
 {
-	ByteVector& bytes = *slow_unbox<ByteVector>(colors);
-	JET_DIE_UNLESS(bytes.size() == PALETTE_COLORS * 3, "set-palette: %zu bytes, expected %zu", bytes.size(),
+	ByteVector& bytes = *slow_unbox<ByteVector>(s, colors);
+	JET_DIE_UNLESS(&s, bytes.size() == PALETTE_COLORS * 3, "set-palette: %zu bytes, expected %zu",
+	               bytes.size(),
 	               PALETTE_COLORS * 3);
 
 	for (size_t index{0}; index < PALETTE_COLORS; index++)
@@ -578,13 +580,13 @@ static Atom set_palette(Atom colors)
 	return Atom{};
 }
 
-static Atom play_sound(Atom channel, Atom pcm, Atom rate)
+static Atom play_sound(VmState& s, Atom channel, Atom pcm, Atom rate)
 {
-	size_t slot = voice_index(channel);
-	ByteVector& bytes = *slow_unbox<ByteVector>(pcm);
-	double hertz = slow_unbox<Number>(rate);
-	JET_DIE_UNLESS(hertz > 0.0, "play-sound: rate is %g", hertz);
-	JET_DIE_UNLESS(!bytes.empty(), "play-sound: no samples");
+	size_t slot = voice_index(s, channel);
+	ByteVector& bytes = *slow_unbox<ByteVector>(s, pcm);
+	double hertz = slow_unbox<Number>(s, rate);
+	JET_DIE_UNLESS(&s, hertz > 0.0, "play-sound: rate is %g", hertz);
+	JET_DIE_UNLESS(&s, !bytes.empty(), "play-sound: no samples");
 
 	// Without a device nothing drains the voice, so it must never report itself as playing.
 	if (!start_audio())
@@ -603,16 +605,17 @@ static Atom play_sound(Atom channel, Atom pcm, Atom rate)
 	return Atom{};
 }
 
-static uint8_t adlib_byte(Atom value, const char* name)
+static uint8_t adlib_byte(VmState& s, Atom value, const char* name)
 {
-	double number = slow_unbox<Number>(value);
-	JET_DIE_UNLESS(std::isfinite(number) && number >= 0.0 && number <= 255.0 && std::floor(number) == number,
+	double number = slow_unbox<Number>(s, value);
+	JET_DIE_UNLESS(&s,
+	               std::isfinite(number) && number >= 0.0 && number <= 255.0 && std::floor(number) == number,
 	               "%s: %g, expected an integer from 0 to 255", name, number);
 
 	return static_cast<uint8_t>(number);
 }
 
-static bool adlib_reset()
+static bool adlib_reset(VmState&)
 {
 	if (!start_audio())
 	{
@@ -628,11 +631,11 @@ static bool adlib_reset()
 	return true;
 }
 
-static Atom adlib_write(Atom register_value, Atom data_value)
+static Atom adlib_write(VmState& s, Atom register_value, Atom data_value)
 {
-	uint8_t register_byte = adlib_byte(register_value, "adlib-write register");
-	uint8_t data_byte = adlib_byte(data_value, "adlib-write value");
-	JET_DIE_UNLESS(start_audio(), "adlib-write: audio device is unavailable");
+	uint8_t register_byte = adlib_byte(s, register_value, "adlib-write register");
+	uint8_t data_byte = adlib_byte(s, data_value, "adlib-write value");
+	JET_DIE_UNLESS(&s, start_audio(), "adlib-write: audio device is unavailable");
 
 	const std::lock_guard<std::mutex> held{audio.lock};
 	audio.adlib.write_address(register_byte);
@@ -641,11 +644,11 @@ static Atom adlib_write(Atom register_value, Atom data_value)
 	return Atom{};
 }
 
-static Atom set_sound_attenuation(Atom left, Atom right)
+static Atom set_sound_attenuation(VmState& s, Atom left, Atom right)
 {
-	int left_step = static_cast<int>(slow_unbox<Number>(left));
-	int right_step = static_cast<int>(slow_unbox<Number>(right));
-	JET_DIE_UNLESS(left_step >= 0 && left_step <= MAX_ATTENUATION && right_step >= 0 &&
+	int left_step = static_cast<int>(slow_unbox<Number>(s, left));
+	int right_step = static_cast<int>(slow_unbox<Number>(s, right));
+	JET_DIE_UNLESS(&s, left_step >= 0 && left_step <= MAX_ATTENUATION && right_step >= 0 &&
 	               right_step <= MAX_ATTENUATION,
 	               "set-sound-attenuation: %d and %d, expected 0 to %d", left_step, right_step,
 	               MAX_ATTENUATION);
@@ -657,9 +660,9 @@ static Atom set_sound_attenuation(Atom left, Atom right)
 	return Atom{};
 }
 
-static Atom stop_sound(Atom channel)
+static Atom stop_sound(VmState& s, Atom channel)
 {
-	size_t slot = voice_index(channel);
+	size_t slot = voice_index(s, channel);
 
 	const std::lock_guard<std::mutex> held{audio.lock};
 	audio.voices[slot].playing = false;
@@ -667,36 +670,36 @@ static Atom stop_sound(Atom channel)
 	return Atom{};
 }
 
-static bool sound_playing(Atom channel)
+static bool sound_playing(VmState& s, Atom channel)
 {
-	size_t slot = voice_index(channel);
+	size_t slot = voice_index(s, channel);
 
 	const std::lock_guard<std::mutex> held{audio.lock};
 	return audio.voices[slot].playing;
 }
 
-static bool key_down(Atom key)
+static bool key_down(VmState& s, Atom key)
 {
-	return video.keys[key_code(key)];
+	return video.keys[key_code(s, key)];
 }
 
-static Number get_mouse_motion_x()
+static Number get_mouse_motion_x(VmState&)
 {
 	double delta{video.mouse_dx};
 	video.mouse_dx = 0.0;
 	return Number::from_ieee(delta);
 }
 
-static Number get_mouse_motion_y()
+static Number get_mouse_motion_y(VmState&)
 {
 	double delta{video.mouse_dy};
 	video.mouse_dy = 0.0;
 	return Number::from_ieee(delta);
 }
 
-static bool mouse_button_down(Atom button)
+static bool mouse_button_down(VmState& s, Atom button)
 {
-	const std::string& name{*slow_unbox<Symbol>(button)};
+	const std::string& name{*slow_unbox<Symbol>(s, button)};
 	if (name == "left")
 	{
 		return video.mouse_buttons[SAPP_MOUSEBUTTON_LEFT];
@@ -710,16 +713,16 @@ static bool mouse_button_down(Atom button)
 		return video.mouse_buttons[SAPP_MOUSEBUTTON_MIDDLE];
 	}
 
-	JET_DIE("mouse-button-down?: unknown button '%s'", name.c_str());
+	JET_DIE(&s, "mouse-button-down?: unknown button '%s'", name.c_str());
 }
 
-static Atom set_window_title(Atom title)
+static Atom set_window_title(VmState& s, Atom title)
 {
-	sapp_set_window_title(slow_unbox<String>(title)->c_str());
+	sapp_set_window_title(slow_unbox<String>(s, title)->c_str());
 	return Atom{};
 }
 
-static Atom request_quit()
+static Atom request_quit(VmState&)
 {
 	sapp_request_quit();
 	return Atom{};

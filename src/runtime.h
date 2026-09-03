@@ -32,50 +32,49 @@ bool operator==(Cons& p1, Cons& p2);
 
 JET_ALWAYS_INLINE inline Atom cons(VmState& s, Atom obj1, Atom obj2)
 {
-	return s.gc.alloc_tagged<Cons>(obj1, obj2);
+	return s.gc.alloc_tagged<Cons>(s, obj1, obj2);
 }
 
-inline Atom car(Atom a)
+inline Atom car(VmState& s, Atom a)
 {
-	return slow_unbox<Cons>(a)->car;
+	return slow_unbox<Cons>(s, a)->car;
 }
 
-inline Atom cdr(Atom a)
+inline Atom cdr(VmState& s, Atom a)
 {
-	return slow_unbox<Cons>(a)->cdr;
+	return slow_unbox<Cons>(s, a)->cdr;
 }
 
-Atom is_list(Atom a);
+Atom is_list(VmState& s, Atom a);
 
 void init_lists(VmState& s);
 
 template <typename Out>
-Out list_to_args(Atom list, Out out)
+Out list_to_args(VmState& s, Atom list, Out out)
 {
-	for (Atom x = list; !is_type<jet::Type::EmptyList>(x); x = cdr(x))
+	for (Atom x = list; !is_type<jet::Type::EmptyList>(x); x = cdr(s, x))
 	{
-		*out++ = car(x);
+		*out++ = car(s, x);
 	}
 	return out;
 }
 
 inline const std::string& symbol_to_string(Symbol symbol) { return *symbol; }
-Atom string_to_symbol(VmState& vm, Atom a);
+Atom string_to_symbol(VmState& s, Atom a);
 
 void init_symbols(VmState& s);
 
 bool operator==(Vec& v1, Vec& v2);
 
-Atom is_vector(Atom a);
 Atom vector_ctor(VmState& s, Atom* first, Atom* last);
 Atom make_vector(VmState& s, Atom n, Atom f);
-Atom vector_ref(Atom v, Atom i);
-Atom vector_length(Atom v);
+Atom vector_ref(VmState& s, Atom v, Atom i);
+Atom vector_length(VmState& s, Atom v);
 void init_vecs(VmState& s);
 
-Atom string_ref(Atom s, Atom k);
+Atom string_ref(VmState& s, Atom str, Atom k);
 
-Atom bytevector_u8_ref(Atom bv, Atom k);
+Atom bytevector_u8_ref(VmState& s, Atom bv, Atom k);
 void init_bytevectors(VmState& s);
 
 struct EqualContext;
@@ -111,7 +110,7 @@ class StructType
 public:
 	StructType(VmState& s, Atom name, std::vector<Atom> field_names, Arity arity, const StructOps& ops)
 		: name_{name}, field_names_{std::move(field_names)}, arity_{arity},
-		destructor_id_{s.gc.register_struct_destructor(ops.destroy)}, kind_{ops.kind}, ops_{&ops}
+		destructor_id_{s.gc.register_struct_destructor(s, ops.destroy)}, kind_{ops.kind}, ops_{&ops}
 	{
 	}
 
@@ -145,7 +144,7 @@ private:
 inline Atom make_struct_type(VmState& s, Atom name, std::vector<Atom> field_names, Arity arity,
                              const StructOps& ops)
 {
-	return s.gc.alloc_tagged<StructType>(s, name, std::move(field_names), arity, ops);
+	return s.gc.alloc_tagged<StructType>(s, s, name, std::move(field_names), arity, ops);
 }
 
 inline bool operator==(StructType& a, StructType& b)
@@ -318,7 +317,7 @@ struct SchemeStruct : Struct
 	static SchemeStruct* alloc(VmState& s, StructType* type, uint32_t n_fields)
 	{
 		size_t total = sizeof(SchemeStruct) + static_cast<size_t>(n_fields) * sizeof(Atom);
-		void* mem = s.gc.alloc(total, jet_tag::struct_, type->destructor_id());
+		void* mem = s.gc.alloc(s, total, jet_tag::struct_, type->destructor_id());
 		return new (mem) SchemeStruct{type, n_fields};
 	}
 
@@ -348,7 +347,7 @@ struct Tuple : Struct
 	static Tuple* alloc(VmState& s, StructType* type, uint32_t size)
 	{
 		size_t total = sizeof(Tuple) + static_cast<size_t>(size) * sizeof(Atom);
-		void* mem = s.gc.alloc(total, jet_tag::struct_, type->destructor_id());
+		void* mem = s.gc.alloc(s, total, jet_tag::struct_, type->destructor_id());
 		return new (mem) Tuple{type, size};
 	}
 
@@ -366,7 +365,7 @@ struct Tuple : Struct
 
 static_assert(sizeof(Tuple) == 16);
 
-bool is_eqv(Atom a, Atom b);
+bool is_eqv(VmState& s, Atom a, Atom b);
 
 // Capture-free lambdas share one pool template, so identity would expose optimization choices.
 inline bool is_eq(Atom a, Atom b)
@@ -407,12 +406,16 @@ struct KeyHash
 	size_t operator()(const FastKey& key) const { return key.key.hash; }
 };
 
-bool equal_key(const TableKey& first, const TableKey& second);
+bool equal_key(VmState& vm, const TableKey& first, const TableKey& second);
 
 struct KeyEqual
 {
 	using is_transparent = void;
-	bool operator()(const TableKey& first, const TableKey& second) const { return equal_key(first, second); }
+
+	VmState& vm;
+
+	explicit KeyEqual(VmState& vm_) : vm{vm_} {}
+	bool operator()(const TableKey& first, const TableKey& second) const { return equal_key(vm, first, second); }
 	bool operator()(const FastKey& first, const TableKey& second) const
 	{
 		if (first.key.hash != second.hash)
@@ -425,7 +428,7 @@ struct KeyEqual
 		}
 		if (first.kind == FastKeyKind::Tuple)
 		{
-			return equal_key(first.key, second);
+			return equal_key(vm, first.key, second);
 		}
 		return false;
 	}
@@ -447,7 +450,7 @@ struct GcAllocator
 	[[nodiscard]] T* allocate(size_t n)
 	{
 		static_assert(alignof(T) <= Gc::CELL_SIZE);
-		return static_cast<T*>(vm->gc.alloc_raw(n * sizeof(T)));
+		return static_cast<T*>(vm->gc.alloc_raw(*vm, n * sizeof(T)));
 	}
 
 	void deallocate(T* p, size_t n)
@@ -585,7 +588,8 @@ struct Table : Struct
 	size_t last{};
 
 	Table(VmState& s, StructType* type)
-		: Struct{type}, index{GcAllocator<std::pair<TableKey, size_t>>{s}}, entries{GcAllocator<Entry>{s}},
+		: Struct{type}, index{0, KeyHash{}, KeyEqual{s}, GcAllocator<std::pair<TableKey, size_t>>{s}},
+	entries{GcAllocator<Entry>{s}},
 	live_words{GcAllocator<uint64_t>{s}}, cursors{GcAllocator<CursorType*>{s}},
 	cursor_positions{GcAllocator<size_t>{s}}
 	{
@@ -594,7 +598,7 @@ struct Table : Struct
 
 	static Table* alloc(VmState& s, StructType* type)
 	{
-		void* mem = s.gc.alloc(sizeof(Table), jet_tag::struct_, type->destructor_id());
+		void* mem = s.gc.alloc(s, sizeof(Table), jet_tag::struct_, type->destructor_id());
 		return new (mem) Table{s, type};
 	}
 
@@ -804,10 +808,10 @@ JET_PRESERVE_NONE void struct_constructor_handler(VM_OP_PARAMS)
 }
 
 template <auto Resolve, auto Load>
-Atom struct_ref(Atom object, Atom key)
+Atom struct_ref(VmState& s, Atom object, Atom key)
 {
 	Struct* instance = unbox<Struct>(object);
-	return Load(instance, Resolve(instance, key));
+	return Load(instance, Resolve(s, instance, key));
 }
 
 Atom display_to(Atom value, std::string& out);
@@ -829,17 +833,17 @@ inline bool operator==(Prim& p1, Prim& p2)
 	return p1.stub == p2.stub;
 }
 
-inline void check_arity(Arity a, size_t actual)
+inline void check_arity(VmState& s, Arity a, size_t actual)
 {
 	if (Arity::Exactly == a.how)
 	{
-		JET_DIE_UNLESS(actual == a.expected, "procedure expects exactly %zu argument(s), given %zu",
-		               a.expected, actual);
+		JET_DIE_UNLESS(&s, actual == a.expected,
+		               "procedure expects exactly %zu argument(s), given %zu", a.expected, actual);
 	}
 	else if (Arity::AtLeast == a.how)
 	{
-		JET_DIE_UNLESS(actual >= a.expected, "procedure expects at least %zu argument(s), given %zu",
-		               a.expected, actual);
+		JET_DIE_UNLESS(&s, actual >= a.expected,
+		               "procedure expects at least %zu argument(s), given %zu", a.expected, actual);
 	}
 }
 
@@ -847,17 +851,9 @@ template <typename F>
 struct PrimTraits;
 
 template <typename R, typename... A>
-struct PrimTraits<R (*)(A...)>
-{
-	static constexpr size_t arity = sizeof...(A);
-	static constexpr bool uses_vm = false;
-};
-
-template <typename R, typename... A>
 struct PrimTraits<R (*)(VmState&, A...)>
 {
 	static constexpr size_t arity = sizeof...(A);
-	static constexpr bool uses_vm = true;
 };
 
 template <auto fn>
@@ -877,14 +873,7 @@ JET_PRESERVE_NONE inline void prim_stub_typed(VM_OP_PARAMS)
 	using T = PrimTraits<decltype(fn)>;
 	Atom result = [&]<size_t... Is>(std::index_sequence<Is...>)
 	{
-		if constexpr (T::uses_vm)
-		{
-			return box(fn(s, args[Is] ...));
-		}
-		else
-		{
-			return box(fn(args[Is] ...));
-		}
+		return box(fn(s, args[Is] ...));
 	}(std::make_index_sequence<T::arity>{});
 	*args = result;
 	stack_top = stack_base + frame->top;
@@ -896,11 +885,11 @@ Atom make_prim(VmState& s, Arity arity)
 {
 	if constexpr (std::is_same_v<decltype(fn), Prim::Fun>)
 	{
-		return s.gc.alloc_tagged<Prim>(Prim{&prim_stub_varargs<fn>, arity});
+		return s.gc.alloc_tagged<Prim>(s, Prim{&prim_stub_varargs<fn>, arity});
 	}
 	else
 	{
-		return s.gc.alloc_tagged<Prim>(Prim{&prim_stub_typed<fn>, arity});
+		return s.gc.alloc_tagged<Prim>(s, Prim{&prim_stub_typed<fn>, arity});
 	}
 }
 
@@ -927,15 +916,15 @@ inline bool is_integer(double x)
 	return is_exact(x);
 }
 
-inline bool is_positive_integer(Atom num)
+inline bool is_nonnegative_integer(VmState& s, Atom num)
 {
-	double n = slow_unbox<Number>(num);
+	double n = slow_unbox<Number>(s, num);
 	return is_integer(n) && n >= 0;
 }
 
-inline bool is_byte(Atom a)
+inline bool is_byte(VmState& s, Atom a)
 {
-	return is_positive_integer(a) && unbox<Number>(a) <= 255;
+	return is_nonnegative_integer(s, a) && unbox<Number>(a) <= 255;
 }
 
 void init_number(VmState& s);
@@ -1008,19 +997,19 @@ JET_ALWAYS_INLINE Atom field_key(VmState& s, const Op* op, Atom* frame_regs)
 }
 
 template <FieldAccess access>
-[[noreturn]] JET_NOINLINE inline void die_field_index(Atom key)
+[[noreturn]] JET_NOINLINE inline void die_field_index(VmState& s, Atom key)
 {
 	const char* op = access == FieldAccess::Store ? "setf!" : "ref";
 	if (!is_type<jet::Type::Number>(key))
 	{
-		JET_DIE("%s: expected a non-negative integer index", op);
+		JET_DIE(&s, "%s: expected a non-negative integer index", op);
 	}
 	double n = unbox<Number>(key);
 	if (!is_integer(n) || n < 0)
 	{
-		JET_DIE("%s: expected a non-negative integer index", op);
+		JET_DIE(&s, "%s: expected a non-negative integer index", op);
 	}
-	JET_DIE("%s: index out of bounds", op);
+	JET_DIE(&s, "%s: index out of bounds", op);
 }
 
 template <FieldKeySource key_source>
@@ -1116,17 +1105,17 @@ struct ContainerAccess
 		return true;
 	}
 
-	static Atom load_or_hole(Atom object, Atom key)
+	static Atom load_or_hole(VmState& s, Atom object, Atom key)
 	{
 		T& container = *unbox<T>(object);
 		if (!is_type<jet::Type::Number>(key))
 		{
-			die_field_index<FieldAccess::Load>(key);
+			die_field_index<FieldAccess::Load>(s, key);
 		}
 		double n = unbox<Number>(key);
 		if (!is_integer(n) || n < 0)
 		{
-			die_field_index<FieldAccess::Load>(key);
+			die_field_index<FieldAccess::Load>(s, key);
 		}
 		size_t index{static_cast<size_t>(n)};
 		if (index >= container.size())
@@ -1141,7 +1130,7 @@ struct ContainerAccess
 	{
 		FieldOp<FieldAccess::Load,
 		        key_source>* op = reinterpret_cast<FieldOp<FieldAccess::Load, key_source>*>(pc);
-		die_field_index<FieldAccess::Load>(field_key<key_source>(s, op, frame_regs));
+		die_field_index<FieldAccess::Load>(s, field_key<key_source>(s, op, frame_regs));
 	}
 
 	template <FieldKeySource key_source>
@@ -1168,9 +1157,9 @@ struct ContainerAccess
 		Atom key = field_key<key_source>(s, op, frame_regs);
 		if (!index_of_key<key_source>(container.size(), key, op->ic, index))
 		{
-			die_field_index<FieldAccess::Store>(key);
+			die_field_index<FieldAccess::Store>(s, key);
 		}
-		JET_DIE("setf!: expected a byte value");
+		JET_DIE(&s, "setf!: expected a byte value");
 	}
 };
 
@@ -1185,7 +1174,7 @@ struct StringAccess : ContainerAccess<String>
 	template <FieldKeySource key_source>
 	JET_NOINLINE JET_PRESERVE_NONE static void op_store_slow(VM_OP_PARAMS)
 	{
-		JET_DIE("setf!: strings are immutable");
+		JET_DIE(&s, "setf!: strings are immutable");
 	}
 };
 
@@ -1206,14 +1195,14 @@ JET_ALWAYS_INLINE bool field_receiver_matches(Atom object, uint64_t dispatch_key
 template <FieldAccess access>
 JET_NOINLINE JET_PRESERVE_NONE void die_field_receiver(VM_OP_PARAMS)
 {
-	JET_DIE("%s: unsupported receiver type", access == FieldAccess::Store ? "setf!" : "ref");
+	JET_DIE(&s, "%s: unsupported receiver type", access == FieldAccess::Store ? "setf!" : "ref");
 }
 
 template <typename Access, FieldMiss miss, FieldKeySource key_source>
 JET_NOINLINE JET_PRESERVE_NONE void op_field_load_miss(VM_OP_PARAMS)
 {
 	FieldLoadOp<miss, key_source>* op = reinterpret_cast<FieldLoadOp<miss, key_source>*>(pc);
-	Atom value = Access::load_or_hole(frame_regs[op->obj], field_key<key_source>(s, op, frame_regs));
+	Atom value = Access::load_or_hole(s, frame_regs[op->obj], field_key<key_source>(s, op, frame_regs));
 	frame_regs[op->dst] = is_hole(value) ? field_miss_value<miss, key_source>(op, frame_regs) : value;
 	pc += sizeof(*op);
 	DISPATCH();
@@ -1328,7 +1317,8 @@ JET_PRESERVE_NONE void op_field_store_fast(VM_OP_PARAMS)
 }
 
 template <typename Access>
-constexpr ObjShape make_field_shape(Atom (*ref_or_die)(Atom, Atom), Cursor* (*iter)(VmState&, Atom))
+constexpr ObjShape make_field_shape(Atom (*ref_or_die)(VmState&, Atom, Atom),
+                                    Cursor* (*iter)(VmState&, Atom))
 {
 	return {op_field_load_fast<Access, FieldKeySource::Register>,
 	        op_field_store_fast<Access, FieldKeySource::Register>,
@@ -1341,38 +1331,39 @@ constexpr ObjShape make_field_shape(Atom (*ref_or_die)(Atom, Atom), Cursor* (*it
 	        ref_or_die, Access::load_or_hole, iter};
 }
 
-template <typename op_t, Number (*finish)(double)>
-JET_ALWAYS_INLINE Atom fold(Atom* first, Atom* last, double result)
+template <typename op_t, Number (*to_number)(double)>
+JET_ALWAYS_INLINE Atom fold(VmState& s, Atom* first, Atom* last, double result)
 {
 	while (first != last)
 	{
-		result = op_t()(result, slow_unbox<Number>(*first++));
+		double next = slow_unbox<Number>(s, *first++);
+		result = op_t()(s, result, next);
 	}
-	return box(finish(result));
+	return box(to_number(result));
 }
 
-template <typename op_t, Number (*finish)(double) = Number::from_ieee>
-JET_ALWAYS_INLINE Atom folding_op(VmState&, Atom* first, Atom* last)
+template <typename op_t, Number (*to_number)(double) = Number::from_ieee>
+JET_ALWAYS_INLINE Atom folding_op(VmState& s, Atom* first, Atom* last)
 {
-	double result = slow_unbox<Number>(*first++);
-	return fold<op_t, finish>(first, last, result);
+	double result = slow_unbox<Number>(s, *first++);
+	return fold<op_t, to_number>(s, first, last, result);
 }
 
-template <typename op_t, int init, Number (*finish)(double) = Number::from_ieee>
-JET_ALWAYS_INLINE Atom folding_op(VmState&, Atom* first, Atom* last)
+template <typename op_t, int init, Number (*to_number)(double) = Number::from_ieee>
+JET_ALWAYS_INLINE Atom folding_op(VmState& s, Atom* first, Atom* last)
 {
-	double result = last - first < 2 ? static_cast<double>(init) : slow_unbox<Number>(*first++);
-	return fold<op_t, finish>(first, last, result);
+	double result = last - first < 2 ? static_cast<double>(init) : slow_unbox<Number>(s, *first++);
+	return fold<op_t, to_number>(s, first, last, result);
 }
 
 template <typename op_t>
-JET_ALWAYS_INLINE Atom folding_pred(VmState&, Atom* first, Atom* last)
+JET_ALWAYS_INLINE Atom folding_pred(VmState& s, Atom* first, Atom* last)
 {
 	bool result = true;
-	double prev = slow_unbox<Number>(*first++);
+	double prev = slow_unbox<Number>(s, *first++);
 	while (first != last)
 	{
-		double cur = slow_unbox<Number>(*first++);
+		double cur = slow_unbox<Number>(s, *first++);
 		result = result && op_t()(prev, cur);
 		prev = cur;
 	}
@@ -1387,33 +1378,33 @@ Atom arith_nullary_fun(VmState&, Atom*, Atom*)
 }
 
 template <typename T, T (*op)(T)>
-Atom arith_unary_fun(VmState&, Atom* first, Atom*)
+Atom arith_unary_fun(VmState& s, Atom* first, Atom*)
 {
-	return box(Number::from_ieee(op(slow_unbox<Number>(*first))));
+	return box(Number::from_ieee(op(slow_unbox<Number>(s, *first))));
 }
 
-template <Number (*op)(double)>
-Atom arith_unary_fun(VmState&, Atom* first, Atom*)
+template <typename T, T (*op)(VmState&, T), Number (*to_number)(double) = Number::from_ieee>
+Atom arith_unary_fun(VmState& s, Atom* first, Atom*)
 {
-	return box(op(slow_unbox<Number>(*first)));
+	return box(to_number(op(s, slow_unbox<Number>(s, *first))));
 }
 
-template <typename T, bool (*op)(T)>
-Atom arith_unary_pred(VmState&, Atom* first, Atom*)
+template <typename T, bool (*op)(VmState&, T)>
+Atom arith_unary_pred(VmState& s, Atom* first, Atom*)
 {
-	return box(op(slow_unbox<Number>(*first)));
+	return box(op(s, slow_unbox<Number>(s, *first)));
 }
 
 template <typename T, T (*op)(T, T)>
-Atom arith_binary_fun(VmState&, Atom* first, Atom*)
+Atom arith_binary_fun(VmState& s, Atom* first, Atom*)
 {
-	return box(Number::from_ieee(op(slow_unbox<Number>(first[0]), slow_unbox<Number>(first[1]))));
+	return box(Number::from_ieee(op(slow_unbox<Number>(s, first[0]), slow_unbox<Number>(s, first[1]))));
 }
 
-template <Number (*op)(double, double)>
-Atom arith_binary_fun(VmState&, Atom* first, Atom*)
+template <typename T, T (*op)(VmState&, T, T), Number (*to_number)(double) = Number::from_ieee>
+Atom arith_binary_fun(VmState& s, Atom* first, Atom*)
 {
-	return box(op(slow_unbox<Number>(first[0]), slow_unbox<Number>(first[1])));
+	return box(to_number(op(s, slow_unbox<Number>(s, first[0]), slow_unbox<Number>(s, first[1]))));
 }
 
 template <typename T>
@@ -1524,7 +1515,7 @@ private:
 class OPortFile : public OPort
 {
 public:
-	explicit OPortFile(std::string_view name);
+	explicit OPortFile(VmState& s, std::string_view name);
 	~OPortFile() override;
 
 	void write_bytes(const char* data, size_t size) override;
@@ -1534,7 +1525,7 @@ private:
 	FILE* f_;
 };
 
-Atom read_char(Atom p);
+Atom read_char(VmState& s, Atom p);
 void init_port_file(VmState& s);
 
 void init_runtime(VmState& s);

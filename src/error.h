@@ -7,22 +7,27 @@
 #include <cstdio>
 #include <cstdlib>
 
-#define JET_DIE(fmt, ...)                                                                                   \
+struct VmState;
+
+void print_stack_trace(VmState* vm);
+
+#define JET_DIE(vm_, fmt, ...)                                                                              \
 	do                                                                                                       \
 	{                                                                                                        \
 		std::fprintf(stderr, fmt "\n" __VA_OPT__(, ) __VA_ARGS__);                                           \
+		print_stack_trace(vm_);                                                                              \
 		std::exit(1);                                                                                        \
 	} while (0)
 
-#define JET_DIE_WHEN(cond, fmt, ...)                                                                        \
+#define JET_DIE_WHEN(vm_, cond, fmt, ...)                                                                   \
 	do                                                                                                       \
 	{                                                                                                        \
-		if (cond) [[unlikely]]                                                                               \
-		{                                                                                                    \
-			JET_DIE(fmt __VA_OPT__(, ) __VA_ARGS__);                                                        \
-		}                                                                                                    \
+		if (cond) [[unlikely]]                                                                                \
+		{                                                                                                     \
+			JET_DIE(vm_, fmt __VA_OPT__(, ) __VA_ARGS__);                                                    \
+		}                                                                                                     \
 	} while (0)
 
-#define JET_DIE_UNLESS(cond, fmt, ...) JET_DIE_WHEN(!(cond), fmt __VA_OPT__(, ) __VA_ARGS__)
+#define JET_DIE_UNLESS(vm_, cond, fmt, ...) JET_DIE_WHEN(vm_, !(cond), fmt __VA_OPT__(, ) __VA_ARGS__)
 
 #endif

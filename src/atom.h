@@ -128,7 +128,7 @@ struct Number
 	{
 #ifdef JET_DEBUG
 		uint64_t canon = std::bit_cast<uint64_t>(from_ieee(value).value);
-		JET_DIE_UNLESS(std::bit_cast<uint64_t>(value) == canon, "non-canonical number %g", value);
+		JET_DIE_UNLESS(nullptr, std::bit_cast<uint64_t>(value) == canon, "non-canonical number %g", value);
 #endif
 		return Number{value};
 	}
@@ -388,14 +388,13 @@ struct box_unbox_t<EmptyList>
 
 std::string_view type_name(jet::Type type);
 
-inline void type_check(Atom a, jet::Type t)
+[[noreturn]] void die_type_mismatch(VmState& s, Atom a, jet::Type t);
+
+inline void type_check(VmState& s, Atom a, jet::Type t)
 {
 	if (t != a.type()) [[unlikely]]
 	{
-		std::string_view want = type_name(t);
-		std::string_view got = type_name(a.type());
-		JET_DIE("expected <%.*s>, got <%.*s>", static_cast<int>(want.size()), want.data(),
-		        static_cast<int>(got.size()), got.data());
+		die_type_mismatch(s, a, t);
 	}
 }
 
@@ -424,9 +423,9 @@ decltype(auto) unbox(Atom a)
 }
 
 template <typename T>
-decltype(auto) slow_unbox(Atom a)
+decltype(auto) slow_unbox(VmState& s, Atom a)
 {
-	type_check(a, dynamic_type<T>::id);
+	type_check(s, a, dynamic_type<T>::id);
 	return box_unbox_t<T>::unbox(a);
 }
 

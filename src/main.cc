@@ -191,8 +191,8 @@ int main(int argc, char* argv[])
 		break;
 	}
 
-	JET_DIE_WHEN(cmd == "run" && input_path.empty(), "error: 'jet run' requires a source file");
-	JET_DIE_WHEN(want_eval && input_path.empty(), "error: 'jet eval' requires an expression");
+	JET_DIE_WHEN(nullptr, cmd == "run" && input_path.empty(), "error: 'jet run' requires a source file");
+	JET_DIE_WHEN(nullptr, want_eval && input_path.empty(), "error: 'jet eval' requires an expression");
 	if (input_path.empty())
 	{
 		input_path = "-";
@@ -218,14 +218,15 @@ int main(int argc, char* argv[])
 		}
 		else
 		{
-			JET_DIE_UNLESS(slurp_text(input_path, source), "error: cannot read '%s'", input_path.c_str());
+			JET_DIE_UNLESS(nullptr, slurp_text(input_path, source), "error: cannot read '%s'",
+			               input_path.c_str());
 			filename = input_path != "-" ? input_path : "<stdin>";
 		}
 		bc = compile_source(std::move(source), std::move(filename), prelude_path, built_in_prelude, flags);
 	}
 	else
 	{
-		JET_DIE_UNLESS(slurp_bytes(input_path, bc), "error: cannot read '%s'", input_path.c_str());
+		JET_DIE_UNLESS(nullptr, slurp_bytes(input_path, bc), "error: cannot read '%s'", input_path.c_str());
 	}
 
 	CodeImage image{bc.data(), bc.size()};

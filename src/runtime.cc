@@ -37,7 +37,13 @@ bool operator==(Cons& p1, Cons& p2)
 	return &p1 == &p2;
 }
 
-Atom is_list(Atom a)
+template <jet::Type type>
+static bool type_pred(VmState&, Atom x)
+{
+	return is_type<type>(x);
+}
+
+Atom is_list(VmState& s, Atom a)
 {
 	Atom slow = a;
 
@@ -71,15 +77,15 @@ Atom is_list(Atom a)
 	}
 }
 
-static Atom set_car(Atom pair, Atom x)
+static Atom set_car(VmState& s, Atom pair, Atom x)
 {
-	slow_unbox<Cons>(pair)->car = x;
+	slow_unbox<Cons>(s, pair)->car = x;
 	return Atom{};
 }
 
-static Atom set_cdr(Atom pair, Atom x)
+static Atom set_cdr(VmState& s, Atom pair, Atom x)
 {
-	slow_unbox<Cons>(pair)->cdr = x;
+	slow_unbox<Cons>(s, pair)->cdr = x;
 	return Atom{};
 }
 
@@ -98,7 +104,7 @@ static Atom append_prim(VmState& s, Atom* first, Atom* last)
 			slot = &unbox<Cons>(cell)->cdr;
 			x = src->cdr;
 		}
-		JET_DIE_UNLESS(is_type<jet::Type::EmptyList>(x), "append expects a list, given %s",
+		JET_DIE_UNLESS(&s, is_type<jet::Type::EmptyList>(x), "append expects a list, given %s",
 		               type_name(x.type()).data());
 	}
 	if (first != last)
@@ -117,66 +123,99 @@ void init_lists(VmState& s)
 	e.bind("car", make_prim<car>(s));
 	e.bind("cdr", make_prim<cdr>(s));
 
-	e.bind("pair?", make_prim<is_type<jet::Type::Pair>>(s));
+	e.bind("pair?", make_prim<type_pred<jet::Type::Pair>>(s));
 	e.bind("list?", make_prim<is_list>(s));
-	e.bind("null?", make_prim<is_type<jet::Type::EmptyList>>(s));
+	e.bind("null?", make_prim<type_pred<jet::Type::EmptyList>>(s));
 	e.bind("set-car!", make_prim<set_car>(s));
 	e.bind("set-cdr!", make_prim<set_cdr>(s));
 }
 
-static double jet_modulo(double a, double b)
+static double jet_modulo(VmState& s, double a, double b)
 {
-	JET_DIE_UNLESS(b != 0, "modulo: division by zero");
+	JET_DIE_UNLESS(&s, b != 0, "modulo: division by zero");
 	return a - std::floor(a / b) * b;
 }
 
 template <typename T>
-struct max
+struct jet_plus
 {
-	T operator()(T a, T b) { return std::max(a, b); }
+	T operator()(VmState&, T lhs, T rhs) { return lhs + rhs; }
 };
 
 template <typename T>
-struct min
+struct jet_minus
 {
-	T operator()(T a, T b) { return std::min(a, b); }
+	T operator()(VmState&, T lhs, T rhs) { return lhs - rhs; }
 };
 
-static int32_t to_int32(double x)
+template <typename T>
+struct jet_multiplies
 {
-	JET_DIE_UNLESS(std::isfinite(x), "bitwise op requires a finite number, given %g", x);
+	T operator()(VmState&, T lhs, T rhs) { return lhs * rhs; }
+};
+
+template <typename T>
+struct jet_divides
+{
+	T operator()(VmState&, T lhs, T rhs) { return lhs / rhs; }
+};
+
+template <typename T>
+struct jet_max
+{
+	T operator()(VmState&, T lhs, T rhs) { return std::max(lhs, rhs); }
+};
+
+template <typename T>
+struct jet_min
+{
+	T operator()(VmState&, T lhs, T rhs) { return std::min(lhs, rhs); }
+};
+
+static int32_t to_int32(VmState& s, double x)
+{
+	JET_DIE_UNLESS(&s, std::isfinite(x), "bitwise op requires a finite number, given %g", x);
 	return static_cast<int32_t>(static_cast<int64_t>(x));
 }
 
 template <typename T>
 struct bit_and
 {
-	T operator()(T a, T b) { return static_cast<T>(to_int32(a) & to_int32(b)); }
+	T operator()(VmState& state, T lhs, T rhs)
+	{
+		return static_cast<T>(to_int32(state, lhs) & to_int32(state, rhs));
+	}
 };
 
 template <typename T>
 struct bit_ior
 {
-	T operator()(T a, T b) { return static_cast<T>(to_int32(a) | to_int32(b)); }
+	T operator()(VmState& state, T lhs, T rhs)
+	{
+		return static_cast<T>(to_int32(state, lhs) | to_int32(state, rhs));
+	}
 };
 
 template <typename T>
 struct bit_xor
 {
-	T operator()(T a, T b) { return static_cast<T>(to_int32(a) ^ to_int32(b)); }
+	T operator()(VmState& state, T lhs, T rhs)
+	{
+		return static_cast<T>(to_int32(state, lhs) ^ to_int32(state, rhs));
+	}
 };
 
-static Number jet_bitwise_not(double x)
+static double jet_bitwise_not(VmState& s, double x)
 {
-	return Number::trusted(static_cast<double>(~to_int32(x)));
+	return static_cast<double>(~to_int32(s, x));
 }
 
-static Number jet_arithmetic_shift(double x, double count)
+static double jet_arithmetic_shift(VmState& s, double x, double count)
 {
-	int32_t v = to_int32(x);
-	int32_t c = to_int32(count);
+	int32_t v = to_int32(s, x);
+	int32_t c = to_int32(s, count);
 	int32_t shifted = c >= 0 ? static_cast<int32_t>(static_cast<uint32_t>(v) << (c & 31)) : v >> ((-c) & 31);
-	return Number::trusted(static_cast<double>(shifted));
+	return static_cast<double>(shifted);
 }
 
 static double jet_abs(double x)
@@ -184,37 +223,47 @@ static double jet_abs(double x)
 	return fabs(x);
 }
 
-static bool jet_is_positive(double x)
+static bool jet_is_positive(VmState&, double x)
 {
 	return x > 0;
 }
 
-static bool jet_is_negative(double x)
+static bool jet_is_negative(VmState&, double x)
 {
 	return x < 0;
 }
 
-static bool jet_is_even(double x)
+static bool jet_is_even(VmState& s, double x)
 {
-	JET_DIE_UNLESS(is_integer(x), "even? expects an integer, given %g", x);
+	JET_DIE_UNLESS(&s, is_integer(x), "even? expects an integer, given %g", x);
 	return std::fmod(x, 2.0) == 0.0;
 }
 
-static bool jet_is_odd(double x)
+static bool jet_is_odd(VmState& s, double x)
 {
-	JET_DIE_UNLESS(is_integer(x), "odd? expects an integer, given %g", x);
+	JET_DIE_UNLESS(&s, is_integer(x), "odd? expects an integer, given %g", x);
 	return std::fmod(x, 2.0) != 0.0;
 }
 
-static double jet_quotient(double a, double b)
+static bool jet_is_exact(VmState&, double x)
 {
-	JET_DIE_UNLESS(b != 0, "quotient: division by zero");
+	return is_exact(x);
+}
+
+static bool jet_is_integer(VmState& s, double x)
+{
+	return jet_is_exact(s, x);
+}
+
+static double jet_quotient(VmState& s, double a, double b)
+{
+	JET_DIE_UNLESS(&s, b != 0, "quotient: division by zero");
 	return std::trunc(a / b);
 }
 
-static double jet_remainder(double a, double b)
+static double jet_remainder(VmState& s, double a, double b)
 {
-	JET_DIE_UNLESS(b != 0, "remainder: division by zero");
+	JET_DIE_UNLESS(&s, b != 0, "remainder: division by zero");
 	return std::fmod(a, b);
 }
 
@@ -231,13 +280,13 @@ struct num_equal
 	}
 };
 
-static Atom random_seed()
+static Atom random_seed(VmState&)
 {
 	srandom(std::random_device{}());
 	return Atom{};
 }
 
-static Atom time_monotonic()
+static Atom time_monotonic(VmState&)
 {
 	static const std::chrono::steady_clock::time_point epoch{std::chrono::steady_clock::now()};
 	std::chrono::duration<double> elapsed{std::chrono::steady_clock::now() - epoch};
@@ -249,10 +298,10 @@ void init_number(VmState& s)
 	Env& e = s.env;
 	using namespace std;
 
-	e.bind("+", make_prim<folding_op<plus<double>, 0, Number::from_sum>>(s));
-	e.bind("-", make_prim<folding_op<minus<double>, 0, Number::from_sum>>(s, at_least(1)));
-	e.bind("*", make_prim<folding_op<multiplies<double>, 1>>(s));
-	e.bind("/", make_prim<folding_op<divides<double>, 1>>(s, at_least(1)));
+	e.bind("+", make_prim<folding_op<jet_plus<double>, 0, Number::from_sum>>(s));
+	e.bind("-", make_prim<folding_op<jet_minus<double>, 0, Number::from_sum>>(s, at_least(1)));
+	e.bind("*", make_prim<folding_op<jet_multiplies<double>, 1>>(s));
+	e.bind("/", make_prim<folding_op<jet_divides<double>, 1>>(s, at_least(1)));
 
 	e.bind("floor", make_prim<arith_unary_fun<double, ::floor>>(s, exactly(1)));
 	e.bind("ceiling", make_prim<arith_unary_fun<double, ::ceil>>(s, exactly(1)));
@@ -270,8 +319,8 @@ void init_number(VmState& s)
 	e.bind("atan", make_prim<arith_unary_fun<double, ::atan>>(s, exactly(1)));
 	e.bind("abs", make_prim<arith_unary_fun<double, jet_abs>>(s, exactly(1)));
 	e.bind("square", make_prim<arith_unary_fun<double, jet_square>>(s, exactly(1)));
-	e.bind("quotient", make_prim<arith_binary_fun<double, jet_quotient>>(s, exactly(2)));
-	e.bind("remainder", make_prim<arith_binary_fun<double, jet_remainder>>(s, exactly(2)));
+	e.bind("quotient", make_prim<arith_binary_fun<double, jet_quotient, Number::trusted>>(s, exactly(2)));
+	e.bind("remainder", make_prim<arith_binary_fun<double, jet_remainder, Number::trusted>>(s, exactly(2)));
 
 	e.bind("positive?", make_prim<arith_unary_pred<double, jet_is_positive>>(s, exactly(1)));
 	e.bind("negative?", make_prim<arith_unary_pred<double, jet_is_negative>>(s, exactly(1)));
@@ -285,22 +334,23 @@ void init_number(VmState& s)
 	e.bind(">", make_prim<folding_pred<greater<double>>>(s, at_least(2)));
 	e.bind(">=", make_prim<folding_pred<greater_equal<double>>>(s, at_least(2)));
 
-	e.bind("modulo", make_prim<arith_binary_fun<double, jet_modulo>>(s, exactly(2)));
-	e.bind("max", make_prim<folding_op<::max<double>, Number::trusted>>(s, at_least(1)));
-	e.bind("min", make_prim<folding_op<::min<double>, Number::trusted>>(s, at_least(1)));
+	e.bind("modulo", make_prim<arith_binary_fun<double, jet_modulo, Number::trusted>>(s, exactly(2)));
+	e.bind("max", make_prim<folding_op<jet_max<double>, Number::trusted>>(s, at_least(1)));
+	e.bind("min", make_prim<folding_op<jet_min<double>, Number::trusted>>(s, at_least(1)));
 
 	e.bind("bitwise-and", make_prim<folding_op<::bit_and<double>, -1, Number::trusted>>(s));
 	e.bind("bitwise-ior", make_prim<folding_op<::bit_ior<double>, 0, Number::trusted>>(s));
 	e.bind("bitwise-xor", make_prim<folding_op<::bit_xor<double>, 0, Number::trusted>>(s));
-	e.bind("bitwise-not", make_prim<arith_unary_fun<jet_bitwise_not>>(s, exactly(1)));
-	e.bind("arithmetic-shift", make_prim<arith_binary_fun<jet_arithmetic_shift>>(s, exactly(2)));
+	e.bind("bitwise-not",
+	       make_prim<arith_unary_fun<double, jet_bitwise_not, Number::trusted>>(s, exactly(1)));
+	e.bind("arithmetic-shift", make_prim<arith_binary_fun<double, jet_arithmetic_shift, Number::trusted>>(s, exactly(2)));
 
-	e.bind("exact?", make_prim<arith_unary_pred<double, is_exact>>(s, exactly(1)));
-	e.bind("integer?", make_prim<arith_unary_pred<double, is_integer>>(s, exactly(1)));
-	e.bind("number?", make_prim<is_type<jet::Type::Number>>(s));
-	e.bind("real?", make_prim<is_type<jet::Type::Number>>(s));
-	e.bind("rational?", make_prim<is_type<jet::Type::Number>>(s));
-	e.bind("complex?", make_prim<is_type<jet::Type::Number>>(s));
+	e.bind("exact?", make_prim<arith_unary_pred<double, jet_is_exact>>(s, exactly(1)));
+	e.bind("integer?", make_prim<arith_unary_pred<double, jet_is_integer>>(s, exactly(1)));
+	e.bind("number?", make_prim<type_pred<jet::Type::Number>>(s));
+	e.bind("real?", make_prim<type_pred<jet::Type::Number>>(s));
+	e.bind("rational?", make_prim<type_pred<jet::Type::Number>>(s));
+	e.bind("complex?", make_prim<type_pred<jet::Type::Number>>(s));
 
 	e.bind("random", make_prim<arith_nullary_fun<long, random>>(s, exactly(0)));
 	e.bind("random-seed", make_prim<random_seed>(s));
@@ -308,12 +358,12 @@ void init_number(VmState& s)
 
 static Atom symbol_to_string_prim(VmState& s, Atom a)
 {
-	return s.gc.alloc_tagged<String>(symbol_to_string(unbox<Symbol>(a)));
+	return s.gc.alloc_tagged<String>(s, symbol_to_string(unbox<Symbol>(a)));
 }
 
-Atom string_to_symbol(VmState& vm, Atom a)
+Atom string_to_symbol(VmState& s, Atom a)
 {
-	return box(vm.symbols.intern(*unbox<String>(a)));
+	return box(s.symbols.intern(*unbox<String>(a)));
 }
 
 void init_symbols(VmState& s)
@@ -321,7 +371,7 @@ void init_symbols(VmState& s)
 	Env& e = s.env;
 	e.bind("symbol->string", make_prim<symbol_to_string_prim>(s));
 	e.bind("string->symbol", make_prim<string_to_symbol>(s));
-	e.bind("symbol?", make_prim<is_type<jet::Type::Symbol>>(s));
+	e.bind("symbol?", make_prim<type_pred<jet::Type::Symbol>>(s));
 }
 
 bool operator==(Vec& v1, Vec& v2)
@@ -331,46 +381,46 @@ bool operator==(Vec& v1, Vec& v2)
 
 Atom vector_ctor(VmState& s, Atom* first, Atom* last)
 {
-	return s.gc.alloc_tagged<Vec>(first, last);
+	return s.gc.alloc_tagged<Vec>(s, first, last);
 }
 
 Atom make_vector(VmState& s, Atom n, Atom f)
 {
-	JET_DIE_UNLESS(is_positive_integer(n), "make-vector expects positive integer, given %g",
+	JET_DIE_UNLESS(&s, is_nonnegative_integer(s, n), "make-vector expects non-negative integer, given %g",
 	               unbox<Number>(n));
-	return s.gc.alloc_tagged<Vec>(unbox<Number>(n), f);
+	return s.gc.alloc_tagged<Vec>(s, unbox<Number>(n), f);
 }
 
-Atom vector_ref(Atom v, Atom idx)
+Atom vector_ref(VmState& s, Atom v, Atom idx)
 {
-	JET_DIE_UNLESS(is_positive_integer(idx), "vector-ref expects positive integer, given %g",
+	JET_DIE_UNLESS(&s, is_nonnegative_integer(s, idx), "vector-ref expects non-negative integer, given %g",
 	               unbox<Number>(idx));
 
 	size_t index = unbox<Number>(idx);
-	Vec& mv = *slow_unbox<Vec>(v);
-	JET_DIE_UNLESS(index < mv.size(), "vector-ref index %zu out of bounds", index);
+	Vec& mv = *slow_unbox<Vec>(s, v);
+	JET_DIE_UNLESS(&s, index < mv.size(), "vector-ref index %zu out of bounds", index);
 	return mv[index];
 }
 
-Atom vector_length(Atom v)
+Atom vector_length(VmState& s, Atom v)
 {
-	return box(Number::trusted(static_cast<double>(slow_unbox<Vec>(v)->size())));
+	return box(Number::trusted(static_cast<double>(slow_unbox<Vec>(s, v)->size())));
 }
 
-static Atom vector_set(Atom v, Atom idx, Atom val)
+static Atom vector_set(VmState& s, Atom v, Atom idx, Atom val)
 {
-	JET_DIE_UNLESS(is_positive_integer(idx), "vector-set! expects positive integer, given %g",
+	JET_DIE_UNLESS(&s, is_nonnegative_integer(s, idx), "vector-set! expects non-negative integer, given %g",
 	               unbox<Number>(idx));
 	size_t index = unbox<Number>(idx);
-	Vec& mv = *slow_unbox<Vec>(v);
-	JET_DIE_UNLESS(index < mv.size(), "vector-set! index %zu out of bounds", index);
+	Vec& mv = *slow_unbox<Vec>(s, v);
+	JET_DIE_UNLESS(&s, index < mv.size(), "vector-set! index %zu out of bounds", index);
 	mv[index] = val;
 	return val;
 }
 
-static Atom vector_push(Atom v, Atom val)
+static Atom vector_push(VmState& s, Atom v, Atom val)
 {
-	slow_unbox<Vec>(v)->push_back(val);
+	slow_unbox<Vec>(s, v)->push_back(val);
 	return val;
 }
 
@@ -382,20 +432,20 @@ static void vector_remove_at(Vec& vector, size_t index)
 	}
 }
 
-static Atom vector_pop(Atom v)
+static Atom vector_pop(VmState& s, Atom v)
 {
-	Vec& mv = *slow_unbox<Vec>(v);
-	JET_DIE_WHEN(mv.empty(), "vector-pop!: vector is empty");
+	Vec& mv = *slow_unbox<Vec>(s, v);
+	JET_DIE_WHEN(&s, mv.empty(), "vector-pop!: vector is empty");
 	Atom last = mv.back();
 	vector_remove_at(mv, mv.size() - 1);
 	mv.pop_back();
 	return last;
 }
 
-static Atom vector_pop_first(Atom v)
+static Atom vector_pop_first(VmState& s, Atom v)
 {
-	Vec& mv = *slow_unbox<Vec>(v);
-	JET_DIE_WHEN(mv.empty(), "vector-pop-first!: vector is empty");
+	Vec& mv = *slow_unbox<Vec>(s, v);
+	JET_DIE_WHEN(&s, mv.empty(), "vector-pop-first!: vector is empty");
 	Atom first = mv.front();
 	vector_remove_at(mv, 0);
 	mv.erase(mv.begin());
@@ -406,7 +456,7 @@ JET_PRESERVE_NONE static void private_cursor_constructor(VM_OP_PARAMS)
 {
 	StructType* type = unbox<StructType>(callee);
 	const std::string& name = *unbox<Symbol>(type->name());
-	JET_DIE("cursor type '%s' cannot be constructed directly", name.c_str());
+	JET_DIE(&s, "cursor type '%s' cannot be constructed directly", name.c_str());
 }
 
 static bool equal_vector_cursor(EqualContext&, Struct* first, Struct* second, EqualRecur)
@@ -485,7 +535,7 @@ void init_vecs(VmState& s)
 		make_struct_type(s, box(&vector_cursor_name), {}, exactly(0), vector_cursor_struct_ops);
 	e.bind("%vector-cursor", vector_cursor_type);
 	VectorCursor::type_atom = vector_cursor_type;
-	e.bind("vector?", make_prim<is_type<jet::Type::Vector>>(s));
+	e.bind("vector?", make_prim<type_pred<jet::Type::Vector>>(s));
 	e.bind("vector-push!", make_prim<vector_push>(s));
 	e.bind("vector-pop!", make_prim<vector_pop>(s));
 	e.bind("vector-pop-first!", make_prim<vector_pop_first>(s));
@@ -496,45 +546,48 @@ void init_vecs(VmState& s)
 	e.bind("vector", make_prim<vector_ctor>(s, n_ary()));
 }
 
-static void die_unless_byte(Atom b)
+static void die_unless_byte(VmState& s, Atom b)
 {
-	JET_DIE_UNLESS(is_byte(b), "bytevector: byte must be exact integer in [0,255], given %g",
+	JET_DIE_UNLESS(&s, is_byte(s, b), "bytevector: byte must be exact integer in [0,255], given %g",
 	               unbox<Number>(b));
 }
 
-Atom bytevector_u8_ref(Atom bv, Atom k)
+Atom bytevector_u8_ref(VmState& s, Atom bv, Atom k)
 {
-	JET_DIE_UNLESS(is_positive_integer(k), "bytevector-u8-ref expects positive integer, given %g",
+	JET_DIE_UNLESS(&s, is_nonnegative_integer(s, k),
+	               "bytevector-u8-ref expects non-negative integer, given %g",
 	               unbox<Number>(k));
 	size_t index = unbox<Number>(k);
-	ByteVector& mbv = *slow_unbox<ByteVector>(bv);
-	JET_DIE_UNLESS(index < mbv.size(), "bytevector-u8-ref index %zu out of bounds", index);
+	ByteVector& mbv = *slow_unbox<ByteVector>(s, bv);
+	JET_DIE_UNLESS(&s, index < mbv.size(), "bytevector-u8-ref index %zu out of bounds", index);
 	return box(Number::trusted(mbv[index]));
 }
 
-static Atom bytevector_u8_set(Atom bv, Atom k, Atom b)
+static Atom bytevector_u8_set(VmState& s, Atom bv, Atom k, Atom b)
 {
-	JET_DIE_UNLESS(is_positive_integer(k), "bytevector-u8-set! expects positive integer, given %g",
+	JET_DIE_UNLESS(&s, is_nonnegative_integer(s, k),
+	               "bytevector-u8-set! expects non-negative integer, given %g",
 	               unbox<Number>(k));
 	size_t index = unbox<Number>(k);
-	ByteVector& mbv = *slow_unbox<ByteVector>(bv);
-	JET_DIE_UNLESS(index < mbv.size(), "bytevector-u8-set! index %zu out of bounds", index);
-	die_unless_byte(b);
+	ByteVector& mbv = *slow_unbox<ByteVector>(s, bv);
+	JET_DIE_UNLESS(&s, index < mbv.size(), "bytevector-u8-set! index %zu out of bounds", index);
+	die_unless_byte(s, b);
 	mbv[index] = static_cast<uint8_t>(unbox<Number>(b));
 	return b;
 }
 
-static Atom bytevector_length(Atom bv)
+static Atom bytevector_length(VmState& s, Atom bv)
 {
-	return box(Number::trusted(static_cast<double>(slow_unbox<ByteVector>(bv)->size())));
+	return box(Number::trusted(static_cast<double>(slow_unbox<ByteVector>(s, bv)->size())));
 }
 
 static Atom make_bytevector(VmState& s, Atom k, Atom fill)
 {
-	JET_DIE_UNLESS(is_positive_integer(k), "make-bytevector expects positive integer, given %g",
+	JET_DIE_UNLESS(&s, is_nonnegative_integer(s, k),
+	               "make-bytevector expects non-negative integer, given %g",
 	               unbox<Number>(k));
-	die_unless_byte(fill);
-	return s.gc.alloc_tagged<ByteVector>(unbox<Number>(k), static_cast<uint8_t>(unbox<Number>(fill)));
+	die_unless_byte(s, fill);
+	return s.gc.alloc_tagged<ByteVector>(s, unbox<Number>(k), static_cast<uint8_t>(unbox<Number>(fill)));
 }
 
 static Atom bytevector_ctor(VmState& s, Atom* first, Atom* last)
@@ -543,52 +596,55 @@ static Atom bytevector_ctor(VmState& s, Atom* first, Atom* last)
 	result.reserve(last - first);
 	for (Atom* p = first; p != last; ++p)
 	{
-		die_unless_byte(*p);
+		die_unless_byte(s, *p);
 		result.push_back(static_cast<uint8_t>(unbox<Number>(*p)));
 	}
-	return s.gc.alloc_tagged<ByteVector>(std::move(result));
+	return s.gc.alloc_tagged<ByteVector>(s, std::move(result));
 }
 
-static Atom bytevector_copy(VmState& vm, Atom bv, Atom start, Atom end)
+static Atom bytevector_copy(VmState& s, Atom bv, Atom start, Atom end)
 {
-	JET_DIE_UNLESS(is_positive_integer(start), "bytevector-copy expects positive integer start, given %g",
-	               unbox<Number>(start));
-	JET_DIE_UNLESS(is_positive_integer(end), "bytevector-copy expects positive integer end, given %g",
-	               unbox<Number>(end));
-	ByteVector& src = *slow_unbox<ByteVector>(bv);
-	size_t s = unbox<Number>(start);
-	size_t e = unbox<Number>(end);
-	JET_DIE_UNLESS(s <= e && e <= src.size(), "bytevector-copy range %zu..%zu out of bounds", s, e);
-	return vm.gc.alloc_tagged<ByteVector>(src.begin() + s, src.begin() + e);
+	JET_DIE_UNLESS(&s, is_nonnegative_integer(s, start),
+	               "bytevector-copy expects non-negative integer start, given %g", unbox<Number>(start));
+	JET_DIE_UNLESS(&s, is_nonnegative_integer(s, end),
+	               "bytevector-copy expects non-negative integer end, given %g", unbox<Number>(end));
+	ByteVector& src = *slow_unbox<ByteVector>(s, bv);
+	size_t start_index = unbox<Number>(start);
+	size_t end_index = unbox<Number>(end);
+	JET_DIE_UNLESS(&s, start_index <= end_index && end_index <= src.size(),
+	               "bytevector-copy range %zu..%zu out of bounds", start_index, end_index);
+	return s.gc.alloc_tagged<ByteVector>(s, src.begin() + start_index, src.begin() + end_index);
 }
 
-static Atom bytevector_copy_bang(Atom to, Atom at, Atom from, Atom start, Atom end)
+static Atom bytevector_copy_bang(VmState& s, Atom to, Atom at, Atom from, Atom start, Atom end)
 {
-	JET_DIE_UNLESS(is_positive_integer(at), "bytevector-copy! expects positive integer at, given %g",
-	               unbox<Number>(at));
-	JET_DIE_UNLESS(is_positive_integer(start), "bytevector-copy! expects positive integer start, given %g",
-	               unbox<Number>(start));
-	JET_DIE_UNLESS(is_positive_integer(end), "bytevector-copy! expects positive integer end, given %g",
-	               unbox<Number>(end));
-	ByteVector& dst = *slow_unbox<ByteVector>(to);
-	ByteVector& src = *slow_unbox<ByteVector>(from);
-	size_t a = unbox<Number>(at);
-	size_t s = unbox<Number>(start);
-	size_t e = unbox<Number>(end);
-	JET_DIE_UNLESS(s <= e && e <= src.size(), "bytevector-copy! source range %zu..%zu out of bounds", s, e);
-	JET_DIE_UNLESS(a + (e - s) <= dst.size(), "bytevector-copy! destination range out of bounds");
-	if (to.as_ptr() == from.as_ptr() && a > s)
+	JET_DIE_UNLESS(&s, is_nonnegative_integer(s, at),
+	               "bytevector-copy! expects non-negative integer at, given %g", unbox<Number>(at));
+	JET_DIE_UNLESS(&s, is_nonnegative_integer(s, start),
+	               "bytevector-copy! expects non-negative integer start, given %g", unbox<Number>(start));
+	JET_DIE_UNLESS(&s, is_nonnegative_integer(s, end),
+	               "bytevector-copy! expects non-negative integer end, given %g", unbox<Number>(end));
+	ByteVector& dst = *slow_unbox<ByteVector>(s, to);
+	ByteVector& src = *slow_unbox<ByteVector>(s, from);
+	size_t at_index = unbox<Number>(at);
+	size_t start_index = unbox<Number>(start);
+	size_t end_index = unbox<Number>(end);
+	JET_DIE_UNLESS(&s, start_index <= end_index && end_index <= src.size(),
+	               "bytevector-copy! source range %zu..%zu out of bounds", start_index, end_index);
+	JET_DIE_UNLESS(&s, at_index + (end_index - start_index) <= dst.size(),
+	               "bytevector-copy! destination range out of bounds");
+	if (to.as_ptr() == from.as_ptr() && at_index > start_index)
 	{
-		for (size_t i = e; i > s; --i)
+		for (size_t i = end_index; i > start_index; --i)
 		{
-			dst[a + (i - 1 - s)] = src[i - 1];
+			dst[at_index + (i - 1 - start_index)] = src[i - 1];
 		}
 	}
 	else
 	{
-		for (size_t i = s; i < e; ++i)
+		for (size_t i = start_index; i < end_index; ++i)
 		{
-			dst[a + (i - s)] = src[i];
+			dst[at_index + (i - start_index)] = src[i];
 		}
 	}
 	return to;
@@ -600,21 +656,21 @@ static Atom bytevector_append(VmState& s, Atom* first, Atom* last)
 	size_t total = 0;
 	for (Atom* p = first; p != last; ++p)
 	{
-		total += slow_unbox<ByteVector>(*p)->size();
+		total += slow_unbox<ByteVector>(s, *p)->size();
 	}
 	result.reserve(total);
 	for (Atom* p = first; p != last; ++p)
 	{
-		ByteVector& part = *slow_unbox<ByteVector>(*p);
+		ByteVector& part = *slow_unbox<ByteVector>(s, *p);
 		result.insert(result.end(), part.begin(), part.end());
 	}
-	return s.gc.alloc_tagged<ByteVector>(std::move(result));
+	return s.gc.alloc_tagged<ByteVector>(s, std::move(result));
 }
 
 void init_bytevectors(VmState& s)
 {
 	Env& e = s.env;
-	e.bind("bytevector?", make_prim<is_type<jet::Type::ByteVector>>(s));
+	e.bind("bytevector?", make_prim<type_pred<jet::Type::ByteVector>>(s));
 	e.bind("bytevector-length", make_prim<bytevector_length>(s));
 	e.bind("bytevector-u8-ref", make_prim<bytevector_u8_ref>(s));
 	e.bind("bytevector-u8-set!", make_prim<bytevector_u8_set>(s));
@@ -625,7 +681,7 @@ void init_bytevectors(VmState& s)
 	e.bind("bytevector-append", make_prim<bytevector_append>(s, n_ary()));
 }
 
-bool is_eqv(Atom obj1, Atom obj2)
+bool is_eqv(VmState& s, Atom obj1, Atom obj2)
 {
 	if (is_eq(obj1, obj2))
 	{
@@ -643,15 +699,15 @@ bool is_eqv(Atom obj1, Atom obj2)
 			return compare_objects<Prim>(obj1, obj2);
 		case jet::Type::Unknown:
 		case jet::Type::TypeMax:
-			JET_DIE("is_eqv: unexpected type %d", static_cast<int>(obj1.type()));
+			JET_DIE(&s, "is_eqv: unexpected type %d", static_cast<int>(obj1.type()));
 		default:
 			return false;
 	}
 }
 
-static Atom eqv_prim(VmState&, Atom* first, Atom*)
+static Atom eqv_prim(VmState& s, Atom* first, Atom*)
 {
-	return box(is_eqv(first[0], first[1]));
+	return box(is_eqv(s, first[0], first[1]));
 }
 
 static Atom eq_prim(VmState&, Atom* first, Atom*) { return box(is_eq(first[0], first[1])); }
@@ -683,10 +739,12 @@ struct EqualContext
 		Maybe,
 	};
 
+	VmState& vm;
+
 	std::unordered_set<EqualPair, EqualPairHash> seen;
 	Cycles cycles;
 
-	explicit EqualContext(Cycles cycles_) : cycles{cycles_} {}
+	explicit EqualContext(Cycles cycles_, VmState& vm_) : vm{vm_}, cycles{cycles_} {}
 
 	bool first_visit(Atom a, Atom b)
 	{
@@ -695,7 +753,7 @@ struct EqualContext
 
 	bool compare(Atom a, Atom b)
 	{
-		if (is_eqv(a, b))
+		if (is_eqv(vm, a, b))
 		{
 			return true;
 		}
@@ -706,11 +764,15 @@ struct EqualContext
 		switch (a.type())
 		{
 			case jet::Type::Pair:
+			{
 				if (!first_visit(a, b))
 				{
 					return true;
 				}
-				return compare(car(a), car(b)) && compare(cdr(a), cdr(b));
+				Cons& pa = *unbox<Cons>(a);
+				Cons& pb = *unbox<Cons>(b);
+				return compare(pa.car, pb.car) && compare(pa.cdr, pb.cdr);
+			}
 			case jet::Type::Vector:
 			{
 				Vec& v1 = *unbox<Vec>(a);
@@ -761,33 +823,33 @@ static bool equal_recur(EqualContext& context, Atom first, Atom second)
 	return context.compare(first, second);
 }
 
-static bool is_equal(Atom first, Atom second, EqualContext::Cycles cycles)
+static bool is_equal(VmState& s, Atom first, Atom second, EqualContext::Cycles cycles)
 {
-	EqualContext context{cycles};
+	EqualContext context{cycles, s};
 	return context.compare(first, second);
 }
 
-bool equal_key(const TableKey& first, const TableKey& second)
+bool equal_key(VmState& vm, const TableKey& first, const TableKey& second)
 {
 	return first.hash == second.hash &&
-	       is_equal(first.atom, second.atom, EqualContext::Cycles::No);
+	       is_equal(vm, first.atom, second.atom, EqualContext::Cycles::No);
 }
 
-static Atom equal_prim(VmState&, Atom* first, Atom*)
+static Atom equal_prim(VmState& s, Atom* first, Atom*)
 {
-	return box(is_equal(first[0], first[1], EqualContext::Cycles::Maybe));
+	return box(is_equal(s, first[0], first[1], EqualContext::Cycles::Maybe));
 }
 
-static bool boolean_eq(Atom a, Atom b)
+static bool boolean_eq(VmState& s, Atom a, Atom b)
 {
-	JET_DIE_UNLESS(is_type<jet::Type::Boolean>(a) && is_type<jet::Type::Boolean>(b),
+	JET_DIE_UNLESS(&s, is_type<jet::Type::Boolean>(a) && is_type<jet::Type::Boolean>(b),
 	               "boolean=? expects booleans");
 	return unbox<bool>(a) == unbox<bool>(b);
 }
 
-static bool symbol_eq(Atom a, Atom b)
+static bool symbol_eq(VmState& s, Atom a, Atom b)
 {
-	JET_DIE_UNLESS(is_type<jet::Type::Symbol>(a) && is_type<jet::Type::Symbol>(b),
+	JET_DIE_UNLESS(&s, is_type<jet::Type::Symbol>(a) && is_type<jet::Type::Symbol>(b),
 	               "symbol=? expects symbols");
 	return unbox<Symbol>(a) == unbox<Symbol>(b);
 }
@@ -1035,15 +1097,15 @@ Atom write_to(Atom a, std::string& out)
 	return Atom{};
 }
 
-static Atom put_buffer(std::string& buf, const char* who, Atom* first, Atom* last)
+static Atom put_buffer(VmState& s, std::string& buf, const char* who, Atom* first, Atom* last)
 {
 	size_t n_args = static_cast<size_t>(last - first);
-	JET_DIE_UNLESS(n_args <= 2, "%s expects at most 2 arguments, given %zu", who, n_args);
+	JET_DIE_UNLESS(&s, n_args <= 2, "%s expects at most 2 arguments, given %zu", who, n_args);
 
 	if (n_args == 2)
 	{
-		OPort* op = static_cast<OPort*>(slow_unbox<Port>(first[1]));
-		JET_DIE_UNLESS(op->is_output(), "%s: not an output port", who);
+		OPort* op = static_cast<OPort*>(slow_unbox<Port>(s, first[1]));
+		JET_DIE_UNLESS(&s, op->is_output(), "%s: not an output port", who);
 		op->write_bytes(buf.data(), buf.size());
 		return Atom{};
 	}
@@ -1053,18 +1115,18 @@ static Atom put_buffer(std::string& buf, const char* who, Atom* first, Atom* las
 	return Atom{};
 }
 
-Atom display(VmState&, Atom* first, Atom* last)
+Atom display(VmState& s, Atom* first, Atom* last)
 {
 	std::string buf;
 	display_to(first[0], buf);
-	return put_buffer(buf, "display", first, last);
+	return put_buffer(s, buf, "display", first, last);
 }
 
-static Atom write_atom(VmState&, Atom* first, Atom* last)
+static Atom write_atom(VmState& s, Atom* first, Atom* last)
 {
 	std::string buf;
 	write_to(first[0], buf);
-	return put_buffer(buf, "write", first, last);
+	return put_buffer(s, buf, "write", first, last);
 }
 
 void init_display_primitives(VmState& s)
@@ -1079,26 +1141,26 @@ static Atom string_append(VmState& s, Atom* first, Atom* last)
 	String str;
 	while (first != last)
 	{
-		str += *slow_unbox<String>(*first++);
+		str += *slow_unbox<String>(s, *first++);
 	}
-	return s.gc.alloc_tagged<String>(std::move(str));
+	return s.gc.alloc_tagged<String>(s, std::move(str));
 }
 
-static size_t string_index(Atom s, Atom k, const char* op)
+static size_t string_index(VmState& s, Atom str, Atom k, const char* op)
 {
-	JET_DIE_UNLESS(is_positive_integer(k), "%s expects positive integer index, given %g", op,
+	JET_DIE_UNLESS(&s, is_nonnegative_integer(s, k), "%s expects non-negative integer index, given %g", op,
 	               unbox<Number>(k));
 	size_t i = unbox<Number>(k);
-	String& str = *slow_unbox<String>(s);
-	JET_DIE_UNLESS(i < str.size(), "%s index %zu out of bounds", op, i);
+	String& text = *slow_unbox<String>(s, str);
+	JET_DIE_UNLESS(&s, i < text.size(), "%s index %zu out of bounds", op, i);
 	return i;
 }
 
 static Atom make_string(VmState& s, Atom* first, Atom* last)
 {
-	size_t n = first != last ? slow_unbox<Number>(*first++) : 0;
-	Character fill = first != last ? slow_unbox<Character>(*first++) : ' ';
-	return s.gc.alloc_tagged<String>(n, static_cast<char>(fill));
+	size_t n = first != last ? slow_unbox<Number>(s, *first++) : 0;
+	Character fill = first != last ? slow_unbox<Character>(s, *first++) : ' ';
+	return s.gc.alloc_tagged<String>(s, n, static_cast<char>(fill));
 }
 
 static Atom string_ctor(VmState& s, Atom* first, Atom* last)
@@ -1107,53 +1169,54 @@ static Atom string_ctor(VmState& s, Atom* first, Atom* last)
 	str.reserve(last - first);
 	while (first != last)
 	{
-		str += static_cast<char>(slow_unbox<Character>(*first++));
+		str += static_cast<char>(slow_unbox<Character>(s, *first++));
 	}
-	return s.gc.alloc_tagged<String>(std::move(str));
+	return s.gc.alloc_tagged<String>(s, std::move(str));
 }
 
-static Number string_length(Atom s)
+static Number string_length(VmState& s, Atom str)
 {
-	return Number::trusted(static_cast<double>(slow_unbox<String>(s)->size()));
+	return Number::trusted(static_cast<double>(slow_unbox<String>(s, str)->size()));
 }
 
-Atom string_ref(Atom s, Atom k)
+Atom string_ref(VmState& s, Atom str, Atom k)
 {
-	String& string = *slow_unbox<String>(s);
-	size_t index = string_index(s, k, "string-ref");
+	String& string = *slow_unbox<String>(s, str);
+	size_t index = string_index(s, str, k, "string-ref");
 	return box(static_cast<Character>(static_cast<uint8_t>(string[index])));
 }
 
 static Atom substring(VmState& s, Atom* first, Atom* last)
 {
-	String& str = *slow_unbox<String>(first[0]);
+	String& str = *slow_unbox<String>(s, first[0]);
 	size_t n = str.size();
-	size_t start = last - first >= 2 ? static_cast<size_t>(slow_unbox<Number>(first[1])) : 0;
-	size_t end = last - first >= 3 ? static_cast<size_t>(slow_unbox<Number>(first[2])) : n;
-	JET_DIE_UNLESS(start <= end && end <= n, "substring: bad range [%zu, %zu) for length %zu", start, end, n);
-	return s.gc.alloc_tagged<String>(str.substr(start, end - start));
+	size_t start = last - first >= 2 ? static_cast<size_t>(slow_unbox<Number>(s, first[1])) : 0;
+	size_t end = last - first >= 3 ? static_cast<size_t>(slow_unbox<Number>(s, first[2])) : n;
+	JET_DIE_UNLESS(&s, start <= end && end <= n, "substring: bad range [%zu, %zu) for length %zu", start, end,
+	               n);
+	return s.gc.alloc_tagged<String>(s, str.substr(start, end - start));
 }
 
 static Atom string_copy(VmState& s, Atom* first, Atom* last)
 {
-	String& str = *slow_unbox<String>(first[0]);
+	String& str = *slow_unbox<String>(s, first[0]);
 	size_t n = str.size();
-	size_t start = last - first >= 2 ? static_cast<size_t>(slow_unbox<Number>(first[1])) : 0;
-	size_t end = last - first >= 3 ? static_cast<size_t>(slow_unbox<Number>(first[2])) : n;
-	JET_DIE_UNLESS(start <= end && end <= n, "string-copy: bad range [%zu, %zu) for length %zu", start, end,
-	               n);
-	return s.gc.alloc_tagged<String>(str.substr(start, end - start));
+	size_t start = last - first >= 2 ? static_cast<size_t>(slow_unbox<Number>(s, first[1])) : 0;
+	size_t end = last - first >= 3 ? static_cast<size_t>(slow_unbox<Number>(s, first[2])) : n;
+	JET_DIE_UNLESS(&s, start <= end && end <= n, "string-copy: bad range [%zu, %zu) for length %zu", start,
+	               end, n);
+	return s.gc.alloc_tagged<String>(s, str.substr(start, end - start));
 }
 
 template <typename Op>
 static Atom string_folding_pred(VmState& s, Atom* first, Atom* last)
 {
-	JET_DIE_UNLESS(last - first >= 2, "string comparison expects at least 2 arguments");
+	JET_DIE_UNLESS(&s, last - first >= 2, "string comparison expects at least 2 arguments");
 	bool result = true;
-	String* prev = slow_unbox<String>(*first++);
+	String* prev = slow_unbox<String>(s, *first++);
 	while (first != last)
 	{
-		String* cur = slow_unbox<String>(*first++);
+		String* cur = slow_unbox<String>(s, *first++);
 		result = result && Op{}(*prev, *cur);
 		prev = cur;
 	}
@@ -1162,8 +1225,8 @@ static Atom string_folding_pred(VmState& s, Atom* first, Atom* last)
 
 static Atom string_to_number(VmState& s, Atom* first, Atom* last)
 {
-	String& str = *slow_unbox<String>(first[0]);
-	int radix = last - first >= 2 ? static_cast<int>(slow_unbox<Number>(first[1])) : 10;
+	String& str = *slow_unbox<String>(s, first[0]);
+	int radix = last - first >= 2 ? static_cast<int>(slow_unbox<Number>(s, first[1])) : 10;
 	if (str.empty())
 	{
 		return box(false);
@@ -1179,7 +1242,7 @@ static Atom string_to_number(VmState& s, Atom* first, Atom* last)
 		}
 		return box(Number::from_ieee(v));
 	}
-	JET_DIE_UNLESS(radix == 2 || radix == 8 || radix == 16,
+	JET_DIE_UNLESS(&s, radix == 2 || radix == 8 || radix == 16,
 	               "string->number: radix must be 2, 8, 10, or 16, got %d", radix);
 	const char* p = str.c_str();
 	char* end = nullptr;
@@ -1191,9 +1254,9 @@ static Atom string_to_number(VmState& s, Atom* first, Atom* last)
 	return box(Number::trusted(static_cast<double>(v)));
 }
 
-static Atom ascii_downcase(VmState& vm, Atom str)
+static Atom ascii_downcase(VmState& s, Atom str)
 {
-	String result{*slow_unbox<String>(str)};
+	String result{*slow_unbox<String>(s, str)};
 	for (char& ch : result)
 	{
 		if (ch >= 'A' && ch <= 'Z')
@@ -1201,26 +1264,26 @@ static Atom ascii_downcase(VmState& vm, Atom str)
 			ch = static_cast<char>(ch + ('a' - 'A'));
 		}
 	}
-	return vm.gc.alloc_tagged<String>(std::move(result));
+	return s.gc.alloc_tagged<String>(s, std::move(result));
 }
 
 static Atom number_to_string(VmState& s, Atom* first, Atom* last)
 {
-	double n = slow_unbox<Number>(first[0]);
-	int radix = last - first >= 2 ? static_cast<int>(slow_unbox<Number>(first[1])) : 10;
+	double n = slow_unbox<Number>(s, first[0]);
+	int radix = last - first >= 2 ? static_cast<int>(slow_unbox<Number>(s, first[1])) : 10;
 	if (radix == 10)
 	{
 		std::string os;
 		display_to(first[0], os);
-		return s.gc.alloc_tagged<String>(std::move(os));
+		return s.gc.alloc_tagged<String>(s, std::move(os));
 	}
-	JET_DIE_UNLESS(radix == 2 || radix == 8 || radix == 16,
+	JET_DIE_UNLESS(&s, radix == 2 || radix == 8 || radix == 16,
 	               "number->string: radix must be 2, 8, 10, or 16, got %d", radix);
-	JET_DIE_UNLESS(is_integer(n), "number->string: non-decimal radix needs integer, got %g", n);
+	JET_DIE_UNLESS(&s, is_integer(n), "number->string: non-decimal radix needs integer, got %g", n);
 	char buf[72];
 	std::to_chars_result r = std::to_chars(buf, buf + sizeof(buf), static_cast<long long>(n), radix);
-	JET_DIE_UNLESS(r.ec == std::errc{}, "number->string: conversion failed");
-	return s.gc.alloc_tagged<String>(buf, r.ptr);
+	JET_DIE_UNLESS(&s, r.ec == std::errc{}, "number->string: conversion failed");
+	return s.gc.alloc_tagged<String>(s, buf, r.ptr);
 }
 
 void init_strings(VmState& s)
@@ -1243,27 +1306,27 @@ void init_strings(VmState& s)
 	e.bind("number->string", make_prim<number_to_string>(s, at_least(1)));
 }
 
-static Number char_to_integer(Atom c)
+static Number char_to_integer(VmState& s, Atom ch)
 {
-	return Number::trusted(slow_unbox<Character>(c));
+	return Number::trusted(slow_unbox<Character>(s, ch));
 }
 
-static Atom integer_to_char(Atom n)
+static Atom integer_to_char(VmState& s, Atom n)
 {
-	double v = slow_unbox<Number>(n);
-	JET_DIE_UNLESS(is_byte(n), "integer->char: out of range %g", v);
+	double v = slow_unbox<Number>(s, n);
+	JET_DIE_UNLESS(&s, is_byte(s, n), "integer->char: out of range %g", v);
 	return box(static_cast<Character>(static_cast<uint8_t>(v)));
 }
 
 template <typename Op>
 static Atom char_folding_pred(VmState& s, Atom* first, Atom* last)
 {
-	JET_DIE_UNLESS(last - first >= 2, "char comparison expects at least 2 arguments");
+	JET_DIE_UNLESS(&s, last - first >= 2, "char comparison expects at least 2 arguments");
 	bool result = true;
-	Character prev = slow_unbox<Character>(*first++);
+	Character prev = slow_unbox<Character>(s, *first++);
 	while (first != last)
 	{
-		Character cur = slow_unbox<Character>(*first++);
+		Character cur = slow_unbox<Character>(s, *first++);
 		result = result && Op{}(prev, cur);
 		prev = cur;
 	}
@@ -1277,25 +1340,25 @@ struct ch_ci
 };
 
 template <int (*pred)(int)>
-static bool char_pred(Atom c)
+static bool char_pred(VmState& s, Atom ch)
 {
-	return pred(slow_unbox<Character>(c)) != 0;
+	return pred(slow_unbox<Character>(s, ch)) != 0;
 }
 
-static Atom char_upcase(Atom c)
+static Atom char_upcase(VmState& s, Atom ch)
 {
-	return box(static_cast<Character>(std::toupper(slow_unbox<Character>(c))));
+	return box(static_cast<Character>(std::toupper(slow_unbox<Character>(s, ch))));
 }
 
-static Atom char_downcase(Atom c)
+static Atom char_downcase(VmState& s, Atom ch)
 {
-	return box(static_cast<Character>(std::tolower(slow_unbox<Character>(c))));
+	return box(static_cast<Character>(std::tolower(slow_unbox<Character>(s, ch))));
 }
 
-static Number digit_value(Atom c)
+static Number digit_value(VmState& s, Atom ch)
 {
-	Character ch = slow_unbox<Character>(c);
-	return Number::trusted(std::isdigit(ch) ? static_cast<double>(ch - '0') : -1.0);
+	Character val = slow_unbox<Character>(s, ch);
+	return Number::trusted(std::isdigit(val) ? static_cast<double>(val - '0') : -1.0);
 }
 
 void init_chars(VmState& s)
@@ -1323,34 +1386,34 @@ void init_chars(VmState& s)
 	e.bind("digit-value", make_prim<digit_value>(s));
 }
 
-static Atom close_input_port(Atom p)
+static Atom close_input_port(VmState& s, Atom port)
 {
-	Port* port = slow_unbox<Port>(p);
-	JET_DIE_UNLESS(port->is_input(), "close-input-port: not an input port");
-	port->close();
+	Port* p = slow_unbox<Port>(s, port);
+	JET_DIE_UNLESS(&s, p->is_input(), "close-input-port: not an input port");
+	p->close();
 	return Atom{};
 }
 
-static Atom close_output_port(Atom p)
+static Atom close_output_port(VmState& s, Atom port)
 {
-	Port* port = slow_unbox<Port>(p);
-	JET_DIE_UNLESS(port->is_output(), "close-output-port: not an output port");
-	port->close();
+	Port* unwrapped = slow_unbox<Port>(s, port);
+	JET_DIE_UNLESS(&s, unwrapped->is_output(), "close-output-port: not an output port");
+	unwrapped->close();
 	return Atom{};
 }
 
-Atom read_char(Atom p)
+Atom read_char(VmState& s, Atom port)
 {
-	IPort* ip = static_cast<IPort*>(slow_unbox<Port>(p));
-	JET_DIE_UNLESS(ip->is_input(), "read-char: not an input port");
+	IPort* ip = static_cast<IPort*>(slow_unbox<Port>(s, port));
+	JET_DIE_UNLESS(&s, ip->is_input(), "read-char: not an input port");
 	Character c = ip->read_byte();
 	return ip->eof() ? make_eof() : box(c);
 }
 
-static Atom read_bytes_all(VmState& s, Atom p)
+static Atom read_bytes_all(VmState& s, Atom port)
 {
-	IPort* ip = static_cast<IPort*>(slow_unbox<Port>(p));
-	JET_DIE_UNLESS(ip->is_input(), "read-bytes/all: not an input port");
+	IPort* ip = static_cast<IPort*>(slow_unbox<Port>(s, port));
+	JET_DIE_UNLESS(&s, ip->is_input(), "read-bytes/all: not an input port");
 
 	ByteVector result;
 	constexpr size_t chunk = 64 * 1024;
@@ -1360,48 +1423,48 @@ static Atom read_bytes_all(VmState& s, Atom p)
 		result.resize(filled + chunk);
 		size_t taken = ip->read_bytes(reinterpret_cast<char*>(result.data() + filled), chunk);
 		filled += taken;
-		JET_DIE_UNLESS(taken != 0 || ip->eof(), "read-bytes/all: input made no progress");
+		JET_DIE_UNLESS(&s, taken != 0 || ip->eof(), "read-bytes/all: input made no progress");
 	}
 	result.resize(filled);
 
-	return s.gc.alloc_tagged<ByteVector>(std::move(result));
+	return s.gc.alloc_tagged<ByteVector>(s, std::move(result));
 }
 
-static Atom write_bytes(Atom b, Atom p)
+static Atom write_bytes(VmState& s, Atom b, Atom port)
 {
-	OPort* op = static_cast<OPort*>(slow_unbox<Port>(p));
-	JET_DIE_UNLESS(op->is_output(), "write-bytes: not an output port");
+	OPort* op = static_cast<OPort*>(slow_unbox<Port>(s, port));
+	JET_DIE_UNLESS(&s, op->is_output(), "write-bytes: not an output port");
 
-	ByteVector* bytes = slow_unbox<ByteVector>(b);
+	ByteVector* bytes = slow_unbox<ByteVector>(s, b);
 	op->write_bytes(reinterpret_cast<const char*>(bytes->data()), bytes->size());
 
 	return Atom{};
 }
 
-static Atom write_char(Atom c, Atom p)
+static Atom write_char(VmState& s, Atom ch, Atom port)
 {
-	OPort* op = static_cast<OPort*>(slow_unbox<Port>(p));
-	JET_DIE_UNLESS(op->is_output(), "write-char: not an output port");
-	op->write_byte(slow_unbox<Character>(c));
+	OPort* op = static_cast<OPort*>(slow_unbox<Port>(s, port));
+	JET_DIE_UNLESS(&s, op->is_output(), "write-char: not an output port");
+	op->write_byte(slow_unbox<Character>(s, ch));
 	return Atom{};
 }
 
-static Atom is_input_port(Atom p)
+static Atom is_input_port(VmState& s, Atom port)
 {
-	if (!is_type<jet::Type::Port>(p))
+	if (!is_type<jet::Type::Port>(port))
 	{
 		return box(false);
 	}
-	return box(slow_unbox<Port>(p)->is_input());
+	return box(slow_unbox<Port>(s, port)->is_input());
 }
 
-static Atom is_output_port(Atom p)
+static Atom is_output_port(VmState& s, Atom port)
 {
-	if (!is_type<jet::Type::Port>(p))
+	if (!is_type<jet::Type::Port>(port))
 	{
 		return box(false);
 	}
-	return box(slow_unbox<Port>(p)->is_output());
+	return box(slow_unbox<Port>(s, port)->is_output());
 }
 
 void init_port(VmState& s)
@@ -1419,7 +1482,7 @@ void init_port(VmState& s)
 	e.bind("write-char", make_prim<write_char>(s));
 	e.bind("write-bytes", make_prim<write_bytes>(s));
 
-	e.bind("eof-object?", make_prim<is_type<jet::Type::Eof>>(s));
+	e.bind("eof-object?", make_prim<type_pred<jet::Type::Eof>>(s));
 }
 
 Atom make_eof()
@@ -1488,11 +1551,12 @@ size_t IPortMem::read_bytes(char* p, size_t n)
 	return take;
 }
 
-OPortFile::OPortFile(std::string_view name) : f_{nullptr}
+OPortFile::OPortFile(VmState& s, std::string_view name) : f_{nullptr}
 {
 	std::string path{name};
 	f_ = fopen(path.c_str(), "wb");
-	JET_DIE_UNLESS(f_, "cannot open file `%.*s' for writing", static_cast<int>(name.size()), name.data());
+	JET_DIE_UNLESS(&s, f_, "cannot open file `%.*s' for writing", static_cast<int>(name.size()),
+	               name.data());
 }
 
 OPortFile::~OPortFile()
@@ -1519,11 +1583,11 @@ void OPortFile::close()
 
 static Atom open_input_file_maybe(VmState& s, Atom name)
 {
-	String& path = *slow_unbox<String>(name);
+	String& path = *slow_unbox<String>(s, name);
 	FILE* file = fopen(path.c_str(), "rb");
 	if (file)
 	{
-		return s.gc.alloc_tagged<IPortFile>(file);
+		return s.gc.alloc_tagged<IPortFile>(s, file);
 	}
 
 	if (errno == ENOENT || errno == ENOTDIR)
@@ -1531,19 +1595,20 @@ static Atom open_input_file_maybe(VmState& s, Atom name)
 		return box(false);
 	}
 
-	JET_DIE("cannot open file `%s' for reading: %s", path.c_str(), strerror(errno));
+	JET_DIE(&s, "cannot open file `%s' for reading: %s", path.c_str(), strerror(errno));
 }
 
 static Atom open_input_file(VmState& s, Atom name)
 {
 	Atom port = open_input_file_maybe(s, name);
-	JET_DIE_UNLESS(is_true(port), "cannot open file `%s' for reading", slow_unbox<String>(name)->c_str());
+	JET_DIE_UNLESS(&s, is_true(port), "cannot open file `%s' for reading",
+	               slow_unbox<String>(s, name)->c_str());
 	return port;
 }
 
 static Atom open_output_file(VmState& s, Atom name)
 {
-	return s.gc.alloc_tagged<OPortFile>(slow_unbox<String>(name)->c_str());
+	return s.gc.alloc_tagged<OPortFile>(s, s, slow_unbox<String>(s, name)->c_str());
 }
 
 void init_port_file(VmState& s)
@@ -1577,20 +1642,20 @@ static Struct* construct_tuple(VmState& s, StructType* type, Atom* first, Atom* 
 	return tuple;
 }
 
-[[noreturn]] static void die_struct_no_field(StructType* type, Symbol field)
+[[noreturn]] static void die_struct_no_field(VmState& s, StructType* type, Symbol field)
 {
 	const std::string& type_name = symbol_to_string(unbox<Symbol>(type->name()));
 	const std::string& field_name = symbol_to_string(field);
-	JET_DIE("struct '%s': no field named '%s'", type_name.c_str(), field_name.c_str());
+	JET_DIE(&s, "struct '%s': no field named '%s'", type_name.c_str(), field_name.c_str());
 }
 
-static uint64_t resolve_scheme_field(Struct* instance, Atom key)
+static uint64_t resolve_scheme_field(VmState& s, Struct* instance, Atom key)
 {
-	JET_DIE_UNLESS(is_type<jet::Type::Symbol>(key), "struct field access requires a symbol key");
+	JET_DIE_UNLESS(&s, is_type<jet::Type::Symbol>(key), "struct field access requires a symbol key");
 	int index = instance->type->find(key);
 	if (index < 0)
 	{
-		die_struct_no_field(instance->type, unbox<Symbol>(key));
+		die_struct_no_field(s, instance->type, unbox<Symbol>(key));
 	}
 	return static_cast<uint64_t>(index);
 }
@@ -1605,12 +1670,12 @@ static void store_scheme_field(Struct* instance, uint64_t index, Atom value)
 	static_cast<SchemeStruct*>(instance)->values[index] = value;
 }
 
-static uint64_t resolve_tuple_field(Struct* instance, Atom key)
+static uint64_t resolve_tuple_field(VmState& s, Struct* instance, Atom key)
 {
-	JET_DIE_UNLESS(is_positive_integer(key), "ref expects a non-negative integer index");
+	JET_DIE_UNLESS(&s, is_nonnegative_integer(s, key), "ref expects a non-negative integer index");
 	Tuple* tuple = static_cast<Tuple*>(instance);
 	size_t index = static_cast<size_t>(unbox<Number>(key));
-	JET_DIE_UNLESS(index < tuple->size, "ref index out of bounds");
+	JET_DIE_UNLESS(&s, index < tuple->size, "ref index out of bounds");
 	return index;
 }
 
@@ -1624,8 +1689,8 @@ JET_NOINLINE JET_PRESERVE_NONE static void die_scheme_field(VM_OP_PARAMS)
 {
 	FieldOp<access, key_source>* op = reinterpret_cast<FieldOp<access, key_source>*>(pc);
 	Atom key = field_key<key_source>(s, op, frame_regs);
-	JET_DIE_UNLESS(is_type<jet::Type::Symbol>(key), "struct field access requires a symbol key");
-	die_struct_no_field(unbox<Struct>(frame_regs[op->obj])->type, unbox<Symbol>(key));
+	JET_DIE_UNLESS(&s, is_type<jet::Type::Symbol>(key), "struct field access requires a symbol key");
+	die_struct_no_field(s, unbox<Struct>(frame_regs[op->obj])->type, unbox<Symbol>(key));
 }
 
 JET_ALWAYS_INLINE static bool cache_field_index(Struct* instance, Atom key, FieldIc& ic)
@@ -1689,10 +1754,10 @@ struct SchemeStructAccess
 		DISPATCH();
 	}
 
-	static Atom load_or_hole(Atom object, Atom key)
+	static Atom load_or_hole(VmState& s, Atom object, Atom key)
 	{
 		Struct* instance = unbox<Struct>(object);
-		JET_DIE_UNLESS(is_type<jet::Type::Symbol>(key), "struct field access requires a symbol key");
+		JET_DIE_UNLESS(&s, is_type<jet::Type::Symbol>(key), "struct field access requires a symbol key");
 		int index = instance->type->find(key);
 		return index < 0 ? hole() : load_scheme_field(instance, static_cast<uint64_t>(index));
 	}
@@ -1709,7 +1774,8 @@ struct SchemeStructAccess
 		}
 		else
 		{
-			JET_DIE_UNLESS(is_type<jet::Type::Symbol>(key), "struct field access requires a symbol key");
+			JET_DIE_UNLESS(&s, is_type<jet::Type::Symbol>(key),
+			               "struct field access requires a symbol key");
 			frame_regs[op->dst] = field_miss_value<miss, key_source>(op, frame_regs);
 		}
 		pc += sizeof(*op);
@@ -1749,10 +1815,10 @@ struct TupleAccess
 	static constexpr bool is_struct = true;
 	static constexpr bool caches_keys = false;
 
-	static Atom load_or_hole(Atom object, Atom key)
+	static Atom load_or_hole(VmState& s, Atom object, Atom key)
 	{
 		Tuple* tuple = static_cast<Tuple*>(unbox<Struct>(object));
-		JET_DIE_UNLESS(is_positive_integer(key), "ref expects a non-negative integer index");
+		JET_DIE_UNLESS(&s, is_nonnegative_integer(s, key), "ref expects a non-negative integer index");
 		size_t index = static_cast<size_t>(unbox<Number>(key));
 		return index < tuple->size ? tuple->elements[index] : hole();
 	}
@@ -1776,7 +1842,7 @@ struct TupleAccess
 	{
 		FieldOp<FieldAccess::Load,
 		        key_source>* op = reinterpret_cast<FieldOp<FieldAccess::Load, key_source>*>(pc);
-		die_field_index<FieldAccess::Load>(field_key<key_source>(s, op, frame_regs));
+		die_field_index<FieldAccess::Load>(s, field_key<key_source>(s, op, frame_regs));
 	}
 
 	template <FieldKeySource key_source>
@@ -1788,7 +1854,7 @@ struct TupleAccess
 	template <FieldKeySource key_source>
 	JET_NOINLINE JET_PRESERVE_NONE static void op_store_slow(VM_OP_PARAMS)
 	{
-		JET_DIE("setf!: tuple is immutable");
+		JET_DIE(&s, "setf!: tuple is immutable");
 	}
 };
 
@@ -1864,37 +1930,37 @@ static const StructOps tuple_ops = {
 	print_tuple<write_to>,
 };
 
-static Atom ref_or_die_field(Atom obj, Atom key)
+static Atom ref_or_die_field(VmState& s, Atom obj, Atom key)
 {
 	const ObjShape* sh = shape_of(obj);
-	JET_DIE_UNLESS(sh && sh->ref_or_die, "ref: unsupported receiver type");
-	return sh->ref_or_die(obj, key);
+	JET_DIE_UNLESS(&s, sh && sh->ref_or_die, "ref: unsupported receiver type");
+	return sh->ref_or_die(s, obj, key);
 }
 
-static Atom prim_ref(VmState&, Atom* first, Atom* last)
+static Atom prim_ref(VmState& s, Atom* first, Atom* last)
 {
 	Atom value = first[0];
 	for (Atom* key = first + 1; key != last; ++key)
 	{
-		value = ref_or_die_field(value, *key);
+		value = ref_or_die_field(s, value, *key);
 	}
 	return value;
 }
 
-static Atom ref_or_hole_field(Atom obj, Atom key)
+static Atom ref_or_hole_field(VmState& s, Atom obj, Atom key)
 {
 	if (is_hole(obj))
 	{
 		return obj;
 	}
 	const ObjShape* sh = shape_of(obj);
-	JET_DIE_UNLESS(sh && sh->ref_or_hole, "ref: unsupported receiver type");
-	return sh->ref_or_hole(obj, key);
+	JET_DIE_UNLESS(&s, sh && sh->ref_or_hole, "ref: unsupported receiver type");
+	return sh->ref_or_hole(s, obj, key);
 }
 
-static Atom ref_or_default_field(Atom obj, Atom key, Atom fallback)
+static Atom ref_or_default_field(VmState& s, Atom obj, Atom key, Atom fallback)
 {
-	Atom value = ref_or_hole_field(obj, key);
+	Atom value = ref_or_hole_field(s, obj, key);
 	return is_hole(value) ? fallback : value;
 }
 
@@ -1909,14 +1975,14 @@ static Atom make_cursor(VmState& s, Atom target)
 	if (!shape || !shape->iter) [[unlikely]]
 	{
 		std::string_view name = type_name(target.type());
-		JET_DIE("%%iter: cannot iterate <%.*s>", static_cast<int>(name.size()), name.data());
+		JET_DIE(&s, "%%iter: cannot iterate <%.*s>", static_cast<int>(name.size()), name.data());
 	}
 	return Atom::make_tagged(jet_tag::struct_, shape->iter(s, target));
 }
 
 JET_PRESERVE_NONE static void private_escape_constructor(VM_OP_PARAMS)
 {
-	JET_DIE("escape continuations are created by let/ec, not by calling their type");
+	JET_DIE(&s, "escape continuations are created by let/ec, not by calling their type");
 }
 
 static bool equal_by_identity(EqualContext&, Struct* first, Struct* second, EqualRecur)
@@ -1949,12 +2015,12 @@ void init_escapes(VmState& s)
 
 JET_PRESERVE_NONE static void private_coro_constructor(VM_OP_PARAMS)
 {
-	JET_DIE("coroutines are created by let/coro, not by calling their type");
+	JET_DIE(&s, "coroutines are created by let/coro, not by calling their type");
 }
 
 JET_PRESERVE_NONE static void private_yield_constructor(VM_OP_PARAMS)
 {
-	JET_DIE("yields are created by let/coro, not by calling their type");
+	JET_DIE(&s, "yields are created by let/coro, not by calling their type");
 }
 
 static void print_coro(Struct*, std::string& out)
@@ -2002,19 +2068,19 @@ void init_coroutines(VmState& s)
 
 static Atom struct_ctor(VmState& s, Atom name, Atom names_list)
 {
-	type_check(name, jet::Type::Symbol);
+	type_check(s, name, jet::Type::Symbol);
 	std::vector<Atom> field_names;
-	for (Atom x = names_list; !is_type<jet::Type::EmptyList>(x); x = cdr(x))
+	for (Atom x = names_list; !is_type<jet::Type::EmptyList>(x); x = cdr(s, x))
 	{
-		Atom field = car(x);
-		type_check(field, jet::Type::Symbol);
+		Atom field = car(s, x);
+		type_check(s, field, jet::Type::Symbol);
 		field_names.push_back(field);
 	}
 	Arity arity = exactly(field_names.size());
 	return make_struct_type(s, name, std::move(field_names), arity, scheme_struct_ops);
 }
 
-static Atom isa(Atom value, Atom type)
+static Atom isa(VmState&, Atom value, Atom type)
 {
 	if (!is_type<jet::Type::Struct>(value) || !is_type<jet::Type::StructType>(type))
 	{
@@ -2110,28 +2176,28 @@ static bool key_hash_try(Atom key, uint64_t& out, Atom& culprit)
 	}
 }
 
-[[noreturn]] static void die_illegal_key(Atom culprit)
+[[noreturn]] static void die_illegal_key(VmState& s, Atom culprit)
 {
 	if (is_type<jet::Type::Struct>(culprit))
 	{
 		StructType* type = unbox<Struct>(culprit)->type;
 		if (type->kind() == StructKind::Tuple)
 		{
-			JET_DIE("hash key tuple holds a value of a type that cannot be a key");
+			JET_DIE(&s, "hash key tuple holds a value of a type that cannot be a key");
 		}
-		JET_DIE("value of type %s cannot be a hash key",
+		JET_DIE(&s, "value of type %s cannot be a hash key",
 		        symbol_to_string(unbox<Symbol>(type->name())).c_str());
 	}
-	JET_DIE("value of type %s cannot be a hash key", type_name(culprit.type()).data());
+	JET_DIE(&s, "value of type %s cannot be a hash key", type_name(culprit.type()).data());
 }
 
-static TableKey make_key(Atom key)
+static TableKey make_key(VmState& s, Atom key)
 {
 	uint64_t hash;
 	Atom culprit;
 	if (!key_hash_try(key, hash, culprit)) [[unlikely]]
 	{
-		die_illegal_key(culprit);
+		die_illegal_key(s, culprit);
 	}
 	return {key, hash};
 }
@@ -2191,10 +2257,10 @@ JET_ALWAYS_INLINE static FastFind hashset_find_fast(HashSet* set, Atom key)
 	return it == set->index.end() ? FastFind::Missing : FastFind::Found;
 }
 
-static Atom hashset_lookup(Struct* instance, Atom key)
+static Atom hashset_lookup(VmState& s, Struct* instance, Atom key)
 {
 	HashSet* set = static_cast<HashSet*>(instance);
-	return box(set->index.find(make_key(key)) != set->index.end());
+	return box(set->index.find(make_key(s, key)) != set->index.end());
 }
 
 JET_ALWAYS_INLINE static FastFind hashmap_find_fast(HashMap* map, Atom key, size_t& position)
@@ -2213,74 +2279,74 @@ JET_ALWAYS_INLINE static FastFind hashmap_find_fast(HashMap* map, Atom key, size
 	return FastFind::Found;
 }
 
-static Atom hashmap_try_lookup(Struct* instance, Atom key)
+static Atom hashmap_try_lookup(VmState& s, Struct* instance, Atom key)
 {
 	HashMap* map = static_cast<HashMap*>(instance);
-	auto it = map->index.find(make_key(key));
+	auto it = map->index.find(make_key(s, key));
 	return it == map->index.end() ? hole() : map->entry(it->second).value;
 }
 
-static Atom hashmap_lookup(Struct* instance, Atom key)
+static Atom hashmap_lookup(VmState& s, Struct* instance, Atom key)
 {
-	Atom value = hashmap_try_lookup(instance, key);
-	JET_DIE_WHEN(is_hole(value), "ref: key not found in hashmap");
+	Atom value = hashmap_try_lookup(s, instance, key);
+	JET_DIE_WHEN(&s, is_hole(value), "ref: key not found in hashmap");
 	return value;
 }
 
-static void hashset_insert_key(HashSet* set, const TableKey& key)
+static void hashset_insert_key(VmState& s, HashSet* set, const TableKey& key)
 {
 	set->try_insert(key);
 }
 
-static void hashset_insert(Struct* instance, Atom key, Atom value)
+static void hashset_insert(VmState& s, Struct* instance, Atom key, Atom value)
 {
-	JET_DIE_UNLESS(value.bits == box(true).bits, "setf!: a hashset element can only be set to #t");
+	JET_DIE_UNLESS(&s, value.bits == box(true).bits, "setf!: a hashset element can only be set to #t");
 	HashSet* set = static_cast<HashSet*>(instance);
-	hashset_insert_key(set, make_key(key));
+	hashset_insert_key(s, set, make_key(s, key));
 }
 
-static void hashmap_insert(Struct* instance, Atom key, Atom value)
+static void hashmap_insert(VmState& s, Struct* instance, Atom key, Atom value)
 {
 	HashMap* map = static_cast<HashMap*>(instance);
-	auto [position, inserted] = map->try_insert({make_key(key), value});
+	auto [position, inserted] = map->try_insert({make_key(s, key), value});
 	if (!inserted)
 	{
 		map->entry(position).value = value;
 	}
 }
 
-static Number hashset_length(Atom object)
+static Number hashset_length(VmState& s, Atom object)
 {
-	Struct* instance = slow_unbox<Struct>(object);
-	JET_DIE_UNLESS(instance->type->kind() == StructKind::HashSet,
+	Struct* instance = slow_unbox<Struct>(s, object);
+	JET_DIE_UNLESS(&s, instance->type->kind() == StructKind::HashSet,
 	               "hashset-length: expected a hashset");
 	return Number::trusted(static_cast<double>(static_cast<HashSet*>(instance)->index.size()));
 }
 
-static Atom hashset_unset(Atom object, Atom key)
+static Atom hashset_unset(VmState& s, Atom object, Atom key)
 {
-	Struct* instance = slow_unbox<Struct>(object);
-	JET_DIE_UNLESS(instance->type->kind() == StructKind::HashSet,
+	Struct* instance = slow_unbox<Struct>(s, object);
+	JET_DIE_UNLESS(&s, instance->type->kind() == StructKind::HashSet,
 	               "hashset-unset!: expected a hashset");
 	HashSet* set = static_cast<HashSet*>(instance);
-	set->erase(make_key(key));
+	set->erase(make_key(s, key));
 	return {};
 }
 
-static Atom hashmap_unset(Atom object, Atom key)
+static Atom hashmap_unset(VmState& s, Atom object, Atom key)
 {
-	Struct* instance = slow_unbox<Struct>(object);
-	JET_DIE_UNLESS(instance->type->kind() == StructKind::HashMap,
+	Struct* instance = slow_unbox<Struct>(s, object);
+	JET_DIE_UNLESS(&s, instance->type->kind() == StructKind::HashMap,
 	               "hashmap-unset!: expected a hashmap");
 	HashMap* map = static_cast<HashMap*>(instance);
-	map->erase(make_key(key));
+	map->erase(make_key(s, key));
 	return {};
 }
 
 template <auto Lookup>
-static Atom table_ref(Atom object, Atom key)
+static Atom table_ref(VmState& s, Atom object, Atom key)
 {
-	return Lookup(unbox<Struct>(object), key);
+	return Lookup(s, unbox<Struct>(object), key);
 }
 
 struct HashSetAccess
@@ -2288,9 +2354,9 @@ struct HashSetAccess
 	static constexpr bool is_struct = true;
 	static constexpr bool caches_keys = false;
 
-	static Atom load_or_hole(Atom object, Atom key)
+	static Atom load_or_hole(VmState& s, Atom object, Atom key)
 	{
-		return hashset_lookup(unbox<Struct>(object), key);
+		return hashset_lookup(s, unbox<Struct>(object), key);
 	}
 
 	template <FieldKeySource key_source, typename Op>
@@ -2312,7 +2378,7 @@ struct HashSetAccess
 		FieldOp<FieldAccess::Load,
 		        key_source>* op = reinterpret_cast<FieldOp<FieldAccess::Load, key_source>*>(pc);
 		HashSet* set = static_cast<HashSet*>(unbox<Struct>(frame_regs[op->obj]));
-		frame_regs[op->dst] = hashset_lookup(set, field_key<key_source>(s, op, frame_regs));
+		frame_regs[op->dst] = hashset_lookup(s, set, field_key<key_source>(s, op, frame_regs));
 		pc += sizeof(*op);
 		DISPATCH();
 	}
@@ -2331,7 +2397,7 @@ struct HashSetAccess
 		{
 			return false;
 		}
-		hashset_insert_key(set, fast_key->key);
+		hashset_insert_key(s, set, fast_key->key);
 		return true;
 	}
 
@@ -2341,7 +2407,7 @@ struct HashSetAccess
 		FieldOp<FieldAccess::Store,
 		        key_source>* op = reinterpret_cast<FieldOp<FieldAccess::Store, key_source>*>(pc);
 		HashSet* set = static_cast<HashSet*>(unbox<Struct>(frame_regs[op->obj]));
-		hashset_insert(set, field_key<key_source>(s, op, frame_regs), frame_regs[op->val]);
+		hashset_insert(s, set, field_key<key_source>(s, op, frame_regs), frame_regs[op->val]);
 		pc += sizeof(*op);
 		DISPATCH();
 	}
@@ -2352,9 +2418,9 @@ struct HashMapAccess
 	static constexpr bool is_struct = true;
 	static constexpr bool caches_keys = false;
 
-	static Atom load_or_hole(Atom object, Atom key)
+	static Atom load_or_hole(VmState& s, Atom object, Atom key)
 	{
-		return hashmap_try_lookup(unbox<Struct>(object), key);
+		return hashmap_try_lookup(s, unbox<Struct>(object), key);
 	}
 
 	template <FieldKeySource key_source, typename Op>
@@ -2377,7 +2443,7 @@ struct HashMapAccess
 		FieldOp<FieldAccess::Load,
 		        key_source>* op = reinterpret_cast<FieldOp<FieldAccess::Load, key_source>*>(pc);
 		HashMap* map = static_cast<HashMap*>(unbox<Struct>(frame_regs[op->obj]));
-		frame_regs[op->dst] = hashmap_lookup(map, field_key<key_source>(s, op, frame_regs));
+		frame_regs[op->dst] = hashmap_lookup(s, map, field_key<key_source>(s, op, frame_regs));
 		pc += sizeof(*op);
 		DISPATCH();
 	}
@@ -2403,7 +2469,7 @@ struct HashMapAccess
 		FieldOp<FieldAccess::Store,
 		        key_source>* op = reinterpret_cast<FieldOp<FieldAccess::Store, key_source>*>(pc);
 		HashMap* map = static_cast<HashMap*>(unbox<Struct>(frame_regs[op->obj]));
-		hashmap_insert(map, field_key<key_source>(s, op, frame_regs), frame_regs[op->val]);
+		hashmap_insert(s, map, field_key<key_source>(s, op, frame_regs), frame_regs[op->val]);
 		pc += sizeof(*op);
 		DISPATCH();
 	}
@@ -2414,7 +2480,7 @@ static Struct* construct_hashset(VmState& s, StructType* type, Atom* first, Atom
 	HashSet* set = HashSet::alloc(s, type);
 	for (Atom* it = first; it != last; ++it)
 	{
-		hashset_insert(set, *it, box(true));
+		hashset_insert(s, set, *it, box(true));
 	}
 	return set;
 }
@@ -2422,11 +2488,11 @@ static Struct* construct_hashset(VmState& s, StructType* type, Atom* first, Atom
 static Struct* construct_hashmap(VmState& s, StructType* type, Atom* first, Atom* last)
 {
 	size_t count = static_cast<size_t>(last - first);
-	JET_DIE_WHEN(count % 2 != 0, "hashmap: expected an even number of arguments, given %zu", count);
+	JET_DIE_WHEN(&s, count % 2 != 0, "hashmap: expected an even number of arguments, given %zu", count);
 	HashMap* map = HashMap::alloc(s, type);
 	for (Atom* it = first; it != last; it += 2)
 	{
-		hashmap_insert(map, it[0], it[1]);
+		hashmap_insert(s, map, it[0], it[1]);
 	}
 	return map;
 }
@@ -2526,7 +2592,7 @@ static const StructOps hashmap_ops = {
 
 Atom construct_struct(VmState& s, StructType* type, Atom* first, Atom* last)
 {
-	check_arity(type->arity(), static_cast<size_t>(last - first));
+	check_arity(s, type->arity(), static_cast<size_t>(last - first));
 	Struct* instance = nullptr;
 	switch (type->kind())
 	{
@@ -2545,14 +2611,14 @@ Atom construct_struct(VmState& s, StructType* type, Atom* first, Atom* last)
 		default:
 		{
 			Symbol name = unbox<Symbol>(type->name());
-			JET_DIE("struct type '%s' has no direct constructor", name->c_str());
+			JET_DIE(&s, "struct type '%s' has no direct constructor", name->c_str());
 		}
 	}
 	return Atom::make_tagged(jet_tag::struct_, instance);
 }
 
 template <StructKind kind>
-static Atom is_kind(Atom value)
+static Atom is_kind(VmState&, Atom value)
 {
 	return box(is_type<jet::Type::Struct>(value) && unbox<Struct>(value)->type->kind() == kind);
 }
@@ -2588,12 +2654,12 @@ void init_structs(VmState& s)
 	e.bind("isa?", make_prim<isa>(s));
 }
 
-static bool is_procedure(Atom a)
+static bool is_procedure(VmState&, Atom a)
 {
 	return is_type<jet::Type::Procedure>(a) || is_type<jet::Type::Primitive>(a);
 }
 
-static Atom prim_check(VmState&, Atom* first, Atom*)
+static Atom prim_check(VmState& s, Atom* first, Atom*)
 {
 	// (%check test-result file line col)
 	if (bool test = is_true(first[0]); !test)
@@ -2601,14 +2667,14 @@ static Atom prim_check(VmState&, Atom* first, Atom*)
 		String& file = *unbox<String>(first[1]);
 		double line = unbox<Number>(first[2]);
 		double col = unbox<Number>(first[3]);
-		JET_DIE("FAIL %s:%g:%g", file.c_str(), line, col);
+		JET_DIE(&s, "FAIL %s:%g:%g", file.c_str(), line, col);
 	}
 	return Atom{};
 }
 
 static Atom exit_(VmState& s, Atom status)
 {
-	vm_exit(s, static_cast<int>(slow_unbox<Number>(status)));
+	vm_exit(s, static_cast<int>(slow_unbox<Number>(s, status)));
 }
 
 void init_runtime(VmState& s)
@@ -2634,9 +2700,9 @@ void init_runtime(VmState& s)
 	e.bind("%ref-hole", make_prim<ref_or_hole_field>(s));
 	e.bind("%ref-default", make_prim<ref_or_default_field>(s));
 	e.bind("%iter", make_prim<make_cursor>(s));
-	e.bind("boolean?", make_prim<is_type<jet::Type::Boolean>>(s));
-	e.bind("string?", make_prim<is_type<jet::Type::String>>(s));
-	e.bind("char?", make_prim<is_type<jet::Type::Character>>(s));
+	e.bind("boolean?", make_prim<type_pred<jet::Type::Boolean>>(s));
+	e.bind("string?", make_prim<type_pred<jet::Type::String>>(s));
+	e.bind("char?", make_prim<type_pred<jet::Type::Character>>(s));
 	e.bind("procedure?", make_prim<is_procedure>(s));
 	e.bind("%check", make_prim<prim_check>(s, exactly(4)));
 	e.bind("time-monotonic", make_prim<time_monotonic>(s));
@@ -2650,7 +2716,7 @@ void init_cmdline(VmState& s, int argc, char* argv[])
 	args.reserve(argc);
 	for (char** x = &argv[1]; x != &argv[argc]; ++x)
 	{
-		args.push_back(s.gc.alloc_tagged<String>(*x));
+		args.push_back(s.gc.alloc_tagged<String>(s, *x));
 	}
-	e.bind("argv", s.gc.alloc_tagged<Vec>(std::move(args)));
+	e.bind("argv", s.gc.alloc_tagged<Vec>(s, std::move(args)));
 }

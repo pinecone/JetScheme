@@ -605,7 +605,25 @@ namespace
 		const char* name;
 	};
 
-	void disasm_code_block(FILE* out, Code* start, size_t size)
+	void print_source_loc(FILE* out, const LambdaDebug& dbg,
+	                      const std::vector<std::string>& files, size_t off, size_t code_size)
+	{
+		const LambdaDebug::Line* line = dbg.find_line(off, code_size);
+		if (line == nullptr || line->line == 0)
+		{
+			return;
+		}
+		const char* file = "?";
+		if (line->file < files.size())
+		{
+			file = files[line->file].c_str();
+		}
+		std::fprintf(out, "  ; %s:%u", file, line->line);
+	}
+
+	void disasm_code_block(FILE* out, Code* start, size_t size,
+	                       const LambdaDebug& dbg,
+	                       const std::vector<std::string>& files)
 	{
 		Code* p = start;
 		Code* end = start + size;
@@ -616,6 +634,7 @@ namespace
 			Code* operand = p + OPCODE_SIZE;
 			std::fprintf(out, "  %04zu  %s", off, opcode_name(tag));
 			decode_args(out, tag, operand);
+			print_source_loc(out, dbg, files, off, size);
 			std::fputc('\n', out);
 			p += opcode_step(tag, operand);
 		}
@@ -724,9 +743,21 @@ void disassemble(FILE* out, Code* bc, size_t bc_size)
 {
 	Code* p = bc;
 	Code* end = bc + bc_size;
+	std::vector<std::string> files;
+	std::vector<LambdaDebug> source_maps;
+	p = parse_debug_section(nullptr, p, end, files, source_maps);
+
+	auto require_bytes = [&](size_t n, const char* what)
+	{
+		JET_DIE_WHEN(nullptr, static_cast<size_t>(end - p) < n,
+		             "invalid bytecode: not enough bytes for %s", what);
+	};
+
 	uint32_t n_toplevel_slots, n_constants;
+	require_bytes(sizeof(n_toplevel_slots), "n_toplevel_slots");
 	std::memcpy(&n_toplevel_slots, p, sizeof(n_toplevel_slots));
 	p += sizeof(n_toplevel_slots);
+	require_bytes(sizeof(n_constants), "n_constants");
 	std::memcpy(&n_constants, p, sizeof(n_constants));
 	p += sizeof(n_constants);
 
@@ -742,12 +773,16 @@ void disassemble(FILE* out, Code* bc, size_t bc_size)
 	}
 	std::fputc('\n', out);
 
+	JET_DIE_WHEN(nullptr, source_maps.size() != lambdas.size() + 1,
+	             "invalid debug section: table count %zu does not match %zu lambdas plus toplevel",
+	             source_maps.size(), lambdas.size());
 	size_t code_size = static_cast<size_t>(end - p);
 	std::fprintf(out, "=== toplevel code (%zu bytes) ===\n", code_size);
-	disasm_code_block(out, p, code_size);
+	disasm_code_block(out, p, code_size, source_maps[lambdas.size()], files);
 
-	for (const LambdaBlock& lb : lambdas)
+	for (size_t li = 0; li < lambdas.size(); ++li)
 	{
+		const LambdaBlock& lb = lambdas[li];
 		std::fputc('\n', out);
 		std::fprintf(out, "=== lambda [%u]", lb.pool_idx);
 		if (*lb.name)
@@ -756,6 +791,6 @@ void disassemble(FILE* out, Code* bc, size_t bc_size)
 		}
 		std::fprintf(out, " (%zu bytes, arity=%s%zu, n_locals=%u) ===\n", lb.size,
 		             lb.is_n_ary ? "n-ary≥" : "", lb.arity, lb.n_locals);
-		disasm_code_block(out, lb.code, lb.size);
+		disasm_code_block(out, lb.code, lb.size, source_maps[li], files);
 	}
 }

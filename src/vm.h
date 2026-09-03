@@ -138,10 +138,10 @@ inline bool test_bit(const uint64_t* bits, size_t i)
 	return (bits[i / 64] >> (i % 64)) & 1ULL;
 }
 
-inline void* checked_malloc(size_t bytes)
+inline void* checked_malloc(VmState* vm, size_t bytes)
 {
 	void* mem = std::malloc(bytes);
-	JET_DIE_UNLESS(mem != nullptr, "gc: out of memory allocating %zu bytes", bytes);
+	JET_DIE_UNLESS(vm, mem != nullptr, "gc: out of memory allocating %zu bytes", bytes);
 	return mem;
 }
 
@@ -197,23 +197,23 @@ struct Gc
 	Gc(const Gc&) = delete;
 	Gc& operator=(const Gc&) = delete;
 
-	uint16_t register_struct_destructor(StructDestructor destructor);
-	JET_NOINLINE void* alloc_slow(size_t n, int tag, uint16_t destructor_id);
-	JET_NOINLINE JET_COLD void* alloc_huge(size_t n, int tag, uint16_t destructor_id);
+	uint16_t register_struct_destructor(VmState& s, StructDestructor destructor);
+	JET_NOINLINE void* alloc_slow(VmState& s, size_t n, int tag, uint16_t destructor_id);
+	JET_NOINLINE JET_COLD void* alloc_huge(VmState& s, size_t n, int tag, uint16_t destructor_id);
 	JET_NOINLINE JET_COLD void mark_huge(void* ptr);
-	JET_NOINLINE void grow_objects();
+	JET_NOINLINE void grow_objects(VmState& s);
 	void sweep();
 	void mark_atom(uint64_t bits);
 	void mark_object(void* ptr, int tag);
 	void mark_lambda(struct Lambda* la);
 
-	JET_ALWAYS_INLINE void* alloc(size_t obj_size, int tag, uint16_t destructor_id)
+	JET_ALWAYS_INLINE void* alloc(VmState& s, size_t obj_size, int tag, uint16_t destructor_id)
 	{
 		size_t n = (obj_size + CELL_SIZE - 1) / CELL_SIZE;
 		void* mem = n < N_BUCKETS ? freelist[tag][n] : nullptr;
 		if (mem == nullptr || objects_end == objects_cap) [[unlikely]]
 		{
-			return alloc_slow(n, tag, destructor_id);
+			return alloc_slow(s, n, tag, destructor_id);
 		}
 		freelist[tag][n] = next_free(mem);
 		uint32_t start = static_cast<uint32_t>((static_cast<char*>(mem) - arena_base) / CELL_SIZE);
@@ -223,7 +223,7 @@ struct Gc
 		return mem;
 	}
 
-	JET_ALWAYS_INLINE void* alloc_raw_small(size_t n)
+	JET_ALWAYS_INLINE void* alloc_raw_small(VmState& s, size_t n)
 	{
 		void* mem = raw_freelist[n];
 		if (mem)
@@ -231,20 +231,20 @@ struct Gc
 			raw_freelist[n] = next_free(mem);
 			return mem;
 		}
-		JET_DIE_UNLESS(bump_cells + n <= TOTAL_CELLS, "gc: arena exhausted");
+		JET_DIE_UNLESS(&s, bump_cells + n <= TOTAL_CELLS, "gc: arena exhausted");
 		mem = arena_base + bump_cells * CELL_SIZE;
 		bump_cells += n;
 		return mem;
 	}
 
-	JET_ALWAYS_INLINE void* alloc_raw(size_t bytes)
+	JET_ALWAYS_INLINE void* alloc_raw(VmState& s, size_t bytes)
 	{
 		if (bytes > MAX_BUCKET_BYTES) [[unlikely]]
 		{
-			return checked_malloc(bytes);
+			return checked_malloc(&s, bytes);
 		}
 		size_t n = (bytes + CELL_SIZE - 1) / CELL_SIZE;
-		return alloc_raw_small(n);
+		return alloc_raw_small(s, n);
 	}
 
 	JET_ALWAYS_INLINE void free_raw_small(void* mem, size_t n)
@@ -278,7 +278,7 @@ struct Gc
 	bool should_collect() { return alloc_since_gc > gc_threshold; }
 
 	template <typename T, typename... Args>
-	Atom alloc_tagged(Args&&... args);
+	Atom alloc_tagged(VmState& s, Args&&... args);
 };
 
 template <typename T>
@@ -325,10 +325,10 @@ struct box_unbox_t
 };
 
 template <typename T, typename... Args>
-JET_ALWAYS_INLINE Atom Gc::alloc_tagged(Args&&... args)
+JET_ALWAYS_INLINE Atom Gc::alloc_tagged(VmState& s, Args&&... args)
 {
 	constexpr int tag = box_unbox_t<T>::tag;
-	void* mem = alloc(sizeof(T), tag, 0);
+	void* mem = alloc(s, sizeof(T), tag, 0);
 	return Atom::make_tagged(tag, new (mem) T(static_cast<Args&&>(args)...));
 }
 
@@ -492,12 +492,7 @@ struct Lambda
 
 	Lambda(Code* c, Arity a, uint16_t nl, uint16_t n) : code{c}, arity{a}, n_locals{nl}, n_captures{n} {}
 
-	static Atom alloc(Gc& gc, Code* code, Arity arity, uint16_t n_locals, uint16_t n_captures)
-	{
-		size_t total = sizeof(Lambda) + static_cast<size_t>(n_captures) * sizeof(Atom);
-		void* mem = gc.alloc(total, jet_tag::procedure, 0);
-		return Atom::make_tagged(jet_tag::procedure, new (mem) Lambda{code, arity, n_locals, n_captures});
-	}
+	static Atom alloc(VmState& s, Code* code, Arity arity, uint16_t n_locals, uint16_t n_captures);
 
 	Lambda(const Lambda&) = delete;
 	Lambda& operator=(const Lambda&) = delete;
@@ -512,6 +507,29 @@ template <>
 struct box_unbox_t<Lambda>
 {
 	static Lambda* unbox(Atom x) { return static_cast<Lambda*>(x.as_ptr()); }
+};
+
+struct LambdaDebug
+{
+	struct Line
+	{
+		uint32_t off;
+		uint32_t line;
+		uint32_t file;
+	};
+
+	std::string name;
+	std::vector<Line> lines;
+	size_t code_size = 0;
+
+	const Line* find_line(size_t off) const;
+	const Line* find_line(size_t off, size_t code_size) const;
+};
+
+struct ProgramDebug
+{
+	std::vector<std::string> files{};
+	ankerl::unordered_dense::map<const Code*, LambdaDebug> code{};
 };
 
 constexpr size_t STACK_CAPACITY = 1 << 20;
@@ -554,6 +572,9 @@ struct VmState
 	// `x` is a member when `running[x->running_index] == x` with a bounds check;
 	// after an escape removes `x`, this stays false forever.
 	Stack<Coro*> running{};
+	ProgramDebug debug{};
+	const Code* toplevel_code{};
+	size_t toplevel_code_size{};
 
 	void switch_stack(SavedStack& other)
 	{
@@ -605,8 +626,8 @@ struct ObjShape
 	VmOp ldfkh_handler;
 	VmOp ldfo_handler;
 	VmOp ldfko_handler;
-	Atom (*ref_or_die)(Atom, Atom);
-	Atom (*ref_or_hole)(Atom, Atom);
+	Atom (*ref_or_die)(VmState&, Atom, Atom);
+	Atom (*ref_or_hole)(VmState&, Atom, Atom);
 	Cursor* (*iter)(VmState&, Atom);
 };
 
@@ -651,7 +672,7 @@ struct CodeImage
 	size_t size;
 
 	CodeImage(const Code* data, size_t n_bytes)
-		: bytes{static_cast<Code*>(checked_malloc(n_bytes))}, size{n_bytes}
+		: bytes{static_cast<Code*>(checked_malloc(nullptr, n_bytes))}, size{n_bytes}
 	{
 		std::memcpy(bytes, data, n_bytes);
 	}
@@ -664,7 +685,17 @@ struct CodeImage
 	CodeImage& operator=(const CodeImage&) = delete;
 };
 
-// Bytecode layout: [u32 n_toplevel_slots][u32 n_constants][pool entries][toplevel code...].
+// Bytecode layout: [debug section][u32 n_toplevel_slots][u32 n_pool_entries][pool entries][toplevel code]
+// Debug source maps: lambda source maps in constant-pool order, toplevel source map last.
+Code* parse_debug_section(VmState* s, Code* p, Code* end, std::vector<std::string>& files,
+                          std::vector<LambdaDebug>& source_maps);
 LoadedProgram load_program(VmState& s, Code* bytecode, size_t n_bytes);
+
+inline Atom Lambda::alloc(VmState& s, Code* code, Arity arity, uint16_t n_locals, uint16_t n_captures)
+{
+	size_t total = sizeof(Lambda) + static_cast<size_t>(n_captures) * sizeof(Atom);
+	void* mem = s.gc.alloc(s, total, jet_tag::procedure, 0);
+	return Atom::make_tagged(jet_tag::procedure, new (mem) Lambda{code, arity, n_locals, n_captures});
+}
 
 #endif
