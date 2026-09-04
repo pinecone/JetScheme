@@ -552,10 +552,10 @@ bool g_trace_enabled = false;
 
 void trace_step(VmState& s, Frame*, Code* pc, Atom* stack_top)
 {
-	auto&& brief = [](Atom a) -> std::string
+	auto&& brief = [&s](Atom a) -> std::string
 	{
 		std::string result;
-		write_to(a, result);
+		write_to(s, a, result);
 		for (size_t i = 0; i < result.size(); ++i)
 		{
 			if (result[i] == '\n' || result[i] == '\r' || result[i] == '\t')

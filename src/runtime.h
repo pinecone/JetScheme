@@ -101,8 +101,8 @@ struct StructOps
 	ObjShape shape;
 	StructDestructor destroy;
 	bool (*equal)(EqualContext&, Struct*, Struct*, EqualRecur);
-	void (*display)(Struct*, std::string&);
-	void (*write)(Struct*, std::string&);
+	void (*display)(VmState&, Struct*, std::string&);
+	void (*write)(VmState&, Struct*, std::string&);
 };
 
 class StructType
@@ -814,8 +814,8 @@ Atom struct_ref(VmState& s, Atom object, Atom key)
 	return Load(instance, Resolve(s, instance, key));
 }
 
-Atom display_to(Atom value, std::string& out);
-Atom write_to(Atom value, std::string& out);
+Atom display_to(VmState& s, Atom value, std::string& out);
+Atom write_to(VmState& s, Atom value, std::string& out);
 
 void init_structs(VmState& s);
 Atom construct_struct(VmState& s, StructType* type, Atom* first, Atom* last);
@@ -1425,7 +1425,7 @@ bool compare_objects(Atom obj1, Atom obj2)
 void init_equivalence(VmState& s);
 
 Atom display(VmState& s, Atom* first, Atom* last);
-Atom write_to(Atom a, std::string& out);
+Atom write_to(VmState& s, Atom value, std::string& out);
 void init_display_primitives(VmState& s);
 
 void init_strings(VmState& s);

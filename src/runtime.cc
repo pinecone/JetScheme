@@ -474,7 +474,7 @@ static bool equal_vector_cursor(EqualContext&, Struct* first, Struct* second, Eq
 	return a->vector->cursor_indices[a->slot] == b->vector->cursor_indices[b->slot];
 }
 
-static void print_cursor(Struct*, std::string& out)
+static void print_cursor(VmState&, Struct*, std::string& out)
 {
 	out += "#<cursor>";
 }
@@ -864,17 +864,17 @@ void init_equivalence(VmState& s)
 	e.bind("symbol=?", make_prim<symbol_eq>(s));
 }
 
-using printer_t = Atom (*)(Atom, std::string&);
+using printer_t = Atom (*)(VmState&, Atom, std::string&);
 
 template <printer_t print>
-static void print_list(Cons& v, std::string& out)
+static void print_list(VmState& s, Cons& v, std::string& out)
 {
 	out += '(';
 
 	Cons* x = &v;
 	while (true)
 	{
-		print(x->car, out);
+		print(s, x->car, out);
 		if (is_type<jet::Type::Pair>(x->cdr))
 		{
 			out += ' ';
@@ -884,7 +884,7 @@ static void print_list(Cons& v, std::string& out)
 		if (!is_type<jet::Type::EmptyList>(x->cdr))
 		{
 			out += " . ";
-			print(x->cdr, out);
+			print(s, x->cdr, out);
 		}
 		break;
 	}
@@ -893,11 +893,11 @@ static void print_list(Cons& v, std::string& out)
 }
 
 template <printer_t print>
-static void print_vector(Vec& v, std::string& out)
+static void print_vector(VmState& s, Vec& v, std::string& out)
 {
-	auto&& print_vector_element = [](Atom x, std::string& output)
+	auto&& print_vector_element = [&](Atom x, std::string& output)
 	{
-		print(x, output);
+		print(s, x, output);
 		output += ' ';
 	};
 	out += "#(";
@@ -908,7 +908,7 @@ static void print_vector(Vec& v, std::string& out)
 		{
 			print_vector_element(*it, out);
 		}
-		print(v.back(), out);
+		print(s, v.back(), out);
 	}
 	out += ')';
 }
@@ -929,7 +929,7 @@ static void print_bytevector(ByteVector& v, std::string& out)
 	out += ')';
 }
 
-Atom display_to(Atom a, std::string& out)
+Atom display_to(VmState& s, Atom a, std::string& out)
 {
 	switch (a.type())
 	{
@@ -943,7 +943,16 @@ Atom display_to(Atom a, std::string& out)
 				break;
 			}
 			char buf[32];
-			std::to_chars_result r = std::to_chars(buf, buf + sizeof(buf), n);
+			std::to_chars_result r{};
+			if (n == std::trunc(n) && std::fabs(n) < 1e21)
+			{
+				r = std::to_chars(buf, buf + sizeof(buf), n, std::chars_format::fixed);
+			}
+			else
+			{
+				r = std::to_chars(buf, buf + sizeof(buf), n);
+			}
+			JET_DIE_UNLESS(&s, r.ec == std::errc{}, "number formatting overflowed its %zu-byte buffer", sizeof(buf));
 			out.append(buf, r.ptr - buf);
 		}
 		break;
@@ -965,11 +974,11 @@ Atom display_to(Atom a, std::string& out)
 			break;
 
 		case jet::Type::Pair:
-			print_list<display_to>(*unbox<Cons>(a), out);
+			print_list<display_to>(s, *unbox<Cons>(a), out);
 			break;
 
 		case jet::Type::Vector:
-			print_vector<display_to>(*unbox<Vec>(a), out);
+			print_vector<display_to>(s, *unbox<Vec>(a), out);
 			break;
 
 		case jet::Type::ByteVector:
@@ -994,8 +1003,8 @@ Atom display_to(Atom a, std::string& out)
 
 		case jet::Type::Struct:
 		{
-			Struct* s = unbox<Struct>(a);
-			s->type->ops().display(s, out);
+			Struct* st = unbox<Struct>(a);
+			st->type->ops().display(s, st, out);
 			break;
 		}
 
@@ -1009,7 +1018,7 @@ Atom display_to(Atom a, std::string& out)
 	return Atom{};
 }
 
-Atom write_to(Atom a, std::string& out)
+Atom write_to(VmState& s, Atom a, std::string& out)
 {
 	auto&& write_escaped_char = [](char c, std::string& output)
 	{
@@ -1071,11 +1080,11 @@ Atom write_to(Atom a, std::string& out)
 		break;
 
 		case jet::Type::Pair:
-			print_list<write_to>(*unbox<Cons>(a), out);
+			print_list<write_to>(s, *unbox<Cons>(a), out);
 			break;
 
 		case jet::Type::Vector:
-			print_vector<write_to>(*unbox<Vec>(a), out);
+			print_vector<write_to>(s, *unbox<Vec>(a), out);
 			break;
 
 		case jet::Type::ByteVector:
@@ -1084,13 +1093,13 @@ Atom write_to(Atom a, std::string& out)
 
 		case jet::Type::Struct:
 		{
-			Struct* s = unbox<Struct>(a);
-			s->type->ops().write(s, out);
+			Struct* st = unbox<Struct>(a);
+			st->type->ops().write(s, st, out);
 			break;
 		}
 
 		default:
-			display_to(a, out);
+			display_to(s, a, out);
 			break;
 	}
 
@@ -1118,14 +1127,14 @@ static Atom put_buffer(VmState& s, std::string& buf, const char* who, Atom* firs
 Atom display(VmState& s, Atom* first, Atom* last)
 {
 	std::string buf;
-	display_to(first[0], buf);
+	display_to(s, first[0], buf);
 	return put_buffer(s, buf, "display", first, last);
 }
 
 static Atom write_atom(VmState& s, Atom* first, Atom* last)
 {
 	std::string buf;
-	write_to(first[0], buf);
+	write_to(s, first[0], buf);
 	return put_buffer(s, buf, "write", first, last);
 }
 
@@ -1274,7 +1283,7 @@ static Atom number_to_string(VmState& s, Atom* first, Atom* last)
 	if (radix == 10)
 	{
 		std::string os;
-		display_to(first[0], os);
+		display_to(s, first[0], os);
 		return s.gc.alloc_tagged<String>(s, std::move(os));
 	}
 	JET_DIE_UNLESS(&s, radix == 2 || radix == 8 || radix == 16,
@@ -1881,8 +1890,8 @@ static bool equal_tuple(EqualContext& context, Struct* first, Struct* second, Eq
 	return true;
 }
 
-template <Atom (*print)(Atom, std::string&)>
-static void print_scheme_struct(Struct* instance, std::string& out)
+template <Atom (*print)(VmState&, Atom, std::string&)>
+static void print_scheme_struct(VmState& s, Struct* instance, std::string& out)
 {
 	SchemeStruct* value = static_cast<SchemeStruct*>(instance);
 	out += "#s(";
@@ -1890,13 +1899,13 @@ static void print_scheme_struct(Struct* instance, std::string& out)
 	for (uint32_t i = 0; i < value->n_fields; ++i)
 	{
 		out += ' ';
-		print(value->values[i], out);
+		print(s, value->values[i], out);
 	}
 	out += ')';
 }
 
-template <Atom (*print)(Atom, std::string&)>
-static void print_tuple(Struct* instance, std::string& out)
+template <Atom (*print)(VmState&, Atom, std::string&)>
+static void print_tuple(VmState& s, Struct* instance, std::string& out)
 {
 	Tuple* tuple = static_cast<Tuple*>(instance);
 	out += "#tuple(";
@@ -1905,7 +1914,7 @@ static void print_tuple(Struct* instance, std::string& out)
 	{
 		out += separator;
 		separator = " ";
-		print(tuple->elements[i], out);
+		print(s, tuple->elements[i], out);
 	}
 	out += ')';
 }
@@ -1990,7 +1999,7 @@ static bool equal_by_identity(EqualContext&, Struct* first, Struct* second, Equa
 	return first == second;
 }
 
-static void print_escape(Struct*, std::string& out)
+static void print_escape(VmState&, Struct*, std::string& out)
 {
 	out += "#<escape>";
 }
@@ -2023,12 +2032,12 @@ JET_PRESERVE_NONE static void private_yield_constructor(VM_OP_PARAMS)
 	JET_DIE(&s, "yields are created by let/coro, not by calling their type");
 }
 
-static void print_coro(Struct*, std::string& out)
+static void print_coro(VmState&, Struct*, std::string& out)
 {
 	out += "#<coroutine>";
 }
 
-static void print_yield(Struct*, std::string& out)
+static void print_yield(VmState&, Struct*, std::string& out)
 {
 	out += "#<yield>";
 }
@@ -2535,8 +2544,8 @@ static bool equal_hashmap(EqualContext& context, Struct* first, Struct* second, 
 	return true;
 }
 
-template <Atom (*print)(Atom, std::string&)>
-static void print_hashset(Struct* instance, std::string& out)
+template <Atom (*print)(VmState&, Atom, std::string&)>
+static void print_hashset(VmState& s, Struct* instance, std::string& out)
 {
 	HashSet* set = static_cast<HashSet*>(instance);
 	out += "#hashset(";
@@ -2546,13 +2555,13 @@ static void print_hashset(Struct* instance, std::string& out)
 	{
 		out += separator;
 		separator = " ";
-		print(set->entry(position).atom, out);
+		print(s, set->entry(position).atom, out);
 	}
 	out += ')';
 }
 
-template <Atom (*print)(Atom, std::string&)>
-static void print_hashmap(Struct* instance, std::string& out)
+template <Atom (*print)(VmState&, Atom, std::string&)>
+static void print_hashmap(VmState& s, Struct* instance, std::string& out)
 {
 	HashMap* map = static_cast<HashMap*>(instance);
 	out += "#hashmap(";
@@ -2563,9 +2572,9 @@ static void print_hashmap(Struct* instance, std::string& out)
 		const HashMapEntry& entry = map->entry(position);
 		out += separator;
 		separator = " ";
-		print(entry.key.atom, out);
+		print(s, entry.key.atom, out);
 		out += ' ';
-		print(entry.value, out);
+		print(s, entry.value, out);
 	}
 	out += ')';
 }
