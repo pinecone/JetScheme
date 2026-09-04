@@ -348,9 +348,9 @@
               (let ((lit-level (plus-light-level level (bitwise-and (arithmetic-shift xf -16) 63)
                                                    (bitwise-and (arithmetic-shift yf -16) 63))))
                 (setf! framebuffer (+ (* (+ viewtop top) screenwidth) viewleft x)
-                       (plus-color (ref plane-ceiling tex) lit-level))
+                       (plus-color (ref plane-ceiling tex) (plus-dither lit-level x top)))
                 (setf! framebuffer (+ (* (+ viewtop bottom) screenwidth) viewleft x)
-                       (plus-color (ref plane-floor tex) lit-level))))))
+                       (plus-color (ref plane-floor tex) (plus-dither lit-level x bottom)))))))
         (columns (+ x 1))))))
 
 (define (DrawPlanes)
@@ -413,7 +413,7 @@
     (let loop ((y (max top 0)) (limit (min (+ top rows) viewheight)))
       (when (< y limit)
         (setf! framebuffer (+ (* (+ y viewtop) screenwidth) viewleft pixx)
-               (plus-color (ref texels (+ (* column 64) (truncate (/ (* (- y top) 64) rows)))) level))
+               (plus-color (ref texels (+ (* column 64) (truncate (/ (* (- y top) 64) rows)))) (plus-dither level pixx y)))
         (loop (+ y 1) limit)))))
 
 (define (FarScalePost pixx height page column tilex tiley)

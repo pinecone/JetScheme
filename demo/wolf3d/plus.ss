@@ -25,15 +25,25 @@
 (define (plus-color color level)
   (if plus-enabled (ref (ref plus-shades (+ level 4)) color) color))
 
-(define (plus-sprite-color color level emission)
+(define plus-bayer
+  (bytevector 0 8 2 10 12 4 14 6 3 11 1 9 15 7 13 5))
+
+(define (plus-dither level16 x y)
+  (let* ((level (- (truncate (/ (+ level16 64) 16)) 4))
+         (frac (- level16 (* 16 level))))
+    (if (> frac (ref plus-bayer (+ (* (bitwise-and y 3) 4) (bitwise-and x 3))))
+        (+ level 1)
+        level)))
+
+(define (plus-sprite-color color level16 emission x y)
   (if (and (> emission 0) (= (ref plus-emissive color) 1))
-      (if (= emission 1) (plus-color color (truncate (/ level 2))) color)
-      (plus-color color level)))
+      (if (= emission 1) (plus-color color (plus-dither (truncate (/ level16 2)) x y)) color)
+      (plus-color color (plus-dither level16 x y))))
 
 (define (plus-distance-level extent range)
   (if plus-enabled
       (let ((distance (- range (min extent range))))
-        (truncate (/ (* 15 distance distance distance distance) (* range range range range))))
+        (truncate (/ (* 240 distance distance distance distance) (* range range range range))))
       0))
 
 (define (plus-light-index tilex tiley)
@@ -57,7 +67,7 @@
              (bright (if (= flash 0)
                          0
                          (min 4 (max 1 (truncate (/ (* 4 flash) PLUS_FLASH_LEVELS)))))))
-        (max -4 (- dark bright)))
+        (max -64 (- dark (* 16 bright))))
       0))
 
 (define (plus-light-emission shape)
