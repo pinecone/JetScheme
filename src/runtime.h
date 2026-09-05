@@ -415,7 +415,10 @@ struct KeyEqual
 	VmState& vm;
 
 	explicit KeyEqual(VmState& vm_) : vm{vm_} {}
-	bool operator()(const TableKey& first, const TableKey& second) const { return equal_key(vm, first, second); }
+	bool operator()(const TableKey& first, const TableKey& second) const
+	{
+		return equal_key(vm, first, second);
+	}
 	bool operator()(const FastKey& first, const TableKey& second) const
 	{
 		if (first.key.hash != second.hash)

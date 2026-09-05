@@ -343,7 +343,8 @@ void init_number(VmState& s)
 	e.bind("bitwise-xor", make_prim<folding_op<::bit_xor<double>, 0, Number::trusted>>(s));
 	e.bind("bitwise-not",
 	       make_prim<arith_unary_fun<double, jet_bitwise_not, Number::trusted>>(s, exactly(1)));
-	e.bind("arithmetic-shift", make_prim<arith_binary_fun<double, jet_arithmetic_shift, Number::trusted>>(s, exactly(2)));
+	e.bind("arithmetic-shift",
+	       make_prim<arith_binary_fun<double, jet_arithmetic_shift, Number::trusted>>(s, exactly(2)));
 
 	e.bind("exact?", make_prim<arith_unary_pred<double, jet_is_exact>>(s, exactly(1)));
 	e.bind("integer?", make_prim<arith_unary_pred<double, jet_is_integer>>(s, exactly(1)));
@@ -952,7 +953,8 @@ Atom display_to(VmState& s, Atom a, std::string& out)
 			{
 				r = std::to_chars(buf, buf + sizeof(buf), n);
 			}
-			JET_DIE_UNLESS(&s, r.ec == std::errc{}, "number formatting overflowed its %zu-byte buffer", sizeof(buf));
+			JET_DIE_UNLESS(&s, r.ec == std::errc{}, "number formatting overflowed its %zu-byte buffer",
+			               sizeof(buf));
 			out.append(buf, r.ptr - buf);
 		}
 		break;

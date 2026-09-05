@@ -8,173 +8,159 @@
 #include "vm.h"
 #include <algorithm>
 #include <cstdio>
+#include <cinttypes>
 #include <cstring>
 #include <string>
 #include <string_view>
 #include <vector>
 
+const char* opcode_name(uint8_t op);
+
 #ifdef JET_PROFILE
 
 Profile g_profile{};
 
-void profile_print()
+FieldReceiver profile_field_receiver(Atom object)
 {
-	auto&& profile_opcode_name = [](int op) -> std::string_view
+	switch (object.type())
 	{
-		switch (op)
-		{
-#define X(name, disp, ...)                                                                                   \
-	case static_cast<int>(Opcode::name):                                                                     \
-		return disp;
-		JET_OPCODES(X)
-#undef X
-			default:
-				return "unknown";
-		}
-	};
-	uint64_t total_ops = 0;
-	for (int i = 0; i < 256; ++i)
-	{
-		total_ops += g_profile.op_counts[i];
-	}
-
-	uint64_t elapsed_ticks = profile_ticks() - g_profile.start_ticks;
-	uint64_t elapsed_ns = profile_wall_ns() - g_profile.start_ns;
-	double ns_per_tick = elapsed_ticks ? static_cast<double>(elapsed_ns) / elapsed_ticks : 0.0;
-	auto ms = [ns_per_tick](uint64_t ticks) { return static_cast<double>(ticks) * ns_per_tick / 1e6; };
-	auto ns = [ns_per_tick](double ticks) { return ticks * ns_per_tick; };
-
-	auto profile_print_gc_pauses = [&ms, elapsed_ns]()
-	{
-		std::vector<uint64_t> p = g_profile.gc_pauses;
-		std::sort(p.begin(), p.end());
-		size_t n = p.size();
-		auto at = [&p, n](double q) { return p[static_cast<size_t>(q * (n - 1) + 0.5)]; };
-
-		double share = elapsed_ns ? 100.0 * ms(g_profile.gc_ticks) * 1e6 / elapsed_ns : 0.0;
-		std::fprintf(stderr, "\ngc pauses: %zu collections, %.3f ms total, %.1f%% of run\n", n,
-		             ms(g_profile.gc_ticks), share);
-		std::fprintf(stderr, " min %.3f  p50 %.3f  p90 %.3f  p99 %.3f  max %.3f  (ms)\n", ms(p.front()),
-		             ms(at(0.50)), ms(at(0.90)), ms(at(0.99)), ms(p.back()));
-
-		constexpr size_t ROWS = 10;
-		double hi = ms(p.back());
-		double width = hi / ROWS;
-		size_t counts[ROWS] = {};
-		size_t widest = 1;
-		for (uint64_t t : p)
-		{
-			size_t row = width > 0 ? static_cast<size_t>(ms(t) / width) : 0;
-			++counts[row < ROWS ? row : ROWS - 1];
-		}
-		for (size_t c : counts)
-		{
-			widest = c > widest ? c : widest;
-		}
-		for (size_t r = 0; r < ROWS; ++r)
-		{
-			size_t bar = counts[r] * 40 / widest;
-			std::fprintf(stderr, " %6.3f - %6.3f ms %5zu %4.0f%% %.*s\n", r * width, (r + 1) * width,
-			             counts[r], 100.0 * static_cast<double>(counts[r]) / static_cast<double>(n),
-			             static_cast<int>(bar), "########################################");
-		}
-	};
-
-	std::fprintf(stderr, "\n--- JET_PROFILE ---\n");
-	std::fprintf(stderr, "opcodes dispatched: %llu\n", static_cast<unsigned long long>(total_ops));
-	std::fprintf(stderr, " lambda calls: %llu\n", static_cast<unsigned long long>(g_profile.lambda_calls));
-	std::fprintf(stderr, " primitive calls: %llu\n", static_cast<unsigned long long>(g_profile.prim_calls));
-	std::fprintf(stderr, " gc collections: %llu\n",
-	             static_cast<unsigned long long>(g_profile.gc_collections));
-	std::fprintf(stderr, " wall time: %.3f ms (counter %.2f MHz)\n", static_cast<double>(elapsed_ns) / 1e6,
-	             ns_per_tick > 0.0 ? 1000.0 / ns_per_tick : 0.0);
-	std::fprintf(stderr, "\nopcode histogram (sorted by count):\n");
-
-	int idx[256];
-	for (int i = 0; i < 256; ++i)
-	{
-		idx[i] = i;
-	}
-	std::sort(idx, idx + 256, [](int a, int b) { return g_profile.op_counts[a] > g_profile.op_counts[b]; });
-
-	for (int i = 0; i < 256; ++i)
-	{
-		uint64_t n = g_profile.op_counts[idx[i]];
-		if (n == 0)
-		{
-			break;
-		}
-		double pct = total_ops ? 100.0 * static_cast<double>(n) / static_cast<double>(total_ops) : 0.0;
-		std::fprintf(stderr, " %-14s %12llu %5.1f%%\n", profile_opcode_name(idx[i]).data(),
-		             static_cast<unsigned long long>(n), pct);
-	}
-
-	uint64_t total_ticks = g_profile.gc_ticks;
-	for (int i = 0; i < 256; ++i)
-	{
-		total_ticks += g_profile.op_ticks[i];
-	}
-	if (total_ticks > 0)
-	{
-		std::sort(idx, idx + 256,
-		          [](int a, int b) { return g_profile.op_ticks[a] > g_profile.op_ticks[b]; });
-		std::fprintf(stderr, "\nopcode time histogram (sorted by time; gc excluded from op rows):\n");
-		std::fprintf(stderr, " %-14s %12s %6s %10s\n", "opcode", "ms", "time%", "ns/op");
-		for (int i = 0; i < 256; ++i)
-		{
-			uint64_t t = g_profile.op_ticks[idx[i]];
-			if (t == 0)
+		case jet::Type::Vector:
+			return FieldReceiver::Vector;
+		case jet::Type::String:
+			return FieldReceiver::String;
+		case jet::Type::ByteVector:
+			return FieldReceiver::Bytevector;
+		case jet::Type::Struct:
+			switch (unbox<Struct>(object)->type->kind())
 			{
-				break;
+				case StructKind::Scheme:
+					return FieldReceiver::SchemeStruct;
+				case StructKind::Tuple:
+					return FieldReceiver::Tuple;
+				case StructKind::HashSet:
+					return FieldReceiver::HashSet;
+				case StructKind::HashMap:
+					return FieldReceiver::HashMap;
+				case StructKind::Cursor:
+					return FieldReceiver::Cursor;
+				case StructKind::Escape:
+				case StructKind::Coro:
+				case StructKind::Yield:
+					return FieldReceiver::Other;
 			}
-			uint64_t n = g_profile.op_counts[idx[i]];
-			double pct = 100.0 * static_cast<double>(t) / static_cast<double>(total_ticks);
-			double per = n ? static_cast<double>(t) / static_cast<double>(n) : 0.0;
-			std::fprintf(stderr, " %-14s %12.3f %5.1f%% %10.2f\n", profile_opcode_name(idx[i]).data(),
-			             ms(t), pct, ns(per));
-		}
-		double gc_pct = 100.0 * static_cast<double>(g_profile.gc_ticks) / static_cast<double>(total_ticks);
-		std::fprintf(stderr, " %-14s %12.3f %5.1f%%\n", "(gc)", ms(g_profile.gc_ticks), gc_pct);
+		default:
+			return FieldReceiver::Other;
 	}
+}
 
-	if (g_profile.gc_collections > 0)
+void profile_miss(const VmState& state, const Frame& frame, const Code* instruction,
+                  uint64_t cached, uint64_t current)
+{
+	uint8_t op{instruction[OPCODE_SIZE - 1]};
+	++g_profile.ic_misses[op];
+	const Code* key{frame_code_start(state, frame, instruction)};
+	const LambdaDebug::Line* line{nullptr};
+	if (key != nullptr)
 	{
-		profile_print_gc_pauses();
-	}
-
-	uint64_t total_ic_misses = 0;
-	for (int i = 0; i < 256; ++i)
-	{
-		total_ic_misses += g_profile.ic_misses[i];
-	}
-	if (total_ic_misses > 0)
-	{
-		int ic_idx[256];
-		for (int i = 0; i < 256; ++i)
+		auto found = state.debug.code.find(key);
+		if (found != state.debug.code.end())
 		{
-			ic_idx[i] = i;
-		}
-		std::sort(ic_idx, ic_idx + 256,
-		          [](int a, int b) { return g_profile.ic_misses[a] > g_profile.ic_misses[b]; });
-
-		std::fprintf(stderr, "\nIC misses (sorted by miss count):\n");
-		std::fprintf(stderr, " %-14s %12s %12s %7s\n", "opcode", "total", "misses", "miss%");
-		for (int i = 0; i < 256; ++i)
-		{
-			int op = ic_idx[i];
-			uint64_t misses = g_profile.ic_misses[op];
-			if (misses == 0)
-			{
-				break;
-			}
-			uint64_t total = g_profile.op_counts[op];
-			double miss_pct = total ? 100.0 * static_cast<double>(misses) / static_cast<double>(total) : 0.0;
-			std::fprintf(stderr, " %-14s %12llu %12llu %6.2f%%\n", profile_opcode_name(op).data(),
-			             static_cast<unsigned long long>(total), static_cast<unsigned long long>(misses),
-			             miss_pct);
+			line = found->second.find_line(static_cast<size_t>(instruction - key));
 		}
 	}
 
+	IcMisses* misses{&g_profile.ic_misses_no_site};
+	// The site key reserves 24 bits for the file index.
+	if (line != nullptr && line->file < state.debug.files.size() && line->file < (1u << 24))
+	{
+		misses = &g_profile.ic_sites[ic_site_key(line->file, line->line, op)];
+	}
+	if (cached == 0)
+	{
+		++misses->first;
+	}
+	else if (cached != current)
+	{
+		++misses->changed;
+	}
+	else
+	{
+		++misses->invalidated;
+	}
+}
+
+static void print_misses(const char* site, const char* opcode, const IcMisses& misses)
+{
+	std::fprintf(stderr, " %-28s %-14s %12" PRIu64 " %11" PRIu64 " %13" PRIu64 " %11" PRIu64 "\n",
+	             site, opcode, misses.total(), misses.first, misses.changed, misses.invalidated);
+}
+
+static void print_sites(const std::vector<std::string>& files)
+{
+	std::vector<std::pair<uint64_t, IcMisses>> sites{g_profile.ic_sites.begin(), g_profile.ic_sites.end()};
+	std::sort(sites.begin(), sites.end(), [](const auto& first, const auto& second)
+	{
+		return first.second.total() > second.second.total();
+	});
+	std::fprintf(stderr, "\nIC misses by site (top 25 by count):\n");
+	std::fprintf(stderr, " %-28s %-14s %12s %11s %13s %11s\n", "site", "opcode", "total",
+	             "first-fill", "callee-change", "invalidated");
+	size_t shown{std::min<size_t>(sites.size(), 25)};
+	for (size_t index = 0; index < shown; ++index)
+	{
+		auto [key, misses] = sites[index];
+		uint32_t line{static_cast<uint32_t>(key >> 8)};
+		uint32_t file{static_cast<uint32_t>(key >> 40)};
+		std::string name{files[file] + ":" + std::to_string(line)};
+		print_misses(name.c_str(), opcode_name(key & 0xff), misses);
+	}
+	if (g_profile.ic_misses_no_site.total() != 0)
+	{
+		print_misses("<no site>", "", g_profile.ic_misses_no_site);
+	}
+}
+
+static void print_gc(double tick_ms, uint64_t elapsed_ns)
+{
+	std::vector<uint64_t> pauses{g_profile.gc_pauses};
+	std::sort(pauses.begin(), pauses.end());
+	size_t count{pauses.size()};
+	auto&& at = [&pauses, count](double quantile)
+	{
+		return pauses[static_cast<size_t>(quantile * (count - 1) + 0.5)];
+	};
+
+	double share{elapsed_ns ? 100.0 * g_profile.gc_ticks * tick_ms * 1e6 / elapsed_ns : 0.0};
+	std::fprintf(stderr, "\ngc pauses: %zu collections, %.3f ms total, %.1f%% of run\n", count,
+	             g_profile.gc_ticks * tick_ms, share);
+	std::fprintf(stderr, " min %.3f  p50 %.3f  p90 %.3f  p99 %.3f  max %.3f  (ms)\n",
+	             pauses.front() * tick_ms, at(0.50) * tick_ms, at(0.90) * tick_ms,
+	             at(0.99) * tick_ms, pauses.back() * tick_ms);
+
+	constexpr size_t ROWS = 10;
+	double width{pauses.back() * tick_ms / ROWS};
+	size_t counts[ROWS]{};
+	size_t widest{1};
+	for (uint64_t ticks : pauses)
+	{
+		size_t row{width > 0 ? static_cast<size_t>(ticks * tick_ms / width) : 0};
+		++counts[row < ROWS ? row : ROWS - 1];
+	}
+	for (size_t current : counts)
+	{
+		widest = current > widest ? current : widest;
+	}
+	for (size_t row = 0; row < ROWS; ++row)
+	{
+		size_t bar{counts[row] * 40 / widest};
+		std::fprintf(stderr, " %6.3f - %6.3f ms %5zu %4.0f%% %.*s\n", row * width, (row + 1) * width,
+		             counts[row], 100.0 * counts[row] / count,
+		             static_cast<int>(bar), "########################################");
+	}
+}
+
+static void print_fields(double tick_ms, uint64_t total_ticks)
+{
 	constexpr Opcode field_ops[] = {Opcode::ldf, Opcode::stf, Opcode::ldfk, Opcode::stfk,
 		                            Opcode::ldfh, Opcode::ldfkh, Opcode::ldfo, Opcode::ldfko};
 	constexpr const char* field_receivers[] = {
@@ -185,7 +171,7 @@ void profile_print()
 	             "hit/hit", "hit/key-miss", "recv-miss/hit", "both-miss");
 	for (Opcode field_op : field_ops)
 	{
-		int op = static_cast<int>(field_op);
+		int op{static_cast<int>(field_op)};
 		for (size_t receiver = 0; receiver < static_cast<size_t>(FieldReceiver::Count); ++receiver)
 		{
 			const FieldProfile& field = g_profile.fields[op][receiver];
@@ -193,11 +179,11 @@ void profile_print()
 			{
 				continue;
 			}
-			std::fprintf(stderr, " %-8s %-9s %12llu", profile_opcode_name(op).data(),
-			             field_receivers[receiver], static_cast<unsigned long long>(field.count));
+			std::fprintf(stderr, " %-8s %-9s %12" PRIu64, opcode_name(op),
+			             field_receivers[receiver], field.count);
 			for (uint64_t count : field.outcome_counts)
 			{
-				std::fprintf(stderr, " %12llu", static_cast<unsigned long long>(count));
+				std::fprintf(stderr, " %12" PRIu64, count);
 			}
 			std::fputc('\n', stderr);
 		}
@@ -208,7 +194,7 @@ void profile_print()
 	             "time%", "hit/hit", "hit/key-miss", "recv-miss/hit", "both-miss");
 	for (Opcode field_op : field_ops)
 	{
-		int op = static_cast<int>(field_op);
+		int op{static_cast<int>(field_op)};
 		for (size_t receiver = 0; receiver < static_cast<size_t>(FieldReceiver::Count); ++receiver)
 		{
 			const FieldProfile& field = g_profile.fields[op][receiver];
@@ -216,71 +202,191 @@ void profile_print()
 			{
 				continue;
 			}
-			uint64_t ticks = 0;
+			uint64_t ticks{0};
 			for (uint64_t outcome_ticks : field.outcome_ticks)
 			{
 				ticks += outcome_ticks;
 			}
-			double time_pct = total_ticks
-			                  ? 100.0 * static_cast<double>(ticks) / static_cast<double>(total_ticks)
-			                  : 0.0;
-			std::fprintf(stderr, " %-8s %-9s %12.3f %6.2f%%", profile_opcode_name(op).data(),
-			             field_receivers[receiver], ms(ticks), time_pct);
+			double time_pct{total_ticks ? 100.0 * ticks / total_ticks : 0.0};
+			std::fprintf(stderr, " %-8s %-9s %12.3f %6.2f%%", opcode_name(op),
+			             field_receivers[receiver], ticks * tick_ms, time_pct);
 			for (uint64_t outcome_ticks : field.outcome_ticks)
 			{
-				std::fprintf(stderr, " %12.3f", ms(outcome_ticks));
+				std::fprintf(stderr, " %12.3f", outcome_ticks * tick_ms);
 			}
 			std::fputc('\n', stderr);
 		}
 	}
+}
 
+static void print_pairs(double ns_per_tick, uint64_t total_ops, uint64_t total_ticks)
+{
+	double tick_ms{ns_per_tick / 1e6};
 	struct Pair
 	{
 		int prev;
 		int curr;
-		uint64_t n;
+		uint64_t count;
 		uint64_t ticks;
 	};
 	std::vector<Pair> pairs;
 	pairs.reserve(256);
-	for (int p = 0; p < 256; ++p)
+	for (int previous = 0; previous < 256; ++previous)
 	{
-		for (int c = 0; c < 256; ++c)
+		for (int current = 0; current < 256; ++current)
 		{
-			if (uint64_t n = g_profile.pair_after[p][c]; n > 0)
+			if (uint64_t count = g_profile.pair_after[previous][current]; count > 0)
 			{
-				pairs.push_back({p, c, n, g_profile.pair_ticks[p][c]});
+				pairs.push_back({previous, current, count, g_profile.pair_ticks[previous][current]});
 			}
 		}
 	}
-	size_t shown = pairs.size() < 30 ? pairs.size() : 30;
-	std::sort(pairs.begin(), pairs.end(), [](const Pair& a, const Pair& b) { return a.ticks > b.ticks; });
+	size_t shown{pairs.size() < 30 ? pairs.size() : 30};
+	std::sort(pairs.begin(), pairs.end(), [](const Pair& first, const Pair& second)
+	{
+		return first.ticks > second.ticks;
+	});
 	std::fprintf(stderr, "\ntop transitions by previous-op time (prev -> curr):\n");
 	std::fprintf(stderr, " %-14s    %-14s %12s %6s %10s %12s\n",
 	             "previous", "current", "ms", "time%", "ns/pair", "count");
-	for (size_t i = 0; i < shown && pairs[i].ticks > 0; ++i)
+	for (size_t index = 0; index < shown && pairs[index].ticks > 0; ++index)
 	{
-		double pct = total_ticks
-		             ? 100.0 * static_cast<double>(pairs[i].ticks) / static_cast<double>(total_ticks)
-		             : 0.0;
-		double per = static_cast<double>(pairs[i].ticks) / static_cast<double>(pairs[i].n);
-		std::fprintf(stderr, " %-14s -> %-14s %12.3f %5.1f%% %10.2f %12llu\n",
-		             profile_opcode_name(pairs[i].prev).data(), profile_opcode_name(pairs[i].curr).data(),
-		             ms(pairs[i].ticks), pct, ns(per), static_cast<unsigned long long>(pairs[i].n));
+		double percent{total_ticks ? 100.0 * pairs[index].ticks / total_ticks : 0.0};
+		double average{static_cast<double>(pairs[index].ticks) / pairs[index].count};
+		std::fprintf(stderr, " %-14s -> %-14s %12.3f %5.1f%% %10.2f %12" PRIu64 "\n",
+		             opcode_name(pairs[index].prev), opcode_name(pairs[index].curr),
+		             pairs[index].ticks * tick_ms, percent, average * ns_per_tick, pairs[index].count);
 	}
 
-	std::sort(pairs.begin(), pairs.end(), [](const Pair& a, const Pair& b) { return a.n > b.n; });
-	std::fprintf(stderr, "\ntop dispatched pairs by count (prev -> curr):\n");
-	for (size_t i = 0; i < shown; ++i)
+	std::sort(pairs.begin(), pairs.end(), [](const Pair& first, const Pair& second)
 	{
-		double pct =
-			total_ops ? 100.0 * static_cast<double>(pairs[i].n) / static_cast<double>(total_ops) : 0.0;
-		std::fprintf(stderr, " %-14s -> %-14s %12llu %5.1f%%\n",
-		             profile_opcode_name(pairs[i].prev).data(), profile_opcode_name(pairs[i].curr).data(),
-		             static_cast<unsigned long long>(pairs[i].n), pct);
+		return first.count > second.count;
+	});
+	std::fprintf(stderr, "\ntop dispatched pairs by count (prev -> curr):\n");
+	for (size_t index = 0; index < shown; ++index)
+	{
+		double percent{total_ops ? 100.0 * pairs[index].count / total_ops : 0.0};
+		std::fprintf(stderr, " %-14s -> %-14s %12" PRIu64 " %5.1f%%\n",
+		             opcode_name(pairs[index].prev), opcode_name(pairs[index].curr),
+		             pairs[index].count, percent);
 	}
 }
 
+void profile_print(const std::vector<std::string>& files)
+{
+	uint64_t total_ops{0};
+	for (int index = 0; index < 256; ++index)
+	{
+		total_ops += g_profile.op_counts[index];
+	}
+
+	uint64_t elapsed_ticks{profile_ticks() - g_profile.start_ticks};
+	uint64_t elapsed_ns{profile_wall_ns() - g_profile.start_ns};
+	double ns_per_tick{elapsed_ticks ? static_cast<double>(elapsed_ns) / elapsed_ticks : 0.0};
+	double tick_ms{ns_per_tick / 1e6};
+
+	std::fprintf(stderr, "\n--- JET_PROFILE ---\n");
+	std::fprintf(stderr, "opcodes dispatched: %" PRIu64 "\n", total_ops);
+	std::fprintf(stderr, " lambda calls: %" PRIu64 "\n", g_profile.lambda_calls);
+	std::fprintf(stderr, " primitive calls: %" PRIu64 "\n", g_profile.prim_calls);
+	std::fprintf(stderr, " gc collections: %" PRIu64 "\n", g_profile.gc_collections);
+	std::fprintf(stderr, " wall time: %.3f ms (counter %.2f MHz)\n", elapsed_ns / 1e6,
+	             ns_per_tick > 0.0 ? 1000.0 / ns_per_tick : 0.0);
+	std::fprintf(stderr, "\nopcode histogram (sorted by count):\n");
+
+	int order[256];
+	for (int index = 0; index < 256; ++index)
+	{
+		order[index] = index;
+	}
+	std::sort(order, order + 256, [](int first, int second)
+	{
+		return g_profile.op_counts[first] > g_profile.op_counts[second];
+	});
+
+	for (int index = 0; index < 256; ++index)
+	{
+		uint64_t count{g_profile.op_counts[order[index]]};
+		if (count == 0)
+		{
+			break;
+		}
+		double percent{total_ops ? 100.0 * count / total_ops : 0.0};
+		std::fprintf(stderr, " %-14s %12" PRIu64 " %5.1f%%\n", opcode_name(order[index]), count, percent);
+	}
+
+	uint64_t total_ticks{g_profile.gc_ticks + g_profile.host_ticks};
+	for (int index = 0; index < 256; ++index)
+	{
+		total_ticks += g_profile.op_ticks[index];
+	}
+	if (total_ticks > 0)
+	{
+		std::sort(order, order + 256, [](int first, int second)
+		{
+			return g_profile.op_ticks[first] > g_profile.op_ticks[second];
+		});
+		std::fprintf(stderr, "\nopcode time histogram (sorted by time; gc excluded from op rows):\n");
+		std::fprintf(stderr, " %-14s %12s %6s %10s\n", "opcode", "ms", "time%", "ns/op");
+		for (int index = 0; index < 256; ++index)
+		{
+			uint64_t ticks{g_profile.op_ticks[order[index]]};
+			if (ticks == 0)
+			{
+				break;
+			}
+			uint64_t count{g_profile.op_counts[order[index]]};
+			double percent{100.0 * ticks / total_ticks};
+			double average{count ? static_cast<double>(ticks) / count : 0.0};
+			std::fprintf(stderr, " %-14s %12.3f %5.1f%% %10.2f\n", opcode_name(order[index]),
+			             ticks * tick_ms, percent, average * ns_per_tick);
+		}
+		double gc_pct{100.0 * g_profile.gc_ticks / total_ticks};
+		std::fprintf(stderr, " %-14s %12.3f %5.1f%%\n", "(gc)", g_profile.gc_ticks * tick_ms, gc_pct);
+		double host_pct{100.0 * g_profile.host_ticks / total_ticks};
+		std::fprintf(stderr, " %-14s %12.3f %5.1f%%\n", "(host)", g_profile.host_ticks * tick_ms, host_pct);
+	}
+
+	if (g_profile.gc_collections > 0)
+	{
+		print_gc(tick_ms, elapsed_ns);
+	}
+
+	uint64_t total_ic_misses{0};
+	for (int index = 0; index < 256; ++index)
+	{
+		total_ic_misses += g_profile.ic_misses[index];
+	}
+	if (total_ic_misses > 0)
+	{
+		std::sort(order, order + 256, [](int first, int second)
+		{
+			return g_profile.ic_misses[first] > g_profile.ic_misses[second];
+		});
+
+		std::fprintf(stderr, "\nIC misses (sorted by miss count):\n");
+		std::fprintf(stderr, " %-14s %12s %12s %7s\n", "opcode", "total", "misses", "miss%");
+		for (int index = 0; index < 256; ++index)
+		{
+			int op{order[index]};
+			uint64_t misses{g_profile.ic_misses[op]};
+			if (misses == 0)
+			{
+				break;
+			}
+			uint64_t total{g_profile.op_counts[op]};
+			double miss_pct{total ? 100.0 * misses / total : 0.0};
+			std::fprintf(stderr, " %-14s %12" PRIu64 " %12" PRIu64 " %6.2f%%\n", opcode_name(op),
+			             total, misses, miss_pct);
+		}
+
+		print_sites(files);
+	}
+
+	print_fields(tick_ms, total_ticks);
+
+	print_pairs(ns_per_tick, total_ops, total_ticks);
+}
 #endif
 
 const char* opcode_name(uint8_t op)

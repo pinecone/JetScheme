@@ -689,6 +689,7 @@ struct CodeImage
 // Debug source maps: lambda source maps in constant-pool order, toplevel source map last.
 Code* parse_debug_section(VmState* s, Code* p, Code* end, std::vector<std::string>& files,
                           std::vector<LambdaDebug>& source_maps);
+const Code* frame_code_start(const VmState& s, const Frame& f, const Code* instruction);
 LoadedProgram load_program(VmState& s, Code* bytecode, size_t n_bytes);
 
 inline Atom Lambda::alloc(VmState& s, Code* code, Arity arity, uint16_t n_locals, uint16_t n_captures)

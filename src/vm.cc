@@ -397,18 +397,23 @@ const LambdaDebug::Line* LambdaDebug::find_line(size_t off, size_t code_size_lim
 	return it == lines.begin() ? nullptr : &*--it;
 }
 
-JET_COLD static void print_stack_frame(VmState& s, Frame& f)
+const Code* frame_code_start(const VmState& s, const Frame& f, const Code* instruction)
 {
-	const Code* key = nullptr;
 	if (f.closure != nullptr)
 	{
-		key = f.closure->code;
+		return f.closure->code;
 	}
-	else if (s.toplevel_code != nullptr && f.code >= s.toplevel_code
-	         && f.code < s.toplevel_code + s.toplevel_code_size)
+	if (s.toplevel_code != nullptr && instruction >= s.toplevel_code
+	    && instruction < s.toplevel_code + s.toplevel_code_size)
 	{
-		key = s.toplevel_code;
+		return s.toplevel_code;
 	}
+	return nullptr;
+}
+
+JET_COLD static void print_stack_frame(VmState& s, Frame& f)
+{
+	const Code* key = frame_code_start(s, f, f.code);
 	if (key == nullptr)
 	{
 		return;
@@ -465,7 +470,7 @@ JET_COLD void print_stack_trace(VmState* vm)
 			print_stack_frame(*vm, frames[i]);
 		}
 	}
-	profile_print();
+	profile_print(vm->debug.files);
 }
 
 Code* parse_debug_section(VmState* s, Code* p, Code* end, std::vector<std::string>& files,
@@ -1005,9 +1010,10 @@ JET_PRESERVE_NONE static void op_iter_impl(VM_OP_PARAMS)
 	}
 	if (unbox<Struct>(value)->type->kind() == StructKind::Coro)
 	{
-		JET_PROFILE_IC_MISS(outputs == 1 ? Opcode::iter_next1 : Opcode::iter_next2);
 		// The coroutine `StructType` is held by the permanent `%coroutine` `Env` binding.
-		op->ic.dispatch_key = std::bit_cast<uint64_t>(unbox<Struct>(value)->type);
+		uint64_t type_key = std::bit_cast<uint64_t>(unbox<Struct>(value)->type);
+		JET_PROFILE_MISS(s, *frame, pc - OPCODE_SIZE, op->ic.dispatch_key, type_key);
+		op->ic.dispatch_key = type_key;
 		VmOp coro_handler = op_iter_next_coro<Op, outputs>;
 		std::memcpy(pc - OPCODE_SIZE, &coro_handler, sizeof(coro_handler));
 		JET_MUSTTAIL return op_iter_next_coro<Op, outputs>(VM_OP_ARGS);
@@ -1017,7 +1023,7 @@ JET_PRESERVE_NONE static void op_iter_impl(VM_OP_PARAMS)
 		JET_MUSTTAIL return die_iter_expected_cursor(VM_OP_ARGS);
 	}
 	Cursor* cursor = static_cast<Cursor*>(unbox<Struct>(value));
-	JET_PROFILE_IC_MISS(outputs == 1 ? Opcode::iter_next1 : Opcode::iter_next2);
+	JET_PROFILE_MISS(s, *frame, pc - OPCODE_SIZE, op->ic.dispatch_key, std::bit_cast<uint64_t>(cursor->type));
 	VmOp handler = outputs == 1 ? cursor->ops->next1 : cursor->ops->next2;
 	if (!handler) [[unlikely]]
 	{
@@ -1299,41 +1305,6 @@ namespace
 		}
 	} shape_table_init;
 } // namespace
-
-#ifdef JET_PROFILE
-FieldReceiver profile_field_receiver(Atom object)
-{
-	switch (object.type())
-	{
-		case jet::Type::Vector:
-			return FieldReceiver::Vector;
-		case jet::Type::String:
-			return FieldReceiver::String;
-		case jet::Type::ByteVector:
-			return FieldReceiver::Bytevector;
-		case jet::Type::Struct:
-			switch (unbox<Struct>(object)->type->kind())
-			{
-				case StructKind::Scheme:
-					return FieldReceiver::SchemeStruct;
-				case StructKind::Tuple:
-					return FieldReceiver::Tuple;
-				case StructKind::HashSet:
-					return FieldReceiver::HashSet;
-				case StructKind::HashMap:
-					return FieldReceiver::HashMap;
-				case StructKind::Cursor:
-					return FieldReceiver::Cursor;
-				case StructKind::Escape:
-				case StructKind::Coro:
-				case StructKind::Yield:
-					return FieldReceiver::Other;
-			}
-		default:
-			return FieldReceiver::Other;
-	}
-}
-#endif
 
 static constexpr auto& op_ldf = op_field_impl<FieldAccess::Load, FieldKeySource::Register>;
 static constexpr auto& op_stf = op_field_impl<FieldAccess::Store, FieldKeySource::Register>;
@@ -1712,7 +1683,7 @@ JET_PRESERVE_NONE static void op_retv(VM_OP_PARAMS)
 
 void vm_exit(VmState& vm, int status)
 {
-	profile_print();
+	profile_print(vm.debug.files);
 	vm.~VmState();
 	std::exit(status);
 }
@@ -1969,10 +1940,9 @@ JET_PRESERVE_NONE static void op_call_slot_impl(VM_OP_PARAMS);
 template <int N, CallTail tail>
 JET_NOINLINE JET_PRESERVE_NONE static void op_call_slot_slow(VM_OP_PARAMS)
 {
-	JET_PROFILE_IC_MISS(static_cast<uint8_t>(tail == CallTail::Yes ? Opcode::call_upval_slot_tail_0
-	                                         : Opcode::call_upval_slot_0) + N);
 	OP_call_slot* op = reinterpret_cast<OP_call_slot*>(pc);
 	Slot* sl = unbox<Slot>(frame->closure->captures[op->upvalue_idx]);
+	JET_PROFILE_MISS(s, *frame, pc - OPCODE_SIZE, op->ic_slot, std::bit_cast<uint64_t>(sl));
 	callee = sl->value;
 	frame->code = pc + sizeof(*op);
 	VmOp stub = resolve_callee(s, callee, op->nargs, tail);
@@ -2023,26 +1993,12 @@ enum class CalleeSource
 	Upval
 };
 
-template <CallTail tail, CalleeSource source>
-static constexpr Opcode call_atom_opcode()
-{
-	if constexpr (source == CalleeSource::Local)
-	{
-		return tail == CallTail::Yes ? Opcode::call_local_tail_0 : Opcode::call_local_0;
-	}
-	else
-	{
-		return tail == CallTail::Yes ? Opcode::call_upval_tail_0 : Opcode::call_upval_0;
-	}
-}
-
 template <int N, CallTail tail, CalleeSource source, CalleeKind kind = CalleeKind::Stub>
 JET_PRESERVE_NONE static void op_call_atom_impl(VM_OP_PARAMS);
 
 template <int N, CallTail tail, CalleeSource source>
 JET_NOINLINE JET_PRESERVE_NONE static void op_call_atom_slow(VM_OP_PARAMS)
 {
-	JET_PROFILE_IC_MISS(static_cast<uint8_t>(call_atom_opcode<tail, source>()) + N);
 	OP_call_atom* op = reinterpret_cast<OP_call_atom*>(pc);
 	if constexpr (source == CalleeSource::Local)
 	{
@@ -2052,6 +2008,7 @@ JET_NOINLINE JET_PRESERVE_NONE static void op_call_atom_slow(VM_OP_PARAMS)
 	{
 		callee = frame->closure->captures[op->idx];
 	}
+	JET_PROFILE_MISS(s, *frame, pc - OPCODE_SIZE, op->ic_atom, callee.bits);
 	frame->code = pc + sizeof(*op);
 	VmOp stub = resolve_callee(s, callee, op->nargs, tail);
 	op->ic_atom = callee.bits;
@@ -2115,7 +2072,7 @@ template <int N>
 JET_NOINLINE JET_PRESERVE_NONE static void op_call_self_impl(VM_OP_PARAMS)
 {
 	JET_GC_CHECK();
-	JET_PROFILE_IC_MISS(static_cast<uint8_t>(Opcode::call_self_0) + N);
+	JET_PROFILE_MISS(s, *frame, pc - OPCODE_SIZE, 0, 0);
 	OP_call_self* op = reinterpret_cast<OP_call_self*>(pc);
 	frame->code = pc + sizeof(*op);
 	check_arity(s, frame->closure->arity, op->nargs);
