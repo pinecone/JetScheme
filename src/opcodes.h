@@ -88,10 +88,30 @@ struct Struct;
 	X(retu,       "retu")                                                                          \
 	X(return_to_host,      "rethost") \
 	X(trunc,               "trunc") \
+	X(sqrt,                "sqrt") \
+	X(floor,               "floor") \
+	X(round,               "round") \
+	X(ceil,                "ceil") \
 	X(min,                 "min") \
 	X(max,                 "max") \
 	X(mink,                "mink") \
-	X(maxk,                "maxk")
+	X(maxk,                "maxk") \
+	X(fadd,                "fadd") \
+	X(fsub,                "fsub") \
+	X(fmul,                "fmul") \
+	X(fdiv,                "fdiv") \
+	X(fmin,                "fmin") \
+	X(fmax,                "fmax") \
+	X(ftrunc,              "ftrunc") \
+	X(fsqrt,               "fsqrt") \
+	X(ffloor,              "ffloor") \
+	X(fround,              "fround") \
+	X(fceil,               "fceil") \
+	X(fnumeq,              "fnumeq") \
+	X(flt,                 "flt") \
+	X(fle,                 "fle") \
+	X(fgt,                 "fgt") \
+	X(fge,                 "fge")
 
 enum class Opcode : uint8_t
 {
@@ -118,6 +138,86 @@ struct std::formatter<Opcode> : std::formatter<std::string_view>
 #define X(name, disp, ...) +1
 constexpr int OPCODE_COUNT = 0 JET_OPCODES(X);
 #undef X
+static_assert(OPCODE_COUNT <= 256);
+
+enum class UnboxedFloatMode : uint8_t
+{
+	Start,
+	StartConstant,
+	Left,
+	Right,
+	Constant,
+	StoreLeft,
+	StoreRight,
+	StoreConstant,
+};
+
+enum class UnboxedFloatKind : uint8_t
+{
+	None,
+	Binary,
+	Unary,
+	Comparison,
+};
+
+constexpr UnboxedFloatKind unboxed_float_kind(Opcode opcode)
+{
+	switch (opcode)
+	{
+		case Opcode::fadd:
+		case Opcode::fsub:
+		case Opcode::fmul:
+		case Opcode::fdiv:
+		case Opcode::fmin:
+		case Opcode::fmax:
+			return UnboxedFloatKind::Binary;
+		case Opcode::ftrunc:
+		case Opcode::fsqrt:
+		case Opcode::ffloor:
+		case Opcode::fround:
+		case Opcode::fceil:
+			return UnboxedFloatKind::Unary;
+		case Opcode::fnumeq:
+		case Opcode::flt:
+		case Opcode::fle:
+		case Opcode::fgt:
+		case Opcode::fge:
+			return UnboxedFloatKind::Comparison;
+		default:
+			return UnboxedFloatKind::None;
+	}
+}
+
+constexpr bool unboxed_float_unary(Opcode opcode)
+{
+	return unboxed_float_kind(opcode) == UnboxedFloatKind::Unary;
+}
+
+constexpr bool unboxed_float_valid(Opcode opcode, UnboxedFloatMode mode)
+{
+	UnboxedFloatKind kind{unboxed_float_kind(opcode)};
+	if (kind == UnboxedFloatKind::None)
+	{
+		return false;
+	}
+
+	switch (mode)
+	{
+		case UnboxedFloatMode::Start:
+		case UnboxedFloatMode::Left:
+			return kind != UnboxedFloatKind::Comparison;
+		case UnboxedFloatMode::StartConstant:
+		case UnboxedFloatMode::Right:
+		case UnboxedFloatMode::Constant:
+			return kind == UnboxedFloatKind::Binary;
+		case UnboxedFloatMode::StoreLeft:
+			return true;
+		case UnboxedFloatMode::StoreRight:
+		case UnboxedFloatMode::StoreConstant:
+			return kind != UnboxedFloatKind::Unary;
+	}
+	return false;
+}
 
 #pragma pack(push, 1)
 
@@ -152,7 +252,7 @@ struct OP_mov
 	uint16_t dst;
 	uint16_t src;
 };
-using OP_trunc = OP_mov;
+using OP_unary = OP_mov;
 struct OP_mov2
 {
 	OP_mov first;
@@ -190,6 +290,14 @@ struct OP_binop_rr
 	uint16_t b;
 };
 using OP_binop_rk = OP_binop_rr;
+
+struct OP_unboxed_float
+{
+	uint16_t dst;
+	uint16_t a;
+	uint16_t b;
+	UnboxedFloatMode mode;
+};
 struct OP_if_false
 {
 	uint16_t src;
@@ -349,6 +457,10 @@ inline size_t opcode_step(uint8_t op, const uint8_t* operands)
 			return OPCODE_SIZE + sizeof(OP_skip);
 		case Opcode::mov:
 		case Opcode::trunc:
+		case Opcode::sqrt:
+		case Opcode::floor:
+		case Opcode::round:
+		case Opcode::ceil:
 			return OPCODE_SIZE + sizeof(OP_mov);
 		case Opcode::mov2:
 			return OPCODE_SIZE + sizeof(OP_mov2);
@@ -390,6 +502,23 @@ inline size_t opcode_step(uint8_t op, const uint8_t* operands)
 		case Opcode::eqk:
 		case Opcode::ltk:
 			return OPCODE_SIZE + sizeof(OP_binop_rr);
+		case Opcode::fadd:
+		case Opcode::fsub:
+		case Opcode::fmul:
+		case Opcode::fdiv:
+		case Opcode::fmin:
+		case Opcode::fmax:
+		case Opcode::ftrunc:
+		case Opcode::fsqrt:
+		case Opcode::ffloor:
+		case Opcode::fround:
+		case Opcode::fceil:
+		case Opcode::fnumeq:
+		case Opcode::flt:
+		case Opcode::fle:
+		case Opcode::fgt:
+		case Opcode::fge:
+			return OPCODE_SIZE + sizeof(OP_unboxed_float);
 		case Opcode::if_false:
 			return OPCODE_SIZE + sizeof(OP_if_false);
 		case Opcode::if_numeq:

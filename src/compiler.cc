@@ -3689,6 +3689,31 @@ namespace
 		return static_cast<T>(v);
 	}
 
+	std::optional<Opcode> unary_arith_opcode(std::string_view name)
+	{
+		if (name == "truncate")
+		{
+			return Opcode::trunc;
+		}
+		if (name == "sqrt")
+		{
+			return Opcode::sqrt;
+		}
+		if (name == "floor")
+		{
+			return Opcode::floor;
+		}
+		if (name == "round")
+		{
+			return Opcode::round;
+		}
+		if (name == "ceiling")
+		{
+			return Opcode::ceil;
+		}
+		return std::nullopt;
+	}
+
 	std::optional<Opcode> binary_arith_opcode(std::string_view name)
 	{
 		if (name == "-")
@@ -3874,9 +3899,13 @@ Compiler::PrimLowering Compiler::prim_call_lowering(Expr* call)
 		return {};
 	}
 	std::string_view name = proc->var_ref.name;
-	if (name == "truncate" && call->call.args.size() == 1 && prim_binding_lowerable(binding(proc), name))
+	if (call->call.args.size() == 1)
 	{
-		return {PrimLowering::Kind::Unary, Opcode::trunc};
+		std::optional<Opcode> unary{unary_arith_opcode(name)};
+		if (unary && prim_binding_lowerable(binding(proc), name))
+		{
+			return {PrimLowering::Kind::Unary, *unary};
+		}
 	}
 	if (call->call.args.size() != 2)
 	{
@@ -5078,10 +5107,10 @@ namespace
 	struct LirInst
 	{
 		Opcode op;   // base opcode only: no _1.._7 replicas; label is IR-only
+		UnboxedFloatMode unboxed_float_mode{UnboxedFloatMode::Start};
 		union
 		{
 			struct { uint16_t dst; uint16_t src; } mov;              // mov
-			OP_trunc unary;
 			struct { uint16_t dst0; uint16_t src0; uint16_t dst1; uint16_t src1; } mov2;
 			struct { uint16_t dst; uint16_t idx; } load;             // ldk ldu ldus ldd
 			struct { uint16_t idx; uint16_t src; } store;            // stu std
@@ -5100,6 +5129,12 @@ namespace
 		// Stamped from the SourceLoc passed to LirEmitter::emit; line 0 means
 		// no position.
 		SourceLoc loc;
+	};
+
+	struct UnboxedFloatChain
+	{
+		std::optional<uint64_t> binding;
+		Expr* expr{nullptr};
 	};
 
 	struct LirLambda
@@ -5127,6 +5162,7 @@ namespace
 		// register (call results adopted as homes).
 		std::unordered_map<uint16_t, uint16_t> phys_home;
 		std::unordered_set<uint16_t> temp_regs;
+		UnboxedFloatChain chain;
 	};
 
 	struct LirProgram
@@ -5174,7 +5210,149 @@ namespace
 		void emit(SourceLoc loc, LirInst i)
 		{
 			i.loc = loc;
-			current_lambda().code.push_back(i);
+			LirLambda& lambda{current_lambda()};
+			lambda.chain = {};
+			lambda.code.push_back(i);
+		}
+
+		void unboxed_float_rewrite(SourceLoc loc, LirInst& instruction, Opcode opcode, UnboxedFloatMode mode)
+		{
+			JETC_DIE_UNLESS(db, loc, unboxed_float_valid(opcode, mode),
+			               "codegen: invalid unboxed float instruction");
+			instruction.op = opcode;
+			instruction.unboxed_float_mode = mode;
+		}
+
+		static std::optional<Opcode> unboxed_float_opcode(Opcode opcode)
+		{
+			switch (opcode)
+			{
+				case Opcode::add:
+				case Opcode::addk:
+				case Opcode::fadd:
+					return Opcode::fadd;
+				case Opcode::sub:
+				case Opcode::subk:
+				case Opcode::fsub:
+					return Opcode::fsub;
+				case Opcode::mul:
+				case Opcode::mulk:
+				case Opcode::fmul:
+					return Opcode::fmul;
+				case Opcode::div:
+				case Opcode::divk:
+				case Opcode::fdiv:
+					return Opcode::fdiv;
+				case Opcode::min:
+				case Opcode::mink:
+				case Opcode::fmin:
+					return Opcode::fmin;
+				case Opcode::max:
+				case Opcode::maxk:
+				case Opcode::fmax:
+					return Opcode::fmax;
+				case Opcode::trunc:
+				case Opcode::ftrunc:
+					return Opcode::ftrunc;
+				case Opcode::sqrt:
+				case Opcode::fsqrt:
+					return Opcode::fsqrt;
+				case Opcode::floor:
+				case Opcode::ffloor:
+					return Opcode::ffloor;
+				case Opcode::round:
+				case Opcode::fround:
+					return Opcode::fround;
+				case Opcode::ceil:
+				case Opcode::fceil:
+					return Opcode::fceil;
+				case Opcode::numeq:
+				case Opcode::numeqk:
+					return Opcode::fnumeq;
+				case Opcode::lt:
+				case Opcode::ltk:
+					return Opcode::flt;
+				case Opcode::le:
+					return Opcode::fle;
+				case Opcode::gt:
+					return Opcode::fgt;
+				case Opcode::ge:
+					return Opcode::fge;
+				default:
+					return std::nullopt;
+			}
+		}
+
+		void unboxed_float_mark_binding(Expr* owner, uint16_t breadth, uint16_t home)
+		{
+			if (db.binding_use_count(owner, breadth) != 1 || owner->lambda.reassigned_after_init_locals[breadth])
+			{
+				return;
+			}
+			std::vector<LirInst>& code{current_lambda().code};
+			if (code.empty())
+			{
+				return;
+			}
+			std::optional<Opcode> opcode{unboxed_float_opcode(code.back().op)};
+			if (opcode && unboxed_float_kind(*opcode) != UnboxedFloatKind::Comparison
+			    && code.back().u.arith.dst == home)
+			{
+				current_lambda().chain.binding = binding_key({.lambda = owner, .breadth = breadth});
+			}
+		}
+
+		void emit_arithmetic(Expr* expression, LirInst instruction)
+		{
+			LirLambda& lambda{current_lambda()};
+			std::optional<Opcode> opcode{unboxed_float_opcode(instruction.op)};
+			if (opcode && !lambda.code.empty() && (lambda.chain.binding || lambda.chain.expr))
+			{
+				LirInst& previous{lambda.code.back()};
+				auto&& matches = [&](size_t operand)
+				{
+					Expr* argument{expression->call.args[operand]};
+					return argument == lambda.chain.expr
+					       || (lambda.chain.binding && argument->kind == ExprKind::VarRef
+					           && binding_key(db.binding(argument)) == *lambda.chain.binding);
+				};
+				bool constant{takes_literal_key(instruction.op)};
+				bool left{matches(0) && instruction.u.arith.a == previous.u.arith.dst};
+				bool right{expression->call.args.size() == 2 && !constant && matches(1)
+				           && instruction.u.arith.b == previous.u.arith.dst};
+				if (left || right)
+				{
+					UnboxedFloatMode mode;
+					switch (previous.unboxed_float_mode)
+					{
+						case UnboxedFloatMode::Start:
+							mode = takes_literal_key(previous.op)
+							       ? UnboxedFloatMode::StartConstant : UnboxedFloatMode::Start;
+							break;
+						case UnboxedFloatMode::StoreLeft:
+							mode = UnboxedFloatMode::Left;
+							break;
+						case UnboxedFloatMode::StoreRight:
+							mode = UnboxedFloatMode::Right;
+							break;
+						case UnboxedFloatMode::StoreConstant:
+							mode = UnboxedFloatMode::Constant;
+							break;
+						default:
+							JETC_DIE(db, expression->loc, "codegen: unfinished unboxed float chain");
+					}
+					unboxed_float_rewrite(previous.loc, previous, *unboxed_float_opcode(previous.op), mode);
+					unboxed_float_rewrite(expression->loc, instruction, *opcode,
+					                      constant ? UnboxedFloatMode::StoreConstant
+					                      : left ? UnboxedFloatMode::StoreLeft
+					                             : UnboxedFloatMode::StoreRight);
+				}
+			}
+			emit(expression->loc, instruction);
+			if (opcode && unboxed_float_kind(*opcode) != UnboxedFloatKind::Comparison)
+			{
+				lambda.chain.expr = expression;
+			}
 		}
 
 		uint16_t alloc_reg(SourceLoc loc)
@@ -5769,6 +5947,7 @@ namespace
 				uint16_t home = alloc_reg(expr->loc);
 				current_lambda().phys_home[breadth] = home;
 				emit_to_reg(val, home);
+				unboxed_float_mark_binding(expr->let.owner, breadth, home);
 			}
 			for (uint32_t i = 0; i < n; ++i)
 			{
@@ -6222,11 +6401,15 @@ namespace
 					switch (sel.op)
 					{
 						case Opcode::trunc:
+						case Opcode::sqrt:
+						case Opcode::floor:
+						case Opcode::round:
+						case Opcode::ceil:
 						{
 							LirInst instruction{inst(sel.op)};
-							instruction.u.unary = {dst, emit_to_any_reg(expr->call.args[0])};
-							emit(expr->loc, instruction);
-							release_if_temp(instruction.u.unary.src);
+							instruction.u.arith = {dst, emit_to_any_reg(expr->call.args[0]), 0};
+							emit_arithmetic(expr, instruction);
+							release_if_temp(instruction.u.arith.a);
 							break;
 						}
 
@@ -6259,7 +6442,7 @@ namespace
 							i.u.arith.b = k
 							              ? intern_literal_key(expr->call.args[1])
 							              : emit_to_any_reg(expr->call.args[1]);
-							emit(expr->loc, i);
+							emit_arithmetic(expr, i);
 							release_if_temp(i.u.arith.a);
 							if (!k)
 							{
@@ -6591,9 +6774,16 @@ namespace
 					break;
 
 				case Opcode::trunc:
+				case Opcode::sqrt:
+				case Opcode::floor:
+				case Opcode::round:
+				case Opcode::ceil:
+				{
 					emit_opcode(bc, i.op);
-					emit_operand(bc, i.u.unary);
+					OP_unary operands{i.u.arith.dst, i.u.arith.a};
+					emit_operand(bc, operands);
 					break;
+				}
 
 				case Opcode::mov:
 				{
@@ -6693,6 +6883,31 @@ namespace
 					op.a = i.u.arith.a;
 					op.b = i.u.arith.b;
 					emit_operand(bc, op);
+					break;
+				}
+
+				case Opcode::fadd:
+				case Opcode::fsub:
+				case Opcode::fmul:
+				case Opcode::fdiv:
+				case Opcode::fmin:
+				case Opcode::fmax:
+				case Opcode::ftrunc:
+				case Opcode::fsqrt:
+				case Opcode::ffloor:
+				case Opcode::fround:
+				case Opcode::fceil:
+				case Opcode::fnumeq:
+				case Opcode::flt:
+				case Opcode::fle:
+				case Opcode::fgt:
+				case Opcode::fge:
+				{
+					emit_opcode(bc, i.op);
+					JETC_DIE_UNLESS(db, i.loc, unboxed_float_valid(i.op, i.unboxed_float_mode),
+					               "codegen: invalid unboxed float instruction");
+					OP_unboxed_float operands{i.u.arith.dst, i.u.arith.a, i.u.arith.b, i.unboxed_float_mode};
+					emit_operand(bc, operands);
 					break;
 				}
 

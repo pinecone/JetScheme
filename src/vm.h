@@ -574,7 +574,7 @@ struct VmState
 
 #define VM_OP_PARAMS                                                                                         \
 	VmState& s, Frame* frame, Code* pc, Atom* stack_top, Atom callee, Atom* args, Atom* stack_base,           \
-	Atom* frame_regs
+	Atom* frame_regs, double unboxed_float
 using VmOp = void (*)(VM_OP_PARAMS) JET_PRESERVE_NONE;
 static_assert(sizeof(VmOp) == VM_OP_SLOT_SIZE);
 
@@ -585,7 +585,7 @@ JET_ALWAYS_INLINE inline VmOp decode_op(const Code* code)
 	return op;
 }
 
-#define VM_OP_ARGS s, frame, pc, stack_top, callee, args, stack_base, frame_regs
+#define VM_OP_ARGS s, frame, pc, stack_top, callee, args, stack_base, frame_regs, unboxed_float
 
 void collect(VmState& s);
 

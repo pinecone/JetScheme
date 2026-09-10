@@ -46,6 +46,7 @@ static constexpr GcDestructor gc_destructor_table[jet_tag::TAG_MAX]{
 static_assert(gc_destructor_table[jet_tag::pair] == gc_destroy<Cons>);
 static_assert(gc_destructor_table[jet_tag::struct_] == nullptr);
 static VmOp dispatch_table[256];
+static VmOp unboxed_float_handler(Opcode opcode, UnboxedFloatMode mode);
 
 uint16_t Gc::register_struct_destructor(VmState& s, StructDestructor destructor)
 {
@@ -531,6 +532,11 @@ LoadedProgram load_program(VmState& s, Code* bytecode, size_t n_bytes)
 			uint8_t op = code[VM_OP_SLOT_SIZE];
 			size_t step = opcode_step(op, code + OPCODE_SIZE);
 			VmOp handler = dispatch_table[op];
+			if (unboxed_float_kind(static_cast<Opcode>(op)) != UnboxedFloatKind::None)
+			{
+				OP_unboxed_float* operands{reinterpret_cast<OP_unboxed_float*>(code + OPCODE_SIZE)};
+				handler = unboxed_float_handler(static_cast<Opcode>(op), operands->mode);
+			}
 			std::memcpy(code, &handler, sizeof(handler));
 			code += step;
 		}
@@ -1510,13 +1516,29 @@ JET_PRESERVE_NONE static void op_mov(VM_OP_PARAMS)
 
 JET_PRESERVE_NONE static void op_trunc(VM_OP_PARAMS)
 {
-	OP_trunc* operands{reinterpret_cast<OP_trunc*>(pc)};
+	OP_unary* operands{reinterpret_cast<OP_unary*>(pc)};
 	pc += sizeof(*operands);
 	Atom value{frame_regs[operands->src]};
 	type_check(s, value, jet::Type::Number);
 	frame_regs[operands->dst] = truncate_number(value);
 	DISPATCH();
 }
+
+template <double (*operation)(double), auto normalize = Number::from_ieee>
+JET_PRESERVE_NONE static void op_unary(VM_OP_PARAMS)
+{
+	OP_unary* operands{reinterpret_cast<OP_unary*>(pc)};
+	pc += sizeof(*operands);
+	Atom value{frame_regs[operands->src]};
+	type_check(s, value, jet::Type::Number);
+	frame_regs[operands->dst] = box(normalize(operation(unbox<Number>(value))));
+	DISPATCH();
+}
+
+static constexpr auto& op_sqrt = op_unary<std::sqrt, Number::from_sum>;
+static constexpr auto& op_floor = op_unary<std::floor>;
+static constexpr auto& op_round = op_unary<std::round>;
+static constexpr auto& op_ceil = op_unary<std::ceil>;
 
 JET_PRESERVE_NONE static void op_mov2(VM_OP_PARAMS)
 {
@@ -1630,6 +1652,310 @@ JET_PRESERVE_NONE static void op_binop_rk_impl(VM_OP_PARAMS)
 	frame_regs[op->dst] = Op(s, frame_regs[op->a], s.constants[op->b]);
 	DISPATCH();
 }
+
+static constexpr const char* unboxed_float_name(Opcode operation)
+{
+	switch (operation)
+	{
+		case Opcode::fadd: return "+";
+		case Opcode::fsub: return "-";
+		case Opcode::fmul: return "*";
+		case Opcode::fdiv: return "/";
+		case Opcode::fmin: return "min";
+		case Opcode::fmax: return "max";
+		case Opcode::fnumeq: return "=";
+		case Opcode::flt: return "<";
+		case Opcode::fle: return "<=";
+		case Opcode::fgt: return ">";
+		case Opcode::fge: return ">=";
+		default: JET_DIE(nullptr, "invalid unboxed float opcode {}", operation);
+	}
+}
+
+JET_ALWAYS_INLINE static double load_float_volatile(const volatile uint64_t* bits)
+{
+	uint64_t value{*bits};
+	return std::bit_cast<double>(value);
+}
+
+JET_ALWAYS_INLINE static double canonicalize_nan(double value)
+{
+	if (value != value) [[unlikely]]
+	{
+		static constexpr uint64_t nan{CANONICAL_NAN};
+		return load_float_volatile(&nan);
+	}
+	return Number::trusted(value).value;
+}
+
+template <Opcode operation>
+JET_ALWAYS_INLINE static void unboxed_float_check(VmState& state, const Atom& value)
+{
+	if constexpr (unboxed_float_unary(operation))
+	{
+		type_check(state, value, jet::Type::Number);
+	}
+	else
+	{
+		JET_DIE_UNLESS(&state, is_type<jet::Type::Number>(value), "{}: expected numbers",
+		               unboxed_float_name(operation));
+	}
+}
+
+template <Opcode operation, UnboxedFloatMode mode>
+JET_PRESERVE_NONE static void op_unboxed_float(VM_OP_PARAMS)
+{
+	static_assert(unboxed_float_valid(operation, mode));
+	struct AddressingMode
+	{
+		bool left_unboxed{};
+		bool right_unboxed{};
+		bool constant{};
+		bool store{};
+	};
+
+	constexpr AddressingMode addressing{[]
+	{
+		switch (mode)
+		{
+			case UnboxedFloatMode::Start:
+				return AddressingMode{};
+			case UnboxedFloatMode::StartConstant:
+				return AddressingMode{.constant = true};
+			case UnboxedFloatMode::Left:
+				return AddressingMode{.left_unboxed = true};
+			case UnboxedFloatMode::Right:
+				return AddressingMode{.right_unboxed = true};
+			case UnboxedFloatMode::Constant:
+				return AddressingMode{.left_unboxed = true, .constant = true};
+			case UnboxedFloatMode::StoreLeft:
+				return AddressingMode{.left_unboxed = true, .store = true};
+			case UnboxedFloatMode::StoreRight:
+				return AddressingMode{.right_unboxed = true, .store = true};
+			case UnboxedFloatMode::StoreConstant:
+				return AddressingMode{.left_unboxed = true, .constant = true, .store = true};
+			default:
+				JET_DIE(nullptr, "invalid unboxed float mode {}", static_cast<uint8_t>(mode));
+		}
+	}()};
+
+	OP_unboxed_float* operands{reinterpret_cast<OP_unboxed_float*>(pc)};
+	pc += sizeof(*operands);
+	if constexpr (!addressing.left_unboxed)
+	{
+		unboxed_float_check<operation>(s, frame_regs[operands->a]);
+	}
+	if constexpr (!addressing.right_unboxed && !unboxed_float_unary(operation))
+	{
+		unboxed_float_check<operation>(
+			s, addressing.constant ? s.constants[operands->b] : frame_regs[operands->b]);
+	}
+
+	double left{unboxed_float};
+	double right{unboxed_float};
+	if constexpr (!addressing.left_unboxed)
+	{
+		left = load_float_volatile(&frame_regs[operands->a].bits);
+	}
+	if constexpr (!addressing.right_unboxed && !unboxed_float_unary(operation))
+	{
+		const Atom* value{addressing.constant ? &s.constants[operands->b] : &frame_regs[operands->b]};
+		right = load_float_volatile(&value->bits);
+	}
+
+	if constexpr (unboxed_float_kind(operation) == UnboxedFloatKind::Comparison)
+	{
+		bool result;
+		if constexpr (operation == Opcode::fnumeq)
+		{
+			result = std::bit_cast<uint64_t>(left) == std::bit_cast<uint64_t>(right);
+		}
+		else if constexpr (operation == Opcode::flt)
+		{
+			result = left < right;
+		}
+		else if constexpr (operation == Opcode::fle)
+		{
+			result = left <= right;
+		}
+		else if constexpr (operation == Opcode::fgt)
+		{
+			result = left > right;
+		}
+		else
+		{
+			result = left >= right;
+		}
+		frame_regs[operands->dst] = box(result);
+	}
+	else
+	{
+		double result;
+		if constexpr (operation == Opcode::fadd)
+		{
+			result = left + right;
+		}
+		else if constexpr (operation == Opcode::fsub)
+		{
+			result = left - right;
+		}
+		else if constexpr (operation == Opcode::fmul)
+		{
+			result = left * right;
+		}
+		else if constexpr (operation == Opcode::fdiv)
+		{
+			result = left / right;
+		}
+		else if constexpr (operation == Opcode::fmin)
+		{
+			result = right < left ? right : left;
+		}
+		else if constexpr (operation == Opcode::fmax)
+		{
+			result = left < right ? right : left;
+		}
+		else if constexpr (operation == Opcode::ftrunc)
+		{
+			result = std::trunc(left);
+		}
+		else if constexpr (operation == Opcode::fsqrt)
+		{
+			result = std::sqrt(left);
+		}
+		else if constexpr (operation == Opcode::ffloor)
+		{
+			result = std::floor(left);
+		}
+		else if constexpr (operation == Opcode::fround)
+		{
+			result = std::round(left);
+		}
+		else
+		{
+			static_assert(operation == Opcode::fceil);
+			result = std::ceil(left);
+		}
+		if constexpr (operation == Opcode::fmul || operation == Opcode::fdiv
+		              || (unboxed_float_unary(operation) && operation != Opcode::fsqrt))
+		{
+			if (result == 0.0) [[unlikely]]
+			{
+				result = 0.0;
+			}
+		}
+		if constexpr (operation == Opcode::fmin || operation == Opcode::fmax)
+		{
+			unboxed_float = result;
+		}
+		else
+		{
+			unboxed_float = canonicalize_nan(result);
+		}
+
+		if constexpr (addressing.store)
+		{
+			frame_regs[operands->dst] = Atom::from_double(unboxed_float);
+		}
+	}
+	DISPATCH();
+}
+
+template <Opcode operation, UnboxedFloatMode mode>
+static VmOp unboxed_float_handler()
+{
+	if constexpr (unboxed_float_valid(operation, mode))
+	{
+		return op_unboxed_float<operation, mode>;
+	}
+	else
+	{
+		JET_DIE(nullptr, "invalid unboxed float mode {}", static_cast<uint8_t>(mode));
+	}
+}
+
+template <Opcode operation>
+static VmOp unboxed_float_handler(UnboxedFloatMode mode)
+{
+	switch (mode)
+	{
+		case UnboxedFloatMode::Start:
+			return unboxed_float_handler<operation, UnboxedFloatMode::Start>();
+		case UnboxedFloatMode::StartConstant:
+			return unboxed_float_handler<operation, UnboxedFloatMode::StartConstant>();
+		case UnboxedFloatMode::Left:
+			return unboxed_float_handler<operation, UnboxedFloatMode::Left>();
+		case UnboxedFloatMode::Right:
+			return unboxed_float_handler<operation, UnboxedFloatMode::Right>();
+		case UnboxedFloatMode::Constant:
+			return unboxed_float_handler<operation, UnboxedFloatMode::Constant>();
+		case UnboxedFloatMode::StoreLeft:
+			return unboxed_float_handler<operation, UnboxedFloatMode::StoreLeft>();
+		case UnboxedFloatMode::StoreRight:
+			return unboxed_float_handler<operation, UnboxedFloatMode::StoreRight>();
+		case UnboxedFloatMode::StoreConstant:
+			return unboxed_float_handler<operation, UnboxedFloatMode::StoreConstant>();
+	}
+	JET_DIE(nullptr, "invalid unboxed float mode {}", static_cast<uint8_t>(mode));
+}
+
+static VmOp unboxed_float_handler(Opcode opcode, UnboxedFloatMode mode)
+{
+	switch (opcode)
+	{
+		case Opcode::fadd:
+			return unboxed_float_handler<Opcode::fadd>(mode);
+		case Opcode::fsub:
+			return unboxed_float_handler<Opcode::fsub>(mode);
+		case Opcode::fmul:
+			return unboxed_float_handler<Opcode::fmul>(mode);
+		case Opcode::fdiv:
+			return unboxed_float_handler<Opcode::fdiv>(mode);
+		case Opcode::fmin:
+			return unboxed_float_handler<Opcode::fmin>(mode);
+		case Opcode::fmax:
+			return unboxed_float_handler<Opcode::fmax>(mode);
+		case Opcode::ftrunc:
+			return unboxed_float_handler<Opcode::ftrunc>(mode);
+		case Opcode::fsqrt:
+			return unboxed_float_handler<Opcode::fsqrt>(mode);
+		case Opcode::ffloor:
+			return unboxed_float_handler<Opcode::ffloor>(mode);
+		case Opcode::fround:
+			return unboxed_float_handler<Opcode::fround>(mode);
+		case Opcode::fceil:
+			return unboxed_float_handler<Opcode::fceil>(mode);
+		case Opcode::fnumeq:
+			return unboxed_float_handler<Opcode::fnumeq>(mode);
+		case Opcode::flt:
+			return unboxed_float_handler<Opcode::flt>(mode);
+		case Opcode::fle:
+			return unboxed_float_handler<Opcode::fle>(mode);
+		case Opcode::fgt:
+			return unboxed_float_handler<Opcode::fgt>(mode);
+		case Opcode::fge:
+			return unboxed_float_handler<Opcode::fge>(mode);
+		default:
+			JET_DIE(nullptr, "invalid unboxed float opcode {}", opcode);
+	}
+}
+
+static constexpr auto& op_fadd = op_unboxed_float<Opcode::fadd, UnboxedFloatMode::Start>;
+static constexpr auto& op_fsub = op_unboxed_float<Opcode::fsub, UnboxedFloatMode::Start>;
+static constexpr auto& op_fmul = op_unboxed_float<Opcode::fmul, UnboxedFloatMode::Start>;
+static constexpr auto& op_fdiv = op_unboxed_float<Opcode::fdiv, UnboxedFloatMode::Start>;
+static constexpr auto& op_fmin = op_unboxed_float<Opcode::fmin, UnboxedFloatMode::Start>;
+static constexpr auto& op_fmax = op_unboxed_float<Opcode::fmax, UnboxedFloatMode::Start>;
+static constexpr auto& op_ftrunc = op_unboxed_float<Opcode::ftrunc, UnboxedFloatMode::Start>;
+static constexpr auto& op_fsqrt = op_unboxed_float<Opcode::fsqrt, UnboxedFloatMode::Start>;
+static constexpr auto& op_ffloor = op_unboxed_float<Opcode::ffloor, UnboxedFloatMode::Start>;
+static constexpr auto& op_fround = op_unboxed_float<Opcode::fround, UnboxedFloatMode::Start>;
+static constexpr auto& op_fceil = op_unboxed_float<Opcode::fceil, UnboxedFloatMode::Start>;
+static constexpr auto& op_fnumeq = op_unboxed_float<Opcode::fnumeq, UnboxedFloatMode::StoreLeft>;
+static constexpr auto& op_flt = op_unboxed_float<Opcode::flt, UnboxedFloatMode::StoreLeft>;
+static constexpr auto& op_fle = op_unboxed_float<Opcode::fle, UnboxedFloatMode::StoreLeft>;
+static constexpr auto& op_fgt = op_unboxed_float<Opcode::fgt, UnboxedFloatMode::StoreLeft>;
+static constexpr auto& op_fge = op_unboxed_float<Opcode::fge, UnboxedFloatMode::StoreLeft>;
 
 static constexpr auto& op_add  = op_binop_rr_impl<add_atoms>;
 static constexpr auto& op_sub  = op_binop_rr_impl<sub_atoms>;
@@ -2232,7 +2558,7 @@ JET_REPLICATE(X, call_self, "cself")
 	pc += OPCODE_SIZE;
 	JET_PROFILE_OP(pc - OPCODE_SIZE);
 	JET_TRACE_STEP(vm, frame, pc, stack_top);
-	h(vm, frame, pc, stack_top, Atom{}, nullptr, vm.stack_base, vm.stack_base + frame->base);
+	h(vm, frame, pc, stack_top, Atom{}, nullptr, vm.stack_base, vm.stack_base + frame->base, 0.0);
 
 	JET_DIE(&vm, "vm: halt returned to eval");
 }
@@ -2259,7 +2585,7 @@ Atom jet_enter_vm(VmState& vm, Atom proc, Atom* args, size_t n_args)
 
 	Frame& host_frame = vm.frames.push({g_return_to_host_code, nullptr, base, base + n_args});
 	op_enter_lambda_fast<CallTail::No>(vm, &host_frame, g_return_to_host_code, window + n_args, proc, window,
-	                                   vm.stack_base, window);
+	                                   vm.stack_base, window, 0.0);
 
 	Atom result = vm.stack_base[base];
 	vm.stack_top = vm.stack_base + base;

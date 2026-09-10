@@ -633,6 +633,10 @@ void decode_args(FILE* out, uint8_t op, Code* p)
 			break;
 		case Opcode::mov:
 		case Opcode::trunc:
+		case Opcode::sqrt:
+		case Opcode::floor:
+		case Opcode::round:
+		case Opcode::ceil:
 		{
 			OP_mov* o = reinterpret_cast<OP_mov*>(p);
 			print(out, " dst={} src={}", o->dst, o->src);
@@ -704,6 +708,70 @@ void decode_args(FILE* out, uint8_t op, Code* p)
 		{
 			OP_binop_rk* o = reinterpret_cast<OP_binop_rk*>(p);
 			print(out, " dst={} a={} k={}", o->dst, o->a, o->b);
+			break;
+		}
+		case Opcode::fadd:
+		case Opcode::fsub:
+		case Opcode::fmul:
+		case Opcode::fdiv:
+		case Opcode::fmin:
+		case Opcode::fmax:
+		case Opcode::ftrunc:
+		case Opcode::fsqrt:
+		case Opcode::ffloor:
+		case Opcode::fround:
+		case Opcode::fceil:
+		case Opcode::fnumeq:
+		case Opcode::flt:
+		case Opcode::fle:
+		case Opcode::fgt:
+		case Opcode::fge:
+		{
+			OP_unboxed_float* operands{reinterpret_cast<OP_unboxed_float*>(p)};
+			Opcode opcode{static_cast<Opcode>(op)};
+			JET_DIE_UNLESS(nullptr, unboxed_float_valid(opcode, operands->mode),
+			               "invalid unboxed float mode {} for {}",
+			               static_cast<uint8_t>(operands->mode), opcode);
+
+			switch (operands->mode)
+			{
+				case UnboxedFloatMode::Start:
+					print(out, " start dst=unboxed_float a={}", operands->a);
+					if (!unboxed_float_unary(opcode))
+					{
+						print(out, " b={}", operands->b);
+					}
+					break;
+				case UnboxedFloatMode::StartConstant:
+					print(out, " start-constant dst=unboxed_float a={} k={}", operands->a, operands->b);
+					break;
+				case UnboxedFloatMode::Left:
+					print(out, " left dst=unboxed_float a=unboxed_float");
+					if (!unboxed_float_unary(opcode))
+					{
+						print(out, " b={}", operands->b);
+					}
+					break;
+				case UnboxedFloatMode::Right:
+					print(out, " right dst=unboxed_float a={} b=unboxed_float", operands->a);
+					break;
+				case UnboxedFloatMode::Constant:
+					print(out, " constant dst=unboxed_float a=unboxed_float k={}", operands->b);
+					break;
+				case UnboxedFloatMode::StoreLeft:
+					print(out, " store-left dst={} a=unboxed_float", operands->dst);
+					if (!unboxed_float_unary(opcode))
+					{
+						print(out, " b={}", operands->b);
+					}
+					break;
+				case UnboxedFloatMode::StoreRight:
+					print(out, " store-right dst={} a={} b=unboxed_float", operands->dst, operands->a);
+					break;
+				case UnboxedFloatMode::StoreConstant:
+					print(out, " store-constant dst={} a=unboxed_float k={}", operands->dst, operands->b);
+					break;
+			}
 			break;
 		}
 		case Opcode::if_false:
