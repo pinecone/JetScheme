@@ -34,10 +34,12 @@ def die(msg):
 
 
 def run(cmd, **kw):
-    r = subprocess.run(cmd, **kw)
-    if r.returncode != 0:
-        die(f"command failed (exit {r.returncode}): {' '.join(map(str, cmd))}")
-    return r
+    result = subprocess.run(cmd, **kw)
+    if result.returncode != 0:
+        if result.stdout:
+            print(result.stdout, end="", file=sys.stderr)
+        die(f"command failed (exit {result.returncode}): {' '.join(map(str, cmd))}")
+    return result
 
 
 def short(ref):
@@ -51,7 +53,7 @@ def build_ref(ref, dest):
     run(["git", "worktree", "add", "--detach", str(dest), ref], cwd=REPO,
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     run(["make", "-j"], cwd=dest,
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     bin = dest / "build" / "jet"
     if not bin.exists():
         die(f"build did not produce {bin}")
