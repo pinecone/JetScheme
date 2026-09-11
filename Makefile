@@ -94,7 +94,12 @@ else
 endif
 endif
 
-LDOPT += -stdlib=libc++ -fuse-ld=lld --rtlib=compiler-rt --unwindlib=libunwind
+LDOPT += -stdlib=libc++
+ifeq ($(UNAME_S),Darwin)
+LDOPT += --ld-path=/usr/bin/ld
+else
+LDOPT += -fuse-ld=lld --rtlib=compiler-rt --unwindlib=libunwind
+endif
 LDFLAGS	 := $(LDOPT) $(MODULE_LDFLAGS)
 
 # Third-party code, so warnings-as-errors and the house warning set do not apply.
