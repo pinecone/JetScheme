@@ -703,6 +703,9 @@
             (begin
               (ScaleShape (ref vis-x farthest) (ref vis-shape farthest) (ref vis-height farthest)
                           (ref vis-tilex farthest) (ref vis-tiley farthest))
+              (when (and plus-enabled (= (ref vis-shape farthest) PLUS_PILLAR))
+                (plus-pillar-contact farthest #f)
+                (plus-pillar-contact farthest #t))
               (setf! vis-height farthest 32000))))
       (draw (+ drawn 1))))
   viscount)
