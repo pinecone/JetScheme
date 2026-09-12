@@ -17,10 +17,7 @@
   #f)
 
 (define (ClearSplitVWB)
-  (let loop ((index 0))
-    (when (< index (* UPDATEWIDE UPDATEHIGH))
-      (setf! update index 0)
-      (loop (+ index 1))))
+  (bytevector-fill! update 0 (* UPDATEWIDE UPDATEHIGH) 0)
   (set! WindowX 0)
   (set! WindowY 0)
   (set! WindowW 320)

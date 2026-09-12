@@ -31,10 +31,10 @@
   (VL_SetLineWidth 40))
 
 (define (VL_ClearVideo color)
-  (let loop ((index 0))
-    (when (< index (bytevector-length framebuffer))
-      (setf! framebuffer index color)
-      (loop (+ index 1)))))
+  (let ((length (bytevector-length framebuffer)))
+    (when (> length 0)
+      (bytevector-fill! framebuffer 0 length color)))
+  (begin))
 
 (define (VL_DePlaneVGA)
   (VL_ClearVideo 0))
@@ -209,10 +209,9 @@
   (setf! framebuffer (+ (* y screenwidth) screenoffset x) color))
 
 (define (VL_Hlin x y width color)
-  (let loop ((column 0))
-    (when (< column width)
-      (VL_Plot (+ x column) y color)
-      (loop (+ column 1)))))
+  (when (> width 0)
+    (bytevector-fill! framebuffer (+ (* y screenwidth) screenoffset x) (ceiling width) color))
+  (begin))
 
 (define (VL_Vlin x y height color)
   (let loop ((row 0))

@@ -24,6 +24,13 @@
     (when (and (>= column 0) (< column screenwidth) (>= y 0) (< y screenheight))
       (setf! framebuffer (+ (* y screenwidth) column) color))))
 
+(define (VH_Hlin x1 x2 y color)
+  (let ((left (max 0 (+ x1 screenoffset)))
+        (right (min (- screenwidth 1) (+ x2 screenoffset))))
+    (when (and (<= left right) (>= y 0) (< y screenheight))
+      (bytevector-fill! framebuffer (+ (* y screenwidth) left) (+ (floor (- right left)) 1) color)))
+  (begin))
+
 ;; ID_VH.C dirty-block state (16x16 pixel blocks).  This is distinct from
 ;; framebuffer RAM and is consumed by VW_UpdateScreen.
 (define UPDATEWIDE (quotient (+ screenwidth 15) 16))
@@ -40,10 +47,8 @@
         (begin
           (let rows ((row yt1))
             (when (<= row yt2)
-              (let columns ((column xt1))
-                (when (<= column xt2)
-                  (setf! update (+ (* row UPDATEWIDE) column) 1)
-                  (columns (+ column 1))))
+              (when (<= xt1 xt2)
+                (bytevector-fill! update (+ (* row UPDATEWIDE) xt1) (+ (- xt2 xt1) 1) 1))
               (rows (+ row 1))))
           #t))))
 
@@ -81,18 +86,12 @@
   (when (VW_MarkUpdateBlock x y (+ x width) (+ y height -1))
     (let rows ((row 0))
       (when (< row height)
-        (let cols ((column 0))
-          (when (< column width)
-            (VH_Plot (+ x column) (+ y row) color)
-            (cols (+ column 1))))
+        (VH_Hlin x (+ x (ceiling width) -1) (+ y row) color)
         (rows (+ row 1))))))
 
 (define (VWB_Hlin x1 x2 y color)
   (when (VW_MarkUpdateBlock x1 y x2 y)
-    (let loop ((x x1))
-      (when (<= x x2)
-        (VH_Plot x y color)
-        (loop (+ x 1))))))
+    (VH_Hlin x1 x2 y color)))
 
 (define (VWB_Vlin y1 y2 x color)
   (when (VW_MarkUpdateBlock x y1 x y2)
