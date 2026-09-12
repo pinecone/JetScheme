@@ -1,4 +1,7 @@
 (define dos:frame-loop (%prim "dos:frame-loop"))
+(define dos:output-width (%prim "dos:output-width"))
+(define dos:output-height (%prim "dos:output-height"))
+(define dos:set-framebuffer-size (%prim "dos:set-framebuffer-size"))
 (define dos:display-framebuffer (%prim "dos:display-framebuffer"))
 (define dos:set-palette (%prim "dos:set-palette"))
 (define dos:key-down? (%prim "dos:key-down?"))

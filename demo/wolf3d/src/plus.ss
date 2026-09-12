@@ -3,6 +3,8 @@
   (if (eq? demo-action 'play) (= (ref demo-data 5) 1) plus-requested))
 (define plus-enabled plus-available)
 (define plus-key #f)
+(define plus-output-width UIWIDTH)
+(define plus-output-ready #f)
 (define PLUS_MIP_STEPS 8)
 (define PLUS_MIP_LEVELS 7)
 (define plus-mips #f)
@@ -80,6 +82,48 @@
 (define plus-flash-remaining (make-vector PLUS_FLASH_COUNT 0))
 (define plus-flash-epochs (make-vector (* MAPSIZE MAPSIZE) -1))
 (define plus-flash-levels (make-bytevector (* MAPSIZE MAPSIZE) 0))
+
+(define (plus-update-output)
+  (when plus-available
+    (set! plus-output-width
+          (max UIWIDTH (* 2 (round (/ (* screenheight 1.2 (dos:output-width))
+                                     (* 2 (dos:output-height)))))))
+    ; Fades keep framebuffer snapshots across yields; later resizes wait for ThreeDRefresh.
+    (unless plus-output-ready
+      (set! plus-output-ready #t)
+      (plus-resize))))
+
+(define (plus-resize)
+  (let ((width (if plus-enabled plus-output-width UIWIDTH)))
+    (if (= width screenwidth)
+        #f
+        (let ((source framebuffer)
+              (stride screenwidth)
+              (offset screenoffset))
+          (unless demo-headless (dos:set-framebuffer-size width screenheight))
+          (set! screenwidth width)
+          (set! screenoffset (quotient (- width UIWIDTH) 2))
+
+          (set! framebuffer (make-bytevector (* width screenheight) 127))
+          (let rows ((row 0))
+            (when (< row screenheight)
+              (let ((start (+ (* row stride) offset)))
+                (bytevector-copy! framebuffer (+ (* row width) screenoffset)
+                                  source start (+ start UIWIDTH)))
+              (rows (+ row 1))))
+          (set! displayframebuffer (bytevector-copy framebuffer 0 (bytevector-length framebuffer)))
+          (set! UPDATEWIDE (quotient (+ width 15) 16))
+          (set! update (make-bytevector (* UPDATEWIDE UPDATEHIGH) 1))
+
+          (set! pixelangle (make-vector width 0))
+          (set! wallheight (make-vector width 0))
+          (set! wallx (make-vector width 0))
+          (set! wally (make-vector width 0))
+          (set! plus-boundaries (make-vector width 0))
+          (set! plus-planex (make-vector width 0))
+          (set! plus-planey (make-vector width 0))
+          (SetViewSize (* viewsize 16) (* viewsize 8))
+          #t))))
 
 (define (plus-shade level)
   (truncate (/ (+ (- level PLUS_LEVEL_MIN) (/ PLUS_SHADE_STEP 2)) PLUS_SHADE_STEP)))

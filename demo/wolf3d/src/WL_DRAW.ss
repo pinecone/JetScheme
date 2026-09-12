@@ -14,12 +14,16 @@
 (define VIEWGLOBAL 65536)
 (define AREATILE 107)
 
-(define viewwidth 320)
+(define UIWIDTH 320)
+
+(define viewwidth UIWIDTH)
 (define viewheight 160)
 (define viewleft 0)
 (define viewtop 0)
-(define screenwidth 320)
+(define screenwidth UIWIDTH)
 (define screenheight 200)
+(define screenoffset 0)
+(define projectionwidth UIWIDTH)
 
 (define finetangent (make-vector 900 0))
 (define sintable (make-vector 361 0))
@@ -119,11 +123,11 @@
   (set! facedist (+ focal MINDIST))
   (let ((halfview (/ viewwidth 2))
         (radtoint (/ (/ FINEANGLES 2) pi)))
-    (set! scale (truncate (/ (* halfview facedist) (/ VIEWGLOBAL 2))))
+    (set! scale (truncate (/ (* projectionwidth facedist) VIEWGLOBAL)))
     (set! heightnumerator (truncate (/ (* TILEGLOBAL scale) 64)))
     (let loop ((index 0))
       (when (< index halfview)
-        (let ((tang (/ (truncate (/ (* index VIEWGLOBAL) viewwidth)) facedist)))
+        (let ((tang (/ (truncate (/ (* index VIEWGLOBAL) projectionwidth)) facedist)))
           (let ((intang (truncate (* (atan tang) radtoint))))
             (setf! pixelangle (- (- halfview 1) index) intang)
             (setf! pixelangle (+ halfview index) (- intang))))
@@ -704,6 +708,7 @@
   viscount)
 
 (define (ThreeDRefresh)
+  (when (plus-resize) (DrawPlayBorder))
   (let ((display (if fizzlein
                      (bytevector-copy framebuffer 0 (bytevector-length framebuffer))
                      #f)))

@@ -900,8 +900,8 @@
       (begin
         (set! victoryflag #t)
         (set! deathcam-active #t)
-        (FizzleFade (fizzle-source 0 0 320 (- 200 STATUSLINES) 127)
-                    0 0 320 (- 200 STATUSLINES) 70 #f)
+        (FizzleFade (fizzle-source 0 0 screenwidth (- screenheight STATUSLINES) 127)
+                    0 0 screenwidth (- screenheight STATUSLINES) 70 #f)
         (Write 0 7 "let's see that again!")
         (VL_WaitVBL 1)
         (IN_UserInput 300)

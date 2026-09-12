@@ -390,13 +390,8 @@ void main() {
 		JET_DIE(&s, "key-down?: unknown key '{}'", name);
 	}
 
-	void init_cb()
+	void make_framebuffer()
 	{
-		sg_desc setup{};
-		setup.logger.func = slog_func;
-		setup.environment = sglue_environment();
-		sg_setup(&setup);
-
 		sg_image_desc index_image{};
 		index_image.type = SG_IMAGETYPE_2D;
 		index_image.usage.stream_update = true;
@@ -405,6 +400,19 @@ void main() {
 		index_image.pixel_format = SG_PIXELFORMAT_R8;
 		video.indices = sg_make_image(&index_image);
 
+		sg_view_desc index_view{};
+		index_view.texture.image = video.indices;
+		video.index_view = sg_make_view(&index_view);
+	}
+
+	void init_cb()
+	{
+		sg_desc setup{};
+		setup.logger.func = slog_func;
+		setup.environment = sglue_environment();
+		sg_setup(&setup);
+		make_framebuffer();
+
 		sg_image_desc palette_image{};
 		palette_image.type = SG_IMAGETYPE_2D;
 		palette_image.usage.stream_update = true;
@@ -412,10 +420,6 @@ void main() {
 		palette_image.height = 1;
 		palette_image.pixel_format = SG_PIXELFORMAT_RGBA8;
 		video.palette = sg_make_image(&palette_image);
-
-		sg_view_desc index_view{};
-		index_view.texture.image = video.indices;
-		video.index_view = sg_make_view(&index_view);
 
 		sg_view_desc palette_view{};
 		palette_view.texture.image = video.palette;
@@ -562,6 +566,40 @@ static Atom frame_loop(VmState& s, Atom title, Atom width, Atom height, Atom emu
 	sapp_run(&app);
 
 	vm_exit(s, 0);
+}
+
+static Number output_width(VmState& state)
+{
+	JET_DIE_UNLESS(&state, video.ready, "output-width: no window; call frame-loop first");
+	return Number::from_ieee(sapp_width());
+}
+
+static Number output_height(VmState& state)
+{
+	JET_DIE_UNLESS(&state, video.ready, "output-height: no window; call frame-loop first");
+	return Number::from_ieee(sapp_height());
+}
+
+static Atom set_framebuffer_size(VmState& state, Atom width, Atom height)
+{
+	JET_DIE_UNLESS(&state, video.ready, "set-framebuffer-size: no window; call frame-loop first");
+	double columns{static_cast<double>(slow_unbox<Number>(state, width))};
+	double rows{static_cast<double>(slow_unbox<Number>(state, height))};
+	int limit{sg_query_limits().max_image_size_2d};
+	JET_DIE_UNLESS(&state, columns >= 1 && columns <= limit && columns == std::floor(columns) &&
+	               rows >= 1 && rows <= limit && rows == std::floor(rows),
+	               "set-framebuffer-size: dimensions must be integers from 1 to {}", limit);
+	if (columns == video.width && rows == video.height)
+	{
+		return Atom{};
+	}
+
+	sg_destroy_view(video.index_view);
+	sg_destroy_image(video.indices);
+	video.width = static_cast<int>(columns);
+	video.height = static_cast<int>(rows);
+	make_framebuffer();
+	return Atom{};
 }
 
 static Atom display_framebuffer(VmState& s, Atom pixels)
@@ -773,6 +811,9 @@ void init_dos(VmState& s)
 {
 	Env& e = s.env;
 	e.bind("dos:frame-loop", make_prim<frame_loop>(s));
+	e.bind("dos:output-width", make_prim<output_width>(s));
+	e.bind("dos:output-height", make_prim<output_height>(s));
+	e.bind("dos:set-framebuffer-size", make_prim<set_framebuffer_size>(s));
 	e.bind("dos:display-framebuffer", make_prim<display_framebuffer>(s));
 	e.bind("dos:set-palette", make_prim<set_palette>(s));
 	e.bind("dos:key-down?", make_prim<key_down>(s));

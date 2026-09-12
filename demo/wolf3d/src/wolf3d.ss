@@ -162,6 +162,7 @@ Examples:
 (define (frame)
   (unless quitting
     (let ((frame-start (time-monotonic)))
+      (plus-update-output)
       (IN_PollKeyboard)
       (unless demo-session
         (update-clock)

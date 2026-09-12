@@ -115,7 +115,7 @@
              (FarScalePost (+ 128 column) 64 page column)
              (loop (+ column 1)))))
         ((< page PMSoundStart)
-         (SimpleScaleShape 160 (- page PMSpriteStart) 64))
+         (SimpleScaleShape (+ 160 screenoffset) (- page PMSpriteStart) 64))
         ((< page (- ChunksInFile 1))
          (let ((data (PM_GetPage page))
                (baseline (+ WindowY WindowH -32)))

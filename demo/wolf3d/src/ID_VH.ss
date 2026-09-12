@@ -20,8 +20,9 @@
 (define (font-width font ch) (ref font (+ 514 ch)))
 
 (define (VH_Plot x y color)
-  (when (and (>= x 0) (< x screenwidth) (>= y 0) (< y screenheight))
-    (setf! framebuffer (+ (* y screenwidth) x) color)))
+  (let ((column (+ x screenoffset)))
+    (when (and (>= column 0) (< column screenwidth) (>= y 0) (< y screenheight))
+      (setf! framebuffer (+ (* y screenwidth) column) color))))
 
 ;; ID_VH.C dirty-block state (16x16 pixel blocks).  This is distinct from
 ;; framebuffer RAM and is consumed by VW_UpdateScreen.
@@ -30,9 +31,9 @@
 (define update (make-bytevector (* UPDATEWIDE UPDATEHIGH) 0))
 
 (define (VW_MarkUpdateBlock x1 y1 x2 y2)
-  (let ((xt1 (max 0 (arithmetic-shift x1 -4)))
+  (let ((xt1 (max 0 (arithmetic-shift (+ x1 screenoffset) -4)))
         (yt1 (max 0 (arithmetic-shift y1 -4)))
-        (xt2 (min (- UPDATEWIDE 1) (arithmetic-shift x2 -4)))
+        (xt2 (min (- UPDATEWIDE 1) (arithmetic-shift (+ x2 screenoffset) -4)))
         (yt2 (min (- UPDATEHIGH 1) (arithmetic-shift y2 -4))))
     (if (or (>= xt1 UPDATEWIDE) (>= yt1 UPDATEHIGH) (< xt2 0) (< yt2 0))
         #f
@@ -295,10 +296,13 @@
                               (if (= 1 (bitwise-and rndval 1))
                                   (bitwise-xor shifted 73728)
                                   shifted))))
-                  (when (and (<= x width) (<= y height))
-                    (let ((offset (+ (* (+ top y) screenwidth) left x)))
-                      (when (< offset (bytevector-length framebuffer))
-                        (setf! framebuffer offset (ref source offset)))))
+                  (when (<= y height)
+                    (let columns ((column x))
+                      (when (<= column width)
+                        (let ((offset (+ (* (+ top y) screenwidth) left column)))
+                          (when (< offset (bytevector-length framebuffer))
+                            (setf! framebuffer offset (ref source offset))))
+                        (columns (+ column 512)))))
                   (if (= next 1)
                       #f
                       (pixels (+ count 1) next)))))))))

@@ -57,12 +57,12 @@
 
 ;; WL_MENU.C:2969-2976
 (define (ClearMScreen)
-  (VWB_Bar 0 0 320 200 BORDCOLOR))
+  (VWB_Bar (- screenoffset) 0 screenwidth screenheight BORDCOLOR))
 
 ;; WL_MENU.C:3860-3869
 (define (DrawStripes y)
-  (VWB_Bar 0 y 320 24 0)
-  (VWB_Hlin 0 319 (+ y 22) STRIPE))
+  (VWB_Bar (- screenoffset) y screenwidth 24 0)
+  (VWB_Hlin (- screenoffset) (+ screenoffset UIWIDTH -1) (+ y 22) STRIPE))
 
 ;; WL_MENU.C:2984
 ;; WL_MENU.C:2882. The graphical port has no EMS/XMS allocator; show the
@@ -1196,7 +1196,7 @@
   (set! WindowY 0)
   (set! WindowW 320)
   (set! WindowH 200)
-  (let ((old (truncate (/ viewwidth 16))))
+  (let ((old viewsize))
     (DrawChangeView old)
     (let choose ((size old))
       (if (not (IN_Yield))
@@ -1229,7 +1229,6 @@
                    (MenuFadeOut)
                    #t)
                   ((or in-button1 (= scan sc_Escape))
-                   (set! viewwidth (* old 16))
                    (SD_PlaySound ESCPRESSEDSND)
                    (MenuFadeOut)
                    #f)
