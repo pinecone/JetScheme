@@ -1544,8 +1544,8 @@
 (define control-input #f)
 (define demoplayback #f)
 (define demorecord #f)
-(define demo-session #f)
-(define demo-headless #f)
+(define demo-session (and (or (assoc "--record-demo" options) (assoc "--play-demo" options)) #t))
+(define demo-headless (option "--headless" #f))
 (define demo-buffer #f)
 (define demo-pointer 0)
 (define demo-end 0)
@@ -1737,8 +1737,7 @@
         (when demorecord
           (demo-record-controls)))))
 
-;; GFXV_WL6.H:143
-(define PAUSEDPIC 133)
+(define PAUSEDPIC (+ 133 graphics-offset))
 
 ;; WL_PLAY.C:613-833.
 (define (CheckKeys)

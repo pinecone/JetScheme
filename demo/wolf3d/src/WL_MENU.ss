@@ -151,11 +151,14 @@
   (vector "Can I play, Daddy?" "Don't hurt me." "Bring 'em on!" "I am Death incarnate!"))
 
 ;; WL_MENU.C:156-227, one row per episode
-(define episode-active (vector 1 0 3 0 3 0 3 0 3 0 3))
-;; WL_MENU.C:3882. This port ships the six-episode WL6 data set, whose
-;; extension and active episode rows are the startup defaults above.
+(define episode-active
+  (if shareware (vector 1 0 0 0 0 0 0 0 0 0 0) (vector 1 0 3 0 3 0 3 0 3 0 3)))
+
 (define (CheckForEpisodes)
-  (set! extension "WL6")
+  (for-each (lambda (name)
+              (unless (input-file? (datafile name))
+                (error (string-append "Can't open " (datafile name)))))
+            (list mheadname mfilename gdictname gheadname gfilename aheadname afilename "VSWAP."))
   episode-active)
 
 (define episode-text
@@ -1246,25 +1249,24 @@
         ((eq? routine 'quit) (CP_Quit))
         (else #f)))
 
-;; GFXV_WL6.H:18-26
-(define C_OPTIONSPIC 10)
-(define C_CURSOR1PIC 11)
-(define C_CURSOR2PIC 12)
-(define C_MOUSELBACKPIC 18)
-(define C_BABYMODEPIC 19)
-(define C_EPISODE1PIC 30)
-(define C_NOTSELECTEDPIC 13)
-(define C_SELECTEDPIC 14)
-(define C_FXTITLEPIC 15)
-(define C_DIGITITLEPIC 16)
-(define C_MUSICTITLEPIC 17)
-(define C_DISKLOADING1PIC 24)
+(define C_OPTIONSPIC (+ 10 graphics-offset))
+(define C_CURSOR1PIC (+ 11 graphics-offset))
+(define C_CURSOR2PIC (+ 12 graphics-offset))
+(define C_MOUSELBACKPIC (+ 18 graphics-offset))
+(define C_BABYMODEPIC (+ 19 graphics-offset))
+(define C_EPISODE1PIC (+ 30 graphics-offset))
+(define C_NOTSELECTEDPIC (+ 13 graphics-offset))
+(define C_SELECTEDPIC (+ 14 graphics-offset))
+(define C_FXTITLEPIC (+ 15 graphics-offset))
+(define C_DIGITITLEPIC (+ 16 graphics-offset))
+(define C_MUSICTITLEPIC (+ 17 graphics-offset))
+(define C_DISKLOADING1PIC (+ 24 graphics-offset))
 (define CONTROLS_LUMP_START C_OPTIONSPIC)
 (define CONTROLS_LUMP_END C_DISKLOADING1PIC)
-(define C_CONTROLPIC 26)
-(define C_CUSTOMIZEPIC 27)
-(define C_LOADGAMEPIC 28)
-(define C_SAVEGAMEPIC 29)
+(define C_CONTROLPIC (+ 26 graphics-offset))
+(define C_CUSTOMIZEPIC (+ 27 graphics-offset))
+(define C_LOADGAMEPIC (+ 28 graphics-offset))
+(define C_SAVEGAMEPIC (+ 29 graphics-offset))
 
 ;; WL_MENU.C:539-601
 (define (DrawMainMenu)

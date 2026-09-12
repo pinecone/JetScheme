@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+
+directory=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+exec "${JET:-$directory/../../build/jet}" run "$directory/src/wolf3d.ss" "$@"

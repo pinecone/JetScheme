@@ -473,21 +473,23 @@
   (PlaySoundLocGlobal sound (ref actor-x index) (ref actor-y index)))
 
 (define deathscreams
-  (vector DEATHSCREAM1SND DEATHSCREAM2SND DEATHSCREAM3SND DEATHSCREAM4SND
-          DEATHSCREAM5SND DEATHSCREAM7SND DEATHSCREAM8SND DEATHSCREAM9SND))
+  (if shareware
+      (vector DEATHSCREAM1SND DEATHSCREAM2SND)
+      (vector DEATHSCREAM1SND DEATHSCREAM2SND DEATHSCREAM3SND DEATHSCREAM4SND
+              DEATHSCREAM5SND DEATHSCREAM7SND DEATHSCREAM8SND DEATHSCREAM9SND)))
 
 ;; WL_ACT2.C:1080-1160. The bosses are not positioned; C plays them flat.
 (define (A_DeathScream index tics)
   (let ((which (ref actor-class index)))
     (cond
-      ((and (= mapon 9) (= (US_RndT) 0)
+      ((and (not shareware) (= mapon 9) (= (US_RndT) 0)
             (or (= which mutantobj) (= which (class-of en_guard))
                 (= which (class-of en_officer)) (= which (class-of en_ss))
                 (= which (class-of en_dog))))
        (PlaySoundLocActor DEATHSCREAM6SND index))
       ((= which mutantobj) (PlaySoundLocActor AHHHGSND index))
       ((= which (class-of en_guard))
-       (PlaySoundLocActor (ref deathscreams (modulo (US_RndT) 8)) index))
+       (PlaySoundLocActor (ref deathscreams (modulo (US_RndT) (vector-length deathscreams))) index))
       ((= which (class-of en_officer)) (PlaySoundLocActor NEINSOVASSND index))
       ((= which (class-of en_ss)) (PlaySoundLocActor LEBENSND index))
       ((= which (class-of en_dog)) (PlaySoundLocActor DOGDEATHSND index))

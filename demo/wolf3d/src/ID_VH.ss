@@ -3,8 +3,7 @@
 (define STARTFONT 1)
 (define STARTFONTM 3)
 (define STARTPICS 3)
-(define STARTTILE8 135)
-(define STARTTILE8M 136)
+(define STARTTILE8M STARTEXTERNS)
 
 (define fontnumber 0)
 (define fontcolor 15)
@@ -147,8 +146,8 @@
 ;; framebuffer pixel indices.
 (define FREESTART (* 80 208 3))
 (define NUMTILE8 72)
-(define LATCHPICS_LUMP_START 91)
-(define LATCHPICS_LUMP_END 134)
+(define LATCHPICS_LUMP_START (+ 91 graphics-offset))
+(define LATCHPICS_LUMP_END (+ 134 graphics-offset))
 (define latchpics (make-vector 100 0))
 (define freelatch FREESTART)
 

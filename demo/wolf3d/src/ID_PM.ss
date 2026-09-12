@@ -245,6 +245,9 @@
                    total
                    (+ total 1))))))
 
+(define (PM_HasPage page)
+  (and (>= page 0) (< page ChunksInFile) (not (= (ref pageoffsets page) 0))))
+
 (define (PM_GetPage page)
   (if (>= page ChunksInFile)
       (Quit "PM_GetPage: Invalid page request")

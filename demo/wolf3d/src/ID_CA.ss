@@ -1,9 +1,6 @@
 ;;; ID_CA.C — asset loading
 
-(define NUMMAPS 60)
 (define MAPPLANES 2)
-
-(define extension "WL6")
 
 (define gheadname "VGAHEAD.")
 (define gfilename "VGAGRAPH.")
@@ -12,26 +9,6 @@
 (define mfilename "GAMEMAPS.")
 (define aheadname "AUDIOHED.")
 (define afilename "AUDIOT.")
-
-(define datadirs (list "" "/dropbox/WOLF3D/"))
-(define datadir-option-error #f)
-
-(define (datadir-argument)
-  (let scan ((index 0) (value #f))
-    (if (>= index (vector-length argv))
-        value
-        (if (string=? (ref argv index) "--datadir")
-            (cond ((>= (+ index 1) (vector-length argv))
-                   (set! datadir-option-error "--datadir requires a path")
-                   #f)
-                  ((string=? (ref argv (+ index 1)) "")
-                   (set! datadir-option-error "--datadir requires a nonempty path")
-                   #f)
-                  (value
-                   (set! datadir-option-error "--datadir can be supplied only once")
-                   #f)
-                  (else (scan (+ index 2) (ref argv (+ index 1)))))
-            (scan (+ index 1) value)))))
 
 (define (directory-path path)
   (if (char=? (string-ref path (- (string-length path) 1)) #\/)
@@ -46,15 +23,27 @@
           #t)
         #f)))
 
-(define (find-datadir dirs)
-  (cond ((null? dirs) "")
-        ((input-file? (string-append (car dirs) mheadname extension)) (car dirs))
-        (else (find-datadir (cdr dirs)))))
+(define (parent-directory path)
+  (let scan ((index (- (string-length path) 1)))
+    (cond ((< index 0) "./")
+          ((char=? (string-ref path index) #\/) (substring path 0 (+ index 1)))
+          (else (scan (- index 1))))))
 
-(define datadir-option (datadir-argument))
-(define datadir (if datadir-option
-                    (directory-path datadir-option)
-                    (find-datadir datadirs)))
+(define datadir
+  (let ((path (option "--datadir" #f)))
+    (if path
+        (directory-path path)
+        (string-append (parent-directory ($file)) "../data_shareware/"))))
+(define extension
+  (let ((full (input-file? (string-append datadir mheadname "WL6")))
+        (share (input-file? (string-append datadir mheadname "WL1"))))
+    (cond ((and full share) (error (string-append "Mixed WL1 and WL6 data in " datadir)))
+          (full "WL6")
+          (share "WL1")
+          (else (error (string-append "No MAPHEAD.WL1 or MAPHEAD.WL6 in " datadir))))))
+(define shareware (string=? extension "WL1"))
+(define NUMMAPS (if shareware 10 60))
+(define graphics-offset (if shareware 12 0))
 
 (define tinf 0)
 (define mapon 0)
@@ -221,7 +210,9 @@
   (let ((filename (datafile aheadname)))
     (set! audiostarts (CA_LoadFile filename))
     (unless audiostarts
-      (CA_CannotOpen filename)))
+      (CA_CannotOpen filename))
+    (unless (= (bytevector-length audiostarts) (* 4 (+ NUMSNDCHUNKS 1)))
+      (Quit (string-append "Unsupported audio layout in " filename))))
   (let ((filename (datafile afilename)))
     (set! audiofiledata (CA_LoadFile filename))
     (unless audiofiledata
@@ -236,12 +227,16 @@
   (let ((filename (datafile gheadname)))
     (set! grstarts (CA_LoadFile filename))
     (unless grstarts
-      (CA_CannotOpen filename)))
+      (CA_CannotOpen filename))
+    (unless (= (bytevector-length grstarts) (* FILEPOSSIZE (+ NUMCHUNKS 1)))
+      (Quit (string-append "Unsupported graphics layout in " filename))))
   (let ((filename (datafile gfilename)))
     (set! grfiledata (CA_LoadFile filename))
     (unless grfiledata
       (CA_CannotOpen filename)))
   (let ((table (CA_CacheGrChunk STRUCTPIC)))
+    (unless (= (bytevector-length table) (* NUMPICS 4))
+      (Quit (string-append "Unsupported picture table in " (datafile gfilename))))
     (let loop ((index 0))
       (unless (= index NUMPICS)
         (setf! pictable index (pictabletype (readu16 table (* index 4))
@@ -249,10 +244,6 @@
         (loop (+ index 1))))))
 
 (define (CA_Startup)
-  (when datadir-option-error
-    (Quit datadir-option-error))
-  (when (and datadir-option (not (input-file? (datafile mheadname))))
-    (CA_CannotOpen (datafile mheadname)))
   (CAL_SetupMapFile)
   (CAL_SetupGrFile)
   (CAL_SetupAudioFile)
@@ -385,6 +376,9 @@
                 (loop (+ inptr 2) (+ outword 1)))))))))
 
 (define (CA_CacheMap mapnum)
+  (unless (and (integer? mapnum) (>= mapnum 0) (< mapnum NUMMAPS)
+               (not (number? (ref mapheaderseg mapnum))))
+    (Quit "Map is not available in this data set"))
   (set! mapon mapnum)
   (let ((header (ref mapheaderseg mapnum))
         (size (* 64 64 2)))
@@ -497,12 +491,12 @@
       (loop (+ chunk 1)))))
 
 (define STRUCTPIC 0)
-(define NUMPICS 132)
-(define NUMCHUNKS 149)
+(define NUMPICS (+ 132 graphics-offset))
+(define NUMCHUNKS (if shareware 156 149))
 (define grsegs (make-vector NUMCHUNKS 0))
 (define grneeded (make-bytevector NUMCHUNKS 0))
-(define STARTTILE8 135)
-(define STARTEXTERNS 136)
+(define STARTTILE8 (+ 135 graphics-offset))
+(define STARTEXTERNS (+ STARTTILE8 1))
 (define NUMTILE8 72)
 (define BLOCK 64)
 

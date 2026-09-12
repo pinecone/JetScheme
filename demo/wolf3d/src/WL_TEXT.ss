@@ -13,12 +13,12 @@
 (define TEXTROWS 15)
 (define WORDLIMIT 80)
 
-(define H_TOPWINDOWPIC 6)
-(define H_LEFTWINDOWPIC 7)
-(define H_RIGHTWINDOWPIC 8)
-(define H_BOTTOMINFOPIC 9)
-(define T_HELPART 138)
-(define T_ENDART1 143)
+(define H_TOPWINDOWPIC (if shareware 17 6))
+(define H_LEFTWINDOWPIC (+ H_TOPWINDOWPIC 1))
+(define H_RIGHTWINDOWPIC (+ H_TOPWINDOWPIC 2))
+(define H_BOTTOMINFOPIC (+ H_TOPWINDOWPIC 3))
+(define T_HELPART (+ 138 graphics-offset))
+(define T_ENDART1 (if shareware 155 143))
 
 (define text 0)
 (define textpos 0)
@@ -191,7 +191,7 @@
   (let ((word (next-word)))
     (let ((width (car (VW_MeasurePropString word))))
       (let fit ()
-        (when (and (> (+ px width) (ref rightmargin rowon)) (not layoutdone))
+        (when (and (not layoutdone) (> (+ px width) (ref rightmargin rowon)))
           (NewLine)
           (fit)))
       (unless layoutdone

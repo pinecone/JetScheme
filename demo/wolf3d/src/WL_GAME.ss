@@ -267,7 +267,7 @@
   (let ((text (US_LineInput 80 80 "" #t 2 0)))
     (when text
       (let ((level (- (string->number text) 1)))
-        (when (and (>= level 0) (< level 60))
+        (when (and (>= level 0) (< level NUMMAPS))
           (NewGame gd_hard (truncate (/ level 10)))
           (set! mapon (- level (* 10 episode)))
           (StartDemoRecord level)

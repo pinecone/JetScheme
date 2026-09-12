@@ -1,30 +1,11 @@
-(define plus-requested (argument? "--plus"))
+(define plus-requested (option "--plus" #f))
 (define plus-available
   (if (eq? demo-action 'play) (= (ref demo-data 5) 1) plus-requested))
 (define plus-enabled plus-available)
 (define plus-key #f)
 
-(define plus-turn-speed 62.5)
-(define plus-walk-speed 52.5)
-
-(let scan ((index 0))
-  (when (< index (vector-length argv))
-    (let ((option (ref argv index)))
-      (if (or (string=? option "--turn-speed") (string=? option "--walk-speed"))
-          (begin
-            (unless plus-enabled
-              (error (string-append option " requires --plus")))
-            (when (eq? demo-action 'play)
-              (error (string-append option " cannot change recorded movement")))
-            (let ((speed (and (< (+ index 1) (vector-length argv))
-                              (string->number (ref argv (+ index 1))))))
-              (unless (and speed (> speed 0) (<= speed 100))
-                (error (string-append option " requires a number greater than 0 and at most 100")))
-              (if (string=? option "--turn-speed")
-                  (set! plus-turn-speed speed)
-                  (set! plus-walk-speed speed)))
-            (scan (+ index 2)))
-          (scan (+ index 1))))))
+(define plus-turn-speed (option "--turn-speed" 62.5))
+(define plus-walk-speed (option "--walk-speed" 52.5))
 
 (define PLUS_LIGHT_RADIUS 6)
 (define PLUS_LIGHT_LEVELS 8)
@@ -797,7 +778,7 @@
   (set! plus-sprites (make-vector (- PMSoundStart PMSpriteStart) #f))
   (let shapes ((shape 0))
     (when (< shape (vector-length plus-sprites))
-      (when (plus-ceiling-light? shape)
+      (when (and (plus-ceiling-light? shape) (PM_HasPage (+ PMSpriteStart shape)))
         (setf! plus-sprites shape (plus-crop-sprite shape)))
       (shapes (+ shape 1)))))
 
@@ -839,14 +820,14 @@
   (set! plus-feet (make-vector (- PMSoundStart PMSpriteStart) #f))
   (let shapes ((shape 0))
     (when (< shape (vector-length plus-feet))
-      (when (plus-enemy-shape? shape)
+      (when (and (plus-enemy-shape? shape) (PM_HasPage (+ PMSpriteStart shape)))
         (setf! plus-feet shape (plus-body-bounds shape)))
       (shapes (+ shape 1)))))
 
 (define (plus-build-mounts)
   (let shapes ((shape SPR_STAT_0))
     (when (< shape (vector-length plus-mounts))
-      (when (plus-ceiling-shape? shape)
+      (when (and (plus-ceiling-shape? shape) (PM_HasPage (+ PMSpriteStart shape)))
         (setf! plus-mounts shape (plus-shape-bounds shape 0 3)))
       (shapes (+ shape 1)))))
 
