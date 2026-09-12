@@ -289,10 +289,10 @@
     (let rows ((y 0))
       (when (< y (* half 2))
         (let ((value (if (< y half) top FLOOR)))
-          (let cols ((x 0))
-            (when (< x viewwidth)
-              (setf! framebuffer (+ (* (+ y viewtop) screenwidth) viewleft x) value)
-              (cols (+ x 1)))))
+          (bytevector-fill! framebuffer
+                            (+ (* (+ y viewtop) screenwidth) viewleft)
+                            viewwidth
+                            value))
         (rows (+ y 1))))))
 
 (define viewx 0)

@@ -218,6 +218,7 @@
 (define make-bytevector (%prim "make-bytevector"))
 (define (bytevector-u8-ref bv i) (ref bv i))
 (define (bytevector-u8-set! bv i x) (setf! bv i x))
+(define bytevector-fill! (%prim "bytevector-fill!"))
 (define bytevector-length (%prim "bytevector-length"))
 (define bytevector? (%prim "bytevector?"))
 (define bytevector-copy (%prim "bytevector-copy"))

@@ -565,6 +565,22 @@ static Atom bytevector_u8_set(VmState& s, Atom bv, Atom k, Atom b)
 	return b;
 }
 
+static Atom bytevector_fill(VmState& state, Atom buffer, Atom start, Atom length, Atom value)
+{
+	ByteVector& bytes{*slow_unbox<ByteVector>(state, buffer)};
+	uint64_t offset{slow_unbox<uint64_t>(state, start)};
+	uint64_t count{slow_unbox<uint64_t>(state, length)};
+	uint8_t byte{as_uint8_or_die(state, value)};
+
+	JET_DIE_UNLESS(&state, offset <= bytes.size() && count <= bytes.size() - offset,
+	               "bytevector-fill! range at {} with length {} out of bounds", offset, count);
+	if (count != 0)
+	{
+		std::memset(bytes.data() + offset, byte, count);
+	}
+	return buffer;
+}
+
 static Atom bytevector_length(VmState& s, Atom bv)
 {
 	return box(Number::trusted(static_cast<double>(slow_unbox<ByteVector>(s, bv)->size())));
@@ -650,6 +666,7 @@ void init_bytevectors(VmState& s)
 	e.bind("bytevector-length", make_prim<bytevector_length>(s));
 	e.bind("bytevector-u8-ref", make_prim<bytevector_u8_ref>(s));
 	e.bind("bytevector-u8-set!", make_prim<bytevector_u8_set>(s));
+	e.bind("bytevector-fill!", make_prim<bytevector_fill>(s));
 	e.bind("make-bytevector", make_prim<make_bytevector>(s));
 	e.bind("bytevector", make_prim<bytevector_ctor>(s, n_ary()));
 	e.bind("bytevector-copy", make_prim<bytevector_copy>(s));
