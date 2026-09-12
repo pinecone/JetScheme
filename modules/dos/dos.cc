@@ -51,6 +51,7 @@ void main() {
 }
 )"};
 
+	// Adapted from Timothy Lottes's public-domain CRT shader.
 	constexpr char CRT_FRAGMENT_SOURCE[]{
 		R"(
 #version 410
@@ -58,50 +59,101 @@ uniform sampler2D indices;
 uniform sampler2D palette;
 in vec2 uv;
 out vec4 color;
-const float CURVATURE = 0.02;
-const float OVERSCAN = 1.0 + 2.0 * CURVATURE;
-const float BASE_BLEED = 0.035;
-const float HALATION_NEAR = 0.14;
-const float HALATION_FAR = 0.05;
-const float SCANLINE_DEPTH = 0.06;
-const float MASK_LOW = 0.94;
-const float VIGNETTE_DEPTH = 0.16;
-const vec3 SHEEN_COLOR = vec3(0.055, 0.07, 0.085);
-vec3 screen_color(vec2 sample_uv) {
-  float index = texture(indices, sample_uv).r;
-  return texture(palette, vec2(index * (255.0 / 256.0) + (0.5 / 256.0), 0.5)).rgb;
+const float HARD_SCAN = -8.0;
+const float HARD_PIXEL = -3.0;
+const float HARD_BLOOM_PIXEL = -1.5;
+const float HARD_BLOOM_SCAN = -2.0;
+const float BLOOM_AMOUNT = 0.15;
+const vec2 WARP = vec2(0.015, 0.020);
+const float MASK_DARK = 0.5;
+const float MASK_LIGHT = 1.5;
+
+vec3 decode(vec3 signal) {
+  return mix(signal / 12.92, pow((signal + 0.055) / 1.055, vec3(2.4)),
+             greaterThan(signal, vec3(0.04045)));
 }
+
+vec3 encode(vec3 light) {
+  light = max(light, vec3(0.0));
+  return mix(light * 12.92, 1.055 * pow(light, vec3(1.0 / 2.4)) - 0.055,
+             greaterThanEqual(light, vec3(0.0031308)));
+}
+
+vec3 fetch(ivec2 position, int repeat) {
+  ivec2 size = textureSize(indices, 0);
+  ivec2 raster = size * ivec2(1, repeat);
+  if (any(lessThan(position, ivec2(0))) || any(greaterThanEqual(position, raster))) {
+    return vec3(0.0);
+  }
+  position.y /= repeat;
+  int index = int(texelFetch(indices, position, 0).r * 255.0 + 0.5);
+  return decode(texelFetch(palette, ivec2(index, 0), 0).rgb);
+}
+
+float gaussian(float distance, float hardness) {
+  return exp2(hardness * distance * distance);
+}
+
+vec3 horizontal(ivec2 position, float distance, int radius, float hardness, int repeat) {
+  vec3 light = vec3(0.0);
+  float total = 0.0;
+  for (int offset = -radius; offset <= radius; ++offset) {
+    float weight = gaussian(distance + float(offset), hardness);
+    light += fetch(position + ivec2(offset, 0), repeat) * weight;
+    total += weight;
+  }
+  return light / total;
+}
+
+vec3 phosphors(vec2 position) {
+  ivec2 cell = ivec2(floor(position * vec2(2.0, 1.0)));
+  int phase = (cell.x + cell.y * 3) % 6;
+  vec3 mask = vec3(MASK_DARK);
+  if (phase < 2) {
+    mask.r = MASK_LIGHT;
+  } else if (phase < 4) {
+    mask.g = MASK_LIGHT;
+  } else {
+    mask.b = MASK_LIGHT;
+  }
+  return mask;
+}
+
 void main() {
-  vec2 centered = uv * 2.0 - 1.0;
-  vec2 curved = centered * (1.0 + dot(centered, centered) * CURVATURE) / OVERSCAN;
+  vec2 size = vec2(textureSize(indices, 0));
+  vec2 output_size = 1.0 / fwidth(uv);
+  float aspect = size.x / (size.y * 1.2);
+  float output_aspect = output_size.x / output_size.y;
+  vec2 fit = max(vec2(output_aspect / aspect, aspect / output_aspect), vec2(1.0));
+  vec2 centered = (uv * 2.0 - 1.0) * fit;
+  vec2 curved = centered * (1.0 + centered.yx * centered.yx * WARP);
   vec2 sample_uv = curved * 0.5 + 0.5;
   if (any(lessThan(sample_uv, vec2(0.0))) || any(greaterThan(sample_uv, vec2(1.0)))) {
     color = vec4(0.0, 0.0, 0.0, 1.0);
     return;
   }
-  vec2 texel = 1.0 / vec2(textureSize(indices, 0));
-  vec3 center = screen_color(sample_uv);
-  vec3 left = screen_color(sample_uv - vec2(texel.x, 0.0));
-  vec3 right = screen_color(sample_uv + vec2(texel.x, 0.0));
-  vec3 far_left = screen_color(sample_uv - vec2(texel.x * 2.0, 0.0));
-  vec3 far_right = screen_color(sample_uv + vec2(texel.x * 2.0, 0.0));
-  vec3 luminance = vec3(0.2126, 0.7152, 0.0722);
-  float left_glow = smoothstep(0.24, 0.82, dot(left, luminance));
-  float right_glow = smoothstep(0.24, 0.82, dot(right, luminance));
-  float far_left_glow = smoothstep(0.38, 0.95, dot(far_left, luminance));
-  float far_right_glow = smoothstep(0.38, 0.95, dot(far_right, luminance));
-  vec3 rgb = center * (1.0 - BASE_BLEED * 2.0) + (left + right) * BASE_BLEED;
-  rgb += (left * left_glow + right * right_glow) * HALATION_NEAR;
-  rgb += (far_left * far_left_glow + far_right * far_right_glow) * HALATION_FAR;
-  float row = sample_uv.y * float(textureSize(indices, 0).y);
-  float scanline = 1.0 - SCANLINE_DEPTH + SCANLINE_DEPTH * cos(row * 6.28318530718);
-  float mask_phase = mod(floor(gl_FragCoord.x), 3.0);
-  vec3 mask = mask_phase < 1.0 ? vec3(1.0, MASK_LOW, MASK_LOW) :
-              mask_phase < 2.0 ? vec3(MASK_LOW, 1.0, MASK_LOW) : vec3(MASK_LOW, MASK_LOW, 1.0);
-  float vignette = 1.0 - VIGNETTE_DEPTH * smoothstep(0.35, 1.45, dot(centered, centered));
-  float sheen = pow(max(0.0, 1.0 - length(centered - vec2(-0.45, -0.65)) / 1.25), 4.0);
-  rgb = rgb * scanline * mask * vignette + SHEEN_COLOR * sheen;
-  color = vec4(rgb, 1.0);
+
+  int repeat = size.y <= 240.0 ? 2 : 1;
+  vec2 position = sample_uv * size * vec2(1.0, float(repeat));
+  ivec2 center = ivec2(floor(position));
+  vec2 distance = vec2(0.5) - fract(position);
+  vec3 light = vec3(0.0);
+  vec3 bloom = vec3(0.0);
+  for (int row = -2; row <= 2; ++row) {
+    ivec2 row_position = center + ivec2(0, row);
+    float row_distance = distance.y + float(row);
+    if (abs(row) <= 1) {
+      int radius = row == 0 ? 2 : 1;
+      vec3 row_color = horizontal(row_position, distance.x, radius, HARD_PIXEL, repeat);
+      light += row_color * gaussian(row_distance, HARD_SCAN);
+    }
+    bool outer = abs(row) == 2;
+    vec3 row_glow = horizontal(row_position, distance.x, outer ? 2 : 3,
+                               outer ? HARD_PIXEL : HARD_BLOOM_PIXEL, repeat);
+    bloom += row_glow * gaussian(row_distance, HARD_BLOOM_SCAN);
+  }
+  light = (light + bloom * BLOOM_AMOUNT) * phosphors(gl_FragCoord.xy);
+  color = vec4(encode(light), 1.0);
 }
 )"};
 
