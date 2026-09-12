@@ -433,8 +433,8 @@
       (+ (doorwall) 3)
       (vertwall tile)))
 
-(define (ScalePost pixx height page column tilex tiley)
-  (let* ((rows (scale-rows height))
+(define (ScalePost pixx scaleheight page column tilex tiley vertical)
+  (let* ((rows (scale-rows scaleheight))
          (level (if plus-enabled
                     (let ((left (* tilex TILEGLOBAL))
                           (top (* tiley TILEGLOBAL)))
@@ -444,16 +444,20 @@
                     0))
          (shade (ref plus-shades (plus-shade level)))
          (top (truncate (/ (- viewheight rows) 2)))
-         (texels (PM_GetPage page)))
+         (mip (and plus-enabled (plus-wall-mip page pixx vertical)))
+         (width (if mip (ref mip 0) 64))
+         (height (if mip (ref mip 1) 64))
+         (texels (if mip (ref mip 2) (PM_GetPage page)))
+         (offset (* (quotient (* column width) 64) height)))
     (let loop ((y (max top 0)) (limit (min (+ top rows) viewheight)))
       (when (< y limit)
-        (let ((texel (truncate (/ (* (- y top) 64) rows))))
+        (let ((texel (truncate (/ (* (- y top) height) rows))))
           (setf! framebuffer (+ (* (+ y viewtop) screenwidth) viewleft pixx)
-                 (ref shade (ref texels (+ (* column 64) texel)))))
+                 (ref shade (ref texels (+ offset texel)))))
         (loop (+ y 1) limit)))))
 
 (define (FarScalePost pixx height page column tilex tiley)
-  (ScalePost pixx height page column tilex tiley))
+  (ScalePost pixx height page column tilex tiley #f))
 
 (define (HitVertWall pixx tile xtile yinttile xtilestep yintercept)
   (let ((hitx (+ (* xtile TILEGLOBAL) (if (= xtilestep -1) TILEGLOBAL 0)))
@@ -473,7 +477,7 @@
       (set! last-vertical-xtile xtile)
       (set! last-vertical-tile tile)
       (set! last-vertical-texture texture)
-      (ScalePost pixx (ref wallheight pixx) page column (- xtile xtilestep) yinttile)
+      (ScalePost pixx (ref wallheight pixx) page column (- xtile xtilestep) yinttile #t)
       (when (= page (+ (doorwall) 3))
         (plus-door-edge pixx (ref wallheight pixx))))))
 
@@ -495,7 +499,7 @@
       (set! last-horizontal-ytile ytile)
       (set! last-horizontal-tile tile)
       (set! last-horizontal-texture texture)
-      (ScalePost pixx (ref wallheight pixx) page column xinttile (- ytile ytilestep))
+      (ScalePost pixx (ref wallheight pixx) page column xinttile (- ytile ytilestep) #f)
       (when (= page (+ (doorwall) 2))
         (plus-door-edge pixx (ref wallheight pixx))))))
 
@@ -513,7 +517,7 @@
       (set! last-door-number door)
       (set! last-door-texture texture)
       (ScalePost pixx (ref wallheight pixx) (doorpage (ref doorlock door) #f) column
-                 (ref doortilex door) (if (< viewy hity) (- ytile 1) (+ ytile 1)))
+                 (ref doortilex door) (if (< viewy hity) (- ytile 1) (+ ytile 1)) #f)
       (plus-door-edge pixx (ref wallheight pixx)))))
 
 (define (HitVertDoor pixx door ymid xtile)
@@ -530,7 +534,7 @@
       (set! last-door-number door)
       (set! last-door-texture texture)
       (ScalePost pixx (ref wallheight pixx) (doorpage (ref doorlock door) #t) column
-                 (if (< viewx hitx) (- xtile 1) (+ xtile 1)) (ref doortiley door))
+                 (if (< viewx hitx) (- xtile 1) (+ xtile 1)) (ref doortiley door) #t)
       (plus-door-edge pixx (ref wallheight pixx)))))
 
 (define (HitHorizPWall pixx tile xmid ytile ytilestep)
@@ -548,7 +552,7 @@
     (set! last-pwall-tile tile)
     (set! last-pwall-texture texture)
     (ScalePost pixx (ref wallheight pixx) (horizpwall tile) column
-               (bitwise-and (arithmetic-shift xmid -16) 63) (- ytile ytilestep))))
+               (bitwise-and (arithmetic-shift xmid -16) 63) (- ytile ytilestep) #f)))
 
 (define (HitVertPWall pixx tile ymid xtile xtilestep)
   (set! last-vertical-wall #f)
@@ -565,7 +569,7 @@
     (set! last-pwall-tile tile)
     (set! last-pwall-texture texture)
     (ScalePost pixx (ref wallheight pixx) (vertpwall tile) column
-               (- xtile xtilestep) (bitwise-and (arithmetic-shift ymid -16) 63))))
+               (- xtile xtilestep) (bitwise-and (arithmetic-shift ymid -16) 63) #t)))
 
 (define (CastColumn pixx)
   (let ((angl (+ (* player-angle 10) (ref pixelangle pixx))))
