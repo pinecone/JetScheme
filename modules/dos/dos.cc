@@ -64,7 +64,7 @@ const float HARD_PIXEL = -3.0;
 const float HARD_BLOOM_PIXEL = -1.5;
 const float HARD_BLOOM_SCAN = -2.0;
 const float BLOOM_AMOUNT = 0.15;
-const vec2 WARP = vec2(0.015, 0.020);
+const vec2 WARP = vec2(0.00375, 0.005);
 const float MASK_DARK = 0.5;
 const float MASK_LIGHT = 1.5;
 
