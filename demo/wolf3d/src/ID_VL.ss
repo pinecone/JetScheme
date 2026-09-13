@@ -108,7 +108,6 @@
       (unless palette
         (Quit (string-append path " is not a supported GAMEPAL.OBJ")))
       (set! gamepal palette)
-      (plus-palette-loaded)
       (VL_SetPalette palette))))
 
 (define (VL_SetColor color red green blue)
@@ -206,11 +205,11 @@
   (set! bordercolor color))
 
 (define (VL_Plot x y color)
-  (setf! framebuffer (+ (* y screenwidth) screenoffset x) color))
+  (setf! framebuffer (+ (* y screenwidth) x) color))
 
 (define (VL_Hlin x y width color)
   (when (> width 0)
-    (bytevector-fill! framebuffer (+ (* y screenwidth) screenoffset x) (ceiling width) color))
+    (bytevector-fill! framebuffer (+ (* y screenwidth) x) (ceiling width) color))
   (begin))
 
 (define (VL_Vlin x y height color)
@@ -279,7 +278,7 @@
         (when (< byte width)
           (let planes ((plane 0))
             (when (< plane 4)
-              (let ((px (+ screenoffset x (* byte 4) plane))
+              (let ((px (+ x (* byte 4) plane))
                     (py (+ y row)))
                 (when (and (>= px 0) (< px screenwidth) (>= py 0) (< py screenheight))
                   (setf! framebuffer (+ (* py screenwidth) px)
@@ -291,9 +290,9 @@
 (define (VL_ScreenToScreen source dest width height)
   (let ((copy (bytevector-copy framebuffer 0 (bytevector-length framebuffer)))
         (source-y (quotient source linewidth))
-        (source-x (+ screenoffset (* (remainder source linewidth) 4)))
+        (source-x (* (remainder source linewidth) 4))
         (dest-y (quotient dest linewidth))
-        (dest-x (+ screenoffset (* (remainder dest linewidth) 4))))
+        (dest-x (* (remainder dest linewidth) 4)))
     (let rows ((row 0))
       (when (< row height)
         (let columns ((column 0))

@@ -479,7 +479,6 @@
 
 (define (T_Shoot index tics)
   (when (and (areabyplayer-at (ref actor-areanumber index)) (CheckLine index))
-    (plus-flash-at (ref actor-tilex index) (ref actor-tiley index))
     (let* ((dx (abs (- (ref actor-tilex index) player-tilex)))
            (dy (abs (- (ref actor-tiley index) player-tiley)))
            (spread (max dx dy))
@@ -1615,14 +1614,11 @@
       (buttons (+ button 1)))))
 
 (define (PollKeyboardMove)
-  (let* ((step (* (cond ((ref buttonstate bt_run) 70) (plus-enabled plus-walk-speed) (else 35)) tics))
-         (turn (if (and plus-enabled (not (ref buttonstate bt_strafe)))
-                   (* plus-turn-speed tics)
-                   step)))
+  (let ((step (* (if (ref buttonstate bt_run) 70 35) tics)))
     (when (ref Keyboard (ref dirscan 0)) (set! controly (- controly step)))
     (when (ref Keyboard (ref dirscan 2)) (set! controly (+ controly step)))
-    (when (ref Keyboard (ref dirscan 3)) (set! controlx (- controlx turn)))
-    (when (ref Keyboard (ref dirscan 1)) (set! controlx (+ controlx turn)))))
+    (when (ref Keyboard (ref dirscan 3)) (set! controlx (- controlx step)))
+    (when (ref Keyboard (ref dirscan 1)) (set! controlx (+ controlx step)))))
 
 (define (PollKeyboardControls)
   (PollKeyboardButtons)
@@ -1741,7 +1737,6 @@
 
 ;; WL_PLAY.C:613-833.
 (define (CheckKeys)
-  (plus-check-keys)
   (unless (or screenfaded demoplayback demo-session)
     (when (and (ref Keyboard sc_M) (ref Keyboard sc_L) (ref Keyboard sc_I))
       (set! health 100)

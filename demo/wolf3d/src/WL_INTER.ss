@@ -413,9 +413,6 @@
   (VL_FadeIn 0 255 gamepal 30)
   (let ((started TimeCount))
     (IN_StartAck)
-    (when plus-available
-      (IN_Yield)
-      (plus-prepare (vector FLOOR (ref vgaCeiling 0))))
     (unless (IN_CheckAck)
       (IN_UserInput (max 0 (- (* TickBase 7) (- TimeCount started))))))
   (VL_FadeOut 0 255 0 0 0 30))

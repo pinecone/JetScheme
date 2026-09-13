@@ -405,7 +405,6 @@
         ((= weapon wp_machinegun) (SD_PlaySound ATKMACHINEGUNSND))
         ((= weapon wp_chaingun) (SD_PlaySound ATKGATLINGSND)))
   (set! madenoise #t)
-  (plus-flash-at player-tilex player-tiley)
   (let ((closest (car (closest-target))))
     (when (and (>= closest 0) (CheckLine closest))
       (let* ((dx (abs (- (ref actor-tilex closest) player-tilex)))
