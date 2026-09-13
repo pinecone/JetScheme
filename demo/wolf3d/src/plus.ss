@@ -6,6 +6,7 @@
 (define plus-base-view-size SetViewSize)
 (define plus-base-preview ShowViewSize)
 (define plus-base-refresh ThreeDRefresh)
+(define plus-base-clear-split ClearSplitVWB)
 
 (define plus-requested (option "--plus" #f))
 (define plus-available
@@ -2355,6 +2356,12 @@
   (DrawWeapon)
   (DrawScore))
 
+(define (plus-clear-split)
+  (plus-base-clear-split)
+  (when (> screenoffset 0)
+    (VWB_Bar (- screenoffset) 0 screenoffset screenheight 127)
+    (VWB_Bar UIWIDTH 0 screenoffset screenheight 127)))
+
 (define (plus-menu-clear)
   (VWB_Bar (- screenoffset) 0 screenwidth screenheight BORDCOLOR))
 
@@ -2409,6 +2416,7 @@
   (set! DrawPlayBorderSides plus-border-sides)
   (set! DrawPlayBorder plus-border)
   (set! DrawPlayScreen plus-play-screen)
+  (set! ClearSplitVWB plus-clear-split)
   (set! ClearMScreen plus-menu-clear)
   (set! DrawStripes plus-menu-stripes)
   (set! draw-shape-page plus-shape-page)
