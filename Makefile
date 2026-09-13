@@ -16,7 +16,7 @@
 
 CXX				 := clang++
 UNCRUSTIFY := uncrustify
-ASAN_RTDIR := $(shell $(CXX) -print-runtime-dir 2>/dev/null)
+ASAN_RTDIR = $(shell $(CXX) -print-runtime-dir 2>/dev/null)
 
 # Parallel build by default; override with `make JOBS=1` or `make -j1`.
 JOBS ?= $(shell nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 8)
@@ -128,7 +128,8 @@ DEPS := $(ALL_OBJ:.o=.d) $(OBJDIR)/tests/profile.d
 
 .PHONY: all release debug profile all-variants \
 				test test-release test-profile sanitize show-sanitizers \
-				ab-cross-bench format format-check clean tags FORCE
+				ab-cross-bench format format-check clean tags FORCE \
+				check-deps check-format-deps check-tags-deps check-python-deps
 .DEFAULT_GOAL := all
 
 all: $(JET_BIN)
@@ -147,10 +148,146 @@ all-variants:
 	$(Q)$(MAKE) VARIANT=debug
 	$(Q)$(MAKE) VARIANT=profile
 
+# --- Dependency checks ---------------------------------------------------
+
+# Order-only prerequisites keep checks ahead of parallel compilation without forcing rebuilds.
+$(ALL_OBJ) $(OBJDIR)/tests/profile.o $(JET_BIN) $(OBJDIR)/profile-test \
+$(PRELUDE_H) $(MODULES_H): | check-deps
+
+define dependency_diagnostics
+	failed=0; apt_packages=; brew_packages=; apple_tools=0; \
+	missing() { \
+		printf '  Missing or unusable: %s\n' "$$1" >&2; \
+		failed=1; \
+		for package in $$2; do \
+			case " $$apt_packages " in \
+				*" $$package "*) ;; \
+				*) apt_packages="$${apt_packages:+$$apt_packages }$$package" ;; \
+			esac; \
+		done; \
+		for package in $$3; do \
+			case " $$brew_packages " in \
+				*" $$package "*) ;; \
+				*) brew_packages="$${brew_packages:+$$brew_packages }$$package" ;; \
+			esac; \
+		done; \
+	}; \
+	finish() { \
+		if [ "$$failed" = 0 ]; then return; fi; \
+		case '$(UNAME_S)' in \
+			Darwin) \
+				if [ -n "$$brew_packages" ]; then \
+					printf '\nWith Homebrew installed, install the packages with:\n  brew install %s\n' \
+						"$$brew_packages" >&2; \
+				fi; \
+				if [ "$$apple_tools" = 1 ]; then \
+					printf '\nIf Apple command-line tools are missing, run:\n  xcode-select --install\n' >&2; \
+					printf '\nTo select Homebrew LLVM, run:\n' >&2; \
+					printf '  make CXX="$$(brew --prefix llvm)/bin/clang++"\n' >&2; \
+				fi ;; \
+			Linux) \
+				distribution=$$( \
+					if [ -r /etc/os-release ]; then . /etc/os-release; fi; \
+					printf '%s %s' "$${ID:-}" "$${ID_LIKE:-}" \
+				); \
+				case " $$distribution " in \
+					*' debian '*|*' ubuntu '*) \
+						printf '\nOn Debian/Ubuntu, install the packages with:\n  sudo apt install %s\n' \
+							"$$apt_packages" >&2; \
+						printf 'Package names and LLVM versions can differ between OS releases.\n' >&2 ;; \
+					*) printf '\nUse your distribution package manager to install the dependencies above.\n' >&2 ;; \
+				esac ;; \
+			*) printf '\nAutomatic installation guidance is available for macOS and Debian/Ubuntu.\n' >&2 ;; \
+		esac; \
+		printf '\nIf already installed, check compiler selection and header/library search paths.\n' >&2; \
+		exit 1; \
+	};
+endef
+
+check-deps:
+	@$(dependency_diagnostics) \
+	case '$(UNAME_S)' in \
+		Linux|Darwin) ;; \
+		*) printf 'Unsupported build system: %s. Expected Linux or macOS.\n' '$(UNAME_S)' >&2; exit 1 ;; \
+	esac; \
+	probe_dir=$$(mktemp -d "$${TMPDIR:-/tmp}/jet-deps.XXXXXX") || exit 1; \
+	trap 'rm -rf "$$probe_dir"' 0; \
+	trap 'exit 1' 1 2 3 15; \
+	printf '%s\n' '#include <format>' '#include <string>' \
+		'int main() { return std::format("{}", 42).empty(); }' > "$$probe_dir/core.cc"; \
+	toolchain_ok=0; \
+	if $(CXX) $(CXXFLAGS) $(LDOPT) "$$probe_dir/core.cc" -o "$$probe_dir/core" \
+		> "$$probe_dir/toolchain.log" 2>&1; then \
+		toolchain_ok=1; \
+	else \
+		missing '$(CXX): C++20 toolchain with libc++ std::format and the selected linker/runtime' \
+			'clang lld libc++-dev libc++abi-dev libclang-rt-dev' 'llvm'; \
+		cat "$$probe_dir/toolchain.log" >&2; \
+		apple_tools=1; \
+	fi; \
+	if [ -n '$(strip $(MODULE_SOKOL_CC))' ]; then \
+		case '$(UNAME_S)' in \
+			Linux) \
+				if command -v $(firstword $(CXX)) >/dev/null 2>&1; then \
+					set -f; \
+					for dependency in \
+						'X11:X11/Xlib.h:X11:libx11-dev' \
+						'XInput:X11/extensions/XInput2.h:Xi:libxi-dev' \
+						'Xcursor:X11/Xcursor/Xcursor.h:Xcursor:libxcursor-dev' \
+						'OpenGL:GL/gl.h:GL:libgl-dev' \
+						'ALSA:alsa/asoundlib.h:asound:libasound2-dev'; do \
+						saved_ifs=$$IFS; IFS=:; set -- $$dependency; IFS=$$saved_ifs; \
+						printf '%s\n' "#if !__has_include(<$$2>)" '#error Missing header' '#endif' \
+							'int main() { return 0; }' > "$$probe_dir/module.cc"; \
+						if ! $(CXX) $(CXXFLAGS) -E -x c++ "$$probe_dir/module.cc" -o /dev/null \
+							> "$$probe_dir/module.log" 2>&1; then \
+							missing "$$1 development headers" "$$4" ''; \
+						elif [ "$$toolchain_ok" = 1 ] && \
+							! $(CXX) $(CXXFLAGS) $(LDOPT) "$$probe_dir/module.cc" -l"$$3" \
+								-o "$$probe_dir/module" > "$$probe_dir/module.log" 2>&1; then \
+							missing "$$1 development library" "$$4" ''; \
+							cat "$$probe_dir/module.log" >&2; \
+						fi; \
+					done; \
+				fi ;; \
+			Darwin) \
+				if [ "$$toolchain_ok" = 1 ]; then \
+					printf '%s\n' '#import <AppKit/AppKit.h>' '#import <QuartzCore/QuartzCore.h>' \
+						'#include <OpenGL/gl.h>' '#include <AudioToolbox/AudioToolbox.h>' \
+						'int main() { return 0; }' > "$$probe_dir/module.cc"; \
+					if ! $(CXX) $(SOKOL_CXXFLAGS) $(LDFLAGS) "$$probe_dir/module.cc" \
+						-o "$$probe_dir/module" > "$$probe_dir/module.log" 2>&1; then \
+						missing 'macOS SDK frameworks and Objective-C++ support for the DOS module' '' 'llvm'; \
+						cat "$$probe_dir/module.log" >&2; \
+						apple_tools=1; \
+					fi; \
+				fi ;; \
+		esac; \
+	fi; \
+	finish
+
+check-format-deps check-tags-deps check-python-deps:
+	@$(dependency_diagnostics) \
+	case '$@' in \
+		check-format-deps) \
+			if ! $(UNCRUSTIFY) --version >/dev/null 2>&1; then \
+				missing 'uncrustify' 'uncrustify' 'uncrustify'; \
+			fi ;; \
+		check-tags-deps) \
+			if ! ctags --version >/dev/null 2>&1; then \
+				missing 'Universal Ctags (ctags on PATH)' 'universal-ctags' 'universal-ctags'; \
+			fi ;; \
+		check-python-deps) \
+			if ! python3 --version >/dev/null 2>&1; then \
+				missing 'Python 3' 'python3' 'python'; \
+			fi ;; \
+	esac; \
+	finish
+
 # --- Run targets (variant-aware via JET env var) --------------------
 
 # Recipe lines run in order, so a test target never builds variants in parallel.
-test:
+test: | check-python-deps
 	$(Q)$(MAKE) test-release
 	$(Q)$(MAKE) test-profile
 	$(Q)$(MAKE) sanitize
@@ -160,7 +297,7 @@ test-release:
 	@printf '  TEST release\n'
 	$(Q)cd tests && JET=../build/jet JET_MODULE_TESTS='$(MODULE_TESTS)' ./run-tests
 
-test-profile:
+test-profile: | check-python-deps
 	$(Q)$(MAKE) VARIANT=profile
 	@printf '  TEST profile\n'
 	$(Q)cd tests && JET=../build/jet-profile JET_MODULE_TESTS='$(MODULE_TESTS)' ./run-tests
@@ -202,11 +339,11 @@ ab-cross-bench:
 	@printf '  BENCH cross\n'
 	$(Q)cd bench && ./ab-cross $(REF)
 
-format:
+format: | check-format-deps
 	@printf '  FMT   source\n'
 	$(Q)$(UNCRUSTIFY) -q -c uncrustify.cfg --replace --no-backup $(ALL_CPP)
 
-format-check:
+format-check: | check-format-deps
 	@printf '  FMT   source\n'
 	$(Q)$(UNCRUSTIFY) -q -c uncrustify.cfg --check $(ALL_CPP)
 
@@ -217,7 +354,7 @@ clean:
 # Sorted tag file so readtags can binary-search (O(log n)) instead of
 # scanning linearly. --sort=yes is ctags' default, but we pass it
 # explicitly since correctness here depends on it.
-tags: | $(BUILD)
+tags: | $(BUILD) check-tags-deps
 	@printf '  TAGS  %s\n' '$(BUILD)/TAGS'
 	$(Q)ctags --sort=yes -f $(BUILD)/TAGS -R $(SRC) $(MODULE_DIRS)
 
