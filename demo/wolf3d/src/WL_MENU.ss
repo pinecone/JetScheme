@@ -1123,7 +1123,6 @@
             (choose)
             (begin
               (SD_PlaySound SHOOTSND)
-              (DrawLSAction #f)
               (set! loadedgame #t)
               (LoadTheGame which (+ LSA_X 8) (+ LSA_Y 5))
               (SD_PlaySound SHOOTSND)

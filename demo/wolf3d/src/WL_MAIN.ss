@@ -588,6 +588,8 @@
 
 ;; WL_MAIN.C:443-536
 (define (LoadTheGame slot x y)
+  (DrawLSAction #f)
+  (IN_Yield)
   (let ((port (open-input-file (save-path slot))))
     (set! save-buffer (read-bytes/all port))
     (close-input-port port))

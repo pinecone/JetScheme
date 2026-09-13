@@ -8,6 +8,10 @@
 (define PLUS_MIP_STEPS 8)
 (define PLUS_MIP_LEVELS 7)
 (define plus-mips #f)
+(define plus-base-palette #f)
+(define plus-resources #f)
+(define plus-deadline #f)
+(define PLUS_BUILD_SLICE (/ 1 120))
 
 (define plus-turn-speed (option "--turn-speed" 62.5))
 (define plus-walk-speed (option "--walk-speed" 52.5))
@@ -375,6 +379,7 @@
                            (if (and texels (= level 0) (= blend 0))
                                texels
                                (plus-mip-table colors coarse width height blend cache))))
+            (plus-build-step)
             (blends (+ blend 1))))
         (unless (= height 1)
           (levels nextwidth nextheight coarse (+ level 1)))))
@@ -452,9 +457,8 @@
          (limit (+ distance (/ (max 0 (- pixel-error variance)) PLUS_DITHER_CONTRAST))))
     (vector nearest (min first-error second-error) limit pixel-error)))
 
-(define (plus-build-palette)
-  (let* ((surfaces (plus-surface-colors))
-         (ramp (* PLUS_LEVEL_COUNT (vector-length PLUS_AO_DEPTHS)))
+(define (plus-build-palette surfaces)
+  (let* ((ramp (* PLUS_LEVEL_COUNT (vector-length PLUS_AO_DEPTHS)))
          (count (* (vector-length surfaces) ramp))
          (targets (make-vector count #f))
          (colors (make-vector count #f))
@@ -484,6 +488,7 @@
               (setf! colors index rounded)
               (setf! samples index (plus-palette-sample target))
               (setf! weights index (/ 1 (sqrt (+ brightness 8)))))))
+        (plus-build-step)
         (prepare (+ index 1))))
 
     (let slots ((slot 0))
@@ -512,6 +517,7 @@
                             ((or (<= (plus-palette-error (ref targets index) color) (ref sample 1))
                                  (<= (plus-palette-distance color (ref sample 0)) (ref sample 2)))
                              (setf! samples index (plus-palette-sample (ref targets index)))))))
+                  (plus-build-step)
                   (update (+ index 1)))))
             (slots (+ slot 1))))))))
 
@@ -535,6 +541,7 @@
               (setf! table color (ref dark (ref lit color)))
               (colors (+ color 1))))
           (setf! shades level table))
+        (plus-build-step)
         (levels (+ level 1))))
     shades))
 
@@ -545,10 +552,10 @@
   (let levels ((level 1))
     (when (< level (vector-length plus-pillar-shades))
       (setf! plus-pillar-shades level (plus-build-ao-colors (/ level 4)))
+      (plus-build-step)
       (levels (+ level 1)))))
 
 (define (plus-build-shades)
-  (when plus-available (plus-build-palette))
   (let ((identity (make-bytevector 256 0)))
     (let loop ((index 0))
       (when (< index 256)
@@ -566,9 +573,9 @@
       (let ((level (+ (* shade PLUS_SHADE_STEP) PLUS_LEVEL_MIN)))
         (unless (= level 0)
           (setf! plus-shades shade (plus-build-table (plus-light-factor level)))))
+      (plus-build-step)
       (shades (+ shade 1))))
-  (plus-build-ao)
-  (when plus-available (plus-build-dither)))
+  (plus-build-ao))
 
 (define (plus-door-tile? tile)
   (and (>= tile 128) (< tile 192)))
@@ -1066,6 +1073,7 @@
             (unless (= size 1)
               (levels (plus-sprite-average image size) (quotient size 2) (+ level 1))))
           (setf! plus-sprite-mips shape mips)))
+      (plus-build-step)
       (shapes (+ shape 1)))))
 
 (define (plus-build-blends)
@@ -1077,6 +1085,7 @@
         (setf! target 1 (/ (* (modulo (quotient color 32) 32) 63) 31))
         (setf! target 2 (/ (* (modulo color 32) 63) 31))
         (setf! plus-blends color (plus-nearest-color target))
+        (when (= (modulo color 128) 0) (plus-build-step))
         (colors (+ color 1))))))
 
 (define (plus-blend-sprite first second firstweight secondweight background)
@@ -1291,8 +1300,37 @@
                   (columns (+ column 1)))))
             (scan (+ row 1))))))))
 
+(define (plus-build-step)
+  (when (and plus-deadline (>= (time-monotonic) plus-deadline))
+    (IN_Yield)
+    (set! plus-deadline (+ (time-monotonic) PLUS_BUILD_SLICE))))
+
+(define (plus-prepare surfaces)
+  (when plus-available
+    (unless (and plus-resources (equal? surfaces (ref plus-resources 0)))
+      (let ((palette gamepal))
+        ; The game coroutine keeps the renderer idle while these tables are rebuilt.
+        (set! plus-resources #f)
+        (set! gamepal (bytevector-copy plus-base-palette 0 PALETTEBYTES))
+        (set! plus-deadline (and in-yield (+ (time-monotonic) PLUS_BUILD_SLICE)))
+
+        (plus-build-palette surfaces)
+        (plus-build-shades)
+        (plus-build-dither surfaces)
+        (let ((cache (make-vector (* 64 64 64) #f)))
+          (plus-build-mips cache)
+          (plus-build-sprite-mips cache))
+        (plus-build-blends)
+
+        (set! plus-deadline #f)
+        (set! plus-resources (tuple surfaces gamepal))
+        (set! gamepal palette)))
+    (ref plus-resources 1)))
+
 (define (plus-palette-loaded)
-  (when plus-available (plus-build-shades)))
+  (when plus-available
+    (set! plus-base-palette gamepal)
+    (set! plus-resources #f)))
 
 (define (plus-startup)
   (when plus-available
@@ -1301,11 +1339,7 @@
 
 (define (plus-level-loaded)
   (when plus-available
-    (plus-build-shades)
-    (let ((cache (make-vector (* 64 64 64) #f)))
-      (plus-build-mips cache)
-      (plus-build-sprite-mips cache))
-    (plus-build-blends)
+    (set! gamepal (plus-prepare (plus-surface-colors)))
     (InitRedShifts)
     (unless screenfaded (VL_SetPalette gamepal))
     (let reset ((slot 0))
@@ -1391,26 +1425,27 @@
                 (search (+ index 1) index weight score)
                 (search (+ index 1) second mix error)))))))
 
-(define (plus-build-dither)
-  (let ((colors (plus-surface-colors)))
-    (let surfaces ((index 0))
-      (when (< index (vector-length colors))
-        (let ((color (ref colors index))
-              (tables (make-vector (vector-length PLUS_AO_DEPTHS) #f)))
-          (let layers ((layer 0))
-            (when (< layer (vector-length PLUS_AO_DEPTHS))
-              (let ((table (make-vector PLUS_LEVEL_COUNT #f)))
-                (let shades ((shade 0))
-                  (when (< shade PLUS_LEVEL_COUNT)
-                    (setf! table shade
-                           (plus-dither-pair
-                             (plus-target color (plus-light-factor (+ shade PLUS_LEVEL_MIN))
-                                          (ref PLUS_AO_DEPTHS layer) plus-channel-value)))
-                    (shades (+ shade 1))))
-                (setf! tables layer table))
-              (layers (+ layer 1))))
-          (setf! plus-dither color tables))
-        (surfaces (+ index 1))))))
+(define (plus-build-dither colors)
+  (set! plus-dither (make-vector 256 #f))
+  (let surfaces ((index 0))
+    (when (< index (vector-length colors))
+      (let ((color (ref colors index))
+            (tables (make-vector (vector-length PLUS_AO_DEPTHS) #f)))
+        (let layers ((layer 0))
+          (when (< layer (vector-length PLUS_AO_DEPTHS))
+            (let ((table (make-vector PLUS_LEVEL_COUNT #f)))
+              (let shades ((shade 0))
+                (when (< shade PLUS_LEVEL_COUNT)
+                  (setf! table shade
+                         (plus-dither-pair
+                           (plus-target color (plus-light-factor (+ shade PLUS_LEVEL_MIN))
+                                        (ref PLUS_AO_DEPTHS layer) plus-channel-value)))
+                  (plus-build-step)
+                  (shades (+ shade 1))))
+              (setf! tables layer table))
+            (layers (+ layer 1))))
+        (setf! plus-dither color tables))
+      (surfaces (+ index 1)))))
 
 (define (plus-plane-color shades layer shade threshold)
   (let ((pair (ref shades layer shade)))
