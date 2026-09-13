@@ -1,43 +1,43 @@
-(define plus-ui-width 320)
+(define *plus-ui-width* 320)
 (define *plus-screen-offset* 0)
 
-(define plus-base-keyboard-move PollKeyboardMove)
-(define plus-base-pc-render pc-render)
-(define plus-base-view-size SetViewSize)
-(define plus-base-preview ShowViewSize)
-(define plus-base-refresh ThreeDRefresh)
-(define plus-base-clear-split ClearSplitVWB)
+(define *plus-base-keyboard-move* PollKeyboardMove)
+(define *plus-base-pc-render* pc-render)
+(define *plus-base-view-size* SetViewSize)
+(define *plus-base-preview* ShowViewSize)
+(define *plus-base-refresh* ThreeDRefresh)
+(define *plus-base-clear-split* ClearSplitVWB)
 
 (define *plus-requested* (option "--plus" #f))
-(define plus-available
+(define *plus-enabled*
   (if (eq? demo-action 'play) (= (ref demo-data 5) 1) *plus-requested*))
-(define *plus-enabled* plus-available)
+(define *plus-active* *plus-enabled*)
 (define *plus-key* #f)
-(define *plus-output-width* plus-ui-width)
+(define *plus-output-width* *plus-ui-width*)
 (define *plus-output-ready* #f)
-(define plus-mip-steps 8)
-(define plus-mip-levels 7)
+(define *plus-mip-steps* 8)
+(define *plus-mip-levels* 7)
 (define *plus-mips* #f)
 (define *plus-base-palette* #f)
 (define *plus-resources* #f)
 (define *plus-deadline* #f)
-(define plus-build-slice (/ 1 120))
+(define *plus-build-slice* (/ 1 120))
 
 (define *plus-turn-speed* (option "--turn-speed" 62.5))
 (define *plus-walk-speed* (option "--walk-speed" 52.5))
 
 (define (plus-keyboard-move)
-  (if *plus-enabled*
+  (if *plus-active*
       (let* ((step (* (if (ref buttonstate bt_run) 70 *plus-walk-speed*) tics))
              (turn (if (ref buttonstate bt_strafe) step (* *plus-turn-speed* tics))))
         (when (ref Keyboard (ref dirscan 0)) (set! controly (- controly step)))
         (when (ref Keyboard (ref dirscan 2)) (set! controly (+ controly step)))
         (when (ref Keyboard (ref dirscan 3)) (set! controlx (- controlx turn)))
         (when (ref Keyboard (ref dirscan 1)) (set! controlx (+ controlx turn))))
-      (plus-base-keyboard-move)))
+      (*plus-base-keyboard-move*)))
 
 (define (plus-samples data length)
-  (if *plus-enabled*
+  (if *plus-active*
       (let ((samples (make-bytevector length PCSILENCE)))
         (let copy ((index 0))
           (when (< index length)
@@ -47,7 +47,7 @@
       (bytevector-copy data 0 length)))
 
 (define (plus-pc-render data length)
-  (if *plus-enabled*
+  (if *plus-active*
       (let* ((persample (truncate (/ PCRATE PCSERVICERATE)))
              (high (+ PCSILENCE (quotient (- PCHIGH PCSILENCE) 2)))
              (low (+ PCSILENCE (quotient (- PCLOW PCSILENCE) 2)))
@@ -66,34 +66,34 @@
                                    (fraction (- moved (truncate moved))))
                               (setf! pcm (+ out offset) (if (< fraction 0.5) high low))
                               (emit (+ offset 1) fraction))))))))))
-      (plus-base-pc-render data length)))
+      (*plus-base-pc-render* data length)))
 
-(define plus-light-radius 6)
-(define plus-light-levels 8)
-(define plus-chandelier-levels 9)
-(define plus-light-step 16)
-(define plus-ambient-depth 96)
-(define plus-distance-depth 32)
-(define plus-level-min -64)
-(define plus-level-max 240)
-(define plus-level-count (+ 1 (- plus-level-max plus-level-min)))
-(define plus-shade-step 4)
-(define plus-shade-count (+ 1 (/ (- plus-level-count 1) plus-shade-step)))
-(define plus-emissive-luma 48)
-(define plus-flash-levels 32)
-(define plus-flash-tics 8)
-(define plus-flash-count 4)
-(define plus-ao-width (/ TILEGLOBAL 40))
-(define plus-ao-step 4)
-(define plus-dither-contrast 0.25)
-(define plus-corner-depth 3)
-(define plus-ao-depths (vector 0 1 plus-corner-depth))
+(define *plus-light-radius* 6)
+(define *plus-light-levels* 8)
+(define *plus-chandelier-levels* 9)
+(define *plus-light-step* 16)
+(define *plus-ambient-depth* 96)
+(define *plus-distance-depth* 32)
+(define *plus-level-min* -64)
+(define *plus-level-max* 240)
+(define *plus-level-count* (+ 1 (- *plus-level-max* *plus-level-min*)))
+(define *plus-shade-step* 4)
+(define *plus-shade-count* (+ 1 (/ (- *plus-level-count* 1) *plus-shade-step*)))
+(define *plus-emissive-luma* 48)
+(define *plus-flash-max-level* 32)
+(define *plus-flash-tics* 8)
+(define *plus-flash-count* 4)
+(define *plus-ao-width* (/ TILEGLOBAL 40))
+(define *plus-ao-step* 4)
+(define *plus-dither-contrast* 0.25)
+(define *plus-corner-depth* 3)
+(define *plus-ao-depths* (vector 0 1 *plus-corner-depth*))
 (define *plus-ao-shades* #f)
 (define *plus-corner-shades* #f)
 (define *plus-pillar-shades* #f)
-(define plus-palette-slots #(5 80 81 82 83 84 85 86 87 166 167 168 169 170 176 177 178 181 255))
-(define plus-shadow-depth 48)
-(define plus-pillar (+ SPR_STAT_0 7))
+(define *plus-palette-slots* #(5 80 81 82 83 84 85 86 87 166 167 168 169 170 176 177 178 181 255))
+(define *plus-shadow-depth* 48)
+(define *plus-pillar* (+ SPR_STAT_0 7))
 
 (define *plus-wall-height* (make-vector viewwidth 0))
 (define *plus-wall-x* (make-vector viewwidth 0))
@@ -129,7 +129,7 @@
       (when (< color 256)
         (setf! identity color color)
         (colors (+ color 1))))
-    (make-vector plus-shade-count identity)))
+    (make-vector *plus-shade-count* identity)))
 (define *plus-emissive* (make-bytevector 256 0))
 (define *plus-luma* (make-bytevector 256 0))
 (define *plus-sprites* (make-vector 0 #f))
@@ -137,7 +137,7 @@
 (define *plus-blends* #f)
 (define *plus-feet* (make-vector 0 #f))
 (define *plus-mounts* (make-vector 0 #f))
-(define plus-contacts
+(define *plus-contacts*
   '#(none floor floor floor ceiling ceiling floor both
      floor floor floor floor floor floor ceiling ceiling
      floor ceiling ceiling floor floor floor floor floor
@@ -157,34 +157,34 @@
 ; Cell bits run left to right, then top to bottom.
 (define *plus-light-masks* (make-bytevector (* MAPSIZE MAPSIZE) 0))
 (define *plus-flash-maps*
-  (let ((maps (make-vector plus-flash-count #f)))
+  (let ((maps (make-vector *plus-flash-count* #f)))
     (let slots ((slot 0))
-      (when (< slot plus-flash-count)
+      (when (< slot *plus-flash-count*)
         (setf! maps slot (make-bytevector (* MAPSIZE MAPSIZE) 0))
         (slots (+ slot 1))))
     maps))
-(define plus-neighbors #(#(-1 0) #(1 0) #(0 -1) #(0 1)))
-(define *plus-flash-starts* (make-vector plus-flash-count -1))
+(define *plus-neighbors* #(#(-1 0) #(1 0) #(0 -1) #(0 1)))
+(define *plus-flash-starts* (make-vector *plus-flash-count* -1))
 (define *plus-flash-next* 0)
 (define *plus-flash-time* #f)
 (define *plus-flash-active* #f)
 (define *plus-flash-epoch* 0)
-(define *plus-flash-remaining* (make-vector plus-flash-count 0))
+(define *plus-flash-remaining* (make-vector *plus-flash-count* 0))
 (define *plus-flash-epochs* (make-vector (* MAPSIZE MAPSIZE) -1))
 (define *plus-flash-levels* (make-bytevector (* MAPSIZE MAPSIZE) 0))
 
 (define (plus-update-output)
-  (when plus-available
+  (when *plus-enabled*
     (set! *plus-output-width*
-          (max plus-ui-width (* 2 (round (/ (* screenheight 1.2 (dos:output-width))
-                                           (* 2 (dos:output-height)))))))
+          (max *plus-ui-width* (* 2 (round (/ (* screenheight 1.2 (dos:output-width))
+                                             (* 2 (dos:output-height)))))))
     ; Fades keep framebuffer snapshots across yields; later resizes wait for plus-refresh.
     (unless *plus-output-ready*
       (set! *plus-output-ready* #t)
       (plus-resize))))
 
 (define (plus-resize)
-  (let ((width (if *plus-enabled* *plus-output-width* plus-ui-width)))
+  (let ((width (if *plus-active* *plus-output-width* *plus-ui-width*)))
     (if (= width screenwidth)
         #f
         (let ((source framebuffer)
@@ -192,14 +192,14 @@
               (offset *plus-screen-offset*))
           (unless demo-headless (dos:set-framebuffer-size width screenheight))
           (set! screenwidth width)
-          (set! *plus-screen-offset* (quotient (- width plus-ui-width) 2))
+          (set! *plus-screen-offset* (quotient (- width *plus-ui-width*) 2))
 
           (set! framebuffer (make-bytevector (* width screenheight) 127))
           (let rows ((row 0))
             (when (< row screenheight)
               (let ((start (+ (* row stride) offset)))
                 (bytevector-copy! framebuffer (+ (* row width) *plus-screen-offset*)
-                                  source start (+ start plus-ui-width)))
+                                  source start (+ start *plus-ui-width*)))
               (rows (+ row 1))))
           (set! displayframebuffer (bytevector-copy framebuffer 0 (bytevector-length framebuffer)))
           (set! UPDATEWIDE (quotient (+ width 15) 16))
@@ -234,10 +234,10 @@
     (set! maxslope (arithmetic-shift (ref finetangent (ref pixelangle 0)) -8))))
 
 (define (plus-view-size width height)
-  (if (= screenwidth plus-ui-width)
-      (plus-base-view-size width height)
+  (if (= screenwidth *plus-ui-width*)
+      (*plus-base-view-size* width height)
       (let ((projection (* 16 (truncate (/ width 16)))))
-        (set! viewwidth (+ projection (- screenwidth plus-ui-width)))
+        (set! viewwidth (+ projection (- screenwidth *plus-ui-width*)))
         (set! viewheight (* 2 (truncate (/ height 2))))
         (set! viewleft (truncate (/ (- screenwidth viewwidth) 2)))
         (set! viewtop (truncate (/ (- (- screenheight STATUSLINES) viewheight) 2)))
@@ -248,13 +248,13 @@
         #t)))
 
 (define (plus-preview size)
-  (if (= screenwidth plus-ui-width)
-      (plus-base-preview size)
+  (if (= screenwidth *plus-ui-width*)
+      (*plus-base-preview* size)
       (let ((old-width viewwidth)
             (old-height viewheight)
             (old-left viewleft)
             (old-top viewtop))
-        (set! viewwidth (+ (* size 16) (- screenwidth plus-ui-width)))
+        (set! viewwidth (+ (* size 16) (- screenwidth *plus-ui-width*)))
         (set! viewheight (* size 8))
         (set! viewleft (truncate (/ (- screenwidth viewwidth) 2)))
         (set! viewtop (truncate (/ (- (- screenheight STATUSLINES) viewheight) 2)))
@@ -265,18 +265,18 @@
         (set! viewtop old-top))))
 
 (define (plus-shade level)
-  (truncate (/ (+ (- level plus-level-min) (/ plus-shade-step 2)) plus-shade-step)))
+  (truncate (/ (+ (- level *plus-level-min*) (/ *plus-shade-step* 2)) *plus-shade-step*)))
 
 (define (plus-color color level)
-  (if *plus-enabled* (ref *plus-shades* (plus-shade level) color) color))
+  (if *plus-active* (ref *plus-shades* (plus-shade level) color) color))
 
 (define (plus-sprite-color color shade emissive)
   (ref (if (and emissive (= (ref *plus-emissive* color) 1)) emissive shade) color))
 
 (define (plus-distance-level extent range)
-  (if *plus-enabled*
+  (if *plus-active*
       (let ((distance (- range (min extent range))))
-        (truncate (/ (* plus-distance-depth distance distance distance distance)
+        (truncate (/ (* *plus-distance-depth* distance distance distance distance)
                      (* range range range range))))
       0))
 
@@ -284,15 +284,15 @@
   (+ (* tiley MAPSIZE) tilex))
 
 (define (plus-update-flashes)
-  (when *plus-enabled*
+  (when *plus-active*
     (unless (and *plus-flash-time* (= *plus-flash-time* TimeCount))
       (set! *plus-flash-active* #f)
       (let slots ((slot 0))
-        (when (< slot plus-flash-count)
+        (when (< slot *plus-flash-count*)
           (let* ((start (ref *plus-flash-starts* slot))
                  (remaining (if (or (< start 0) (> start TimeCount))
                                 0
-                                (max 0 (- plus-flash-tics (- TimeCount start))))))
+                                (max 0 (- *plus-flash-tics* (- TimeCount start))))))
             (setf! *plus-flash-remaining* slot remaining)
             (when (> remaining 0) (set! *plus-flash-active* #t)))
           (slots (+ slot 1))))
@@ -303,20 +303,20 @@
   (if (= (ref *plus-flash-epochs* spot) *plus-flash-epoch*)
       (ref *plus-flash-levels* spot)
       (let* ((flash (let slots ((slot 0) (brightest 0))
-                      (if (= slot plus-flash-count)
+                      (if (= slot *plus-flash-count*)
                           brightest
                           (let ((level (truncate (/ (* (ref *plus-flash-maps* slot spot)
                                                         (ref *plus-flash-remaining* slot))
-                                                     plus-flash-tics))))
+                                                     *plus-flash-tics*))))
                             (slots (+ slot 1) (max brightest level))))))
              (bright (if (= flash 0) 0
-                         (min 4 (max 1 (truncate (/ (* 4 flash) plus-flash-levels)))))))
+                         (min 4 (max 1 (truncate (/ (* 4 flash) *plus-flash-max-level*)))))))
         (setf! *plus-flash-levels* spot bright)
         (setf! *plus-flash-epochs* spot *plus-flash-epoch*)
         bright)))
 
 (define (plus-light-level level worldx worldy)
-  (if *plus-enabled*
+  (if *plus-active*
       (let* ((tilex (/ worldx TILEGLOBAL))
              (tiley (/ worldy TILEGLOBAL))
              (samplex (max 0 (min (- MAPSIZE 1) (- tilex 0.5))))
@@ -344,13 +344,13 @@
                                        (* 2 (ref *plus-light-cells* (+ cell 2)))
                                        (ref *plus-light-cells* (+ cell 3)))
                                     3))))))
-             (dark (- (+ plus-ambient-depth level) (* plus-light-step light)))
+             (dark (- (+ *plus-ambient-depth* level) (* *plus-light-step* light)))
              (bright (if *plus-flash-active*
                          (plus-flash-level
                            (plus-light-index (max 0 (min (- MAPSIZE 1) (floor tilex)))
                                              (max 0 (min (- MAPSIZE 1) (floor tiley)))))
                          0)))
-        (max plus-level-min (- dark (* 16 bright))))
+        (max *plus-level-min* (- dark (* 16 bright))))
       0))
 
 (define (plus-ceiling-light? shape)
@@ -365,7 +365,7 @@
   (> (plus-light-emission shape) 0))
 
 (define (plus-light-factor level)
-  (- 1 (/ level (if (< level 0) 120 plus-level-max))))
+  (- 1 (/ level (if (< level 0) 120 *plus-level-max*))))
 
 (define (plus-build-table factor)
   (let ((table (make-bytevector 256 0)))
@@ -410,7 +410,7 @@
          (lightness (if (<= luminance (/ 216 24389))
                         (* luminance (/ 24389 27))
                         (- (* 116 (expt luminance (/ 1 3))) 16)))
-         (step (min plus-ao-step (/ lightness 6)))
+         (step (min *plus-ao-step* (/ lightness 6)))
          (target (- lightness (* depth step)))
          (level (if (<= target 8)
                     (* target (/ 27 24389))
@@ -474,7 +474,7 @@
   (let ((table (make-bytevector (* width height) 0))
         (target (make-vector 3 0))
         (nextheight (max 1 (quotient height 2)))
-        (weight (- plus-mip-steps blend)))
+        (weight (- *plus-mip-steps* blend)))
     (let columns ((column 0))
       (when (< column width)
         (let rows ((row 0))
@@ -486,7 +486,7 @@
                   (setf! target channel
                          (round (/ (+ (* (ref colors (+ source channel)) weight)
                                       (* (ref coarse (+ parent channel)) blend))
-                                   plus-mip-steps)))
+                                   *plus-mip-steps*)))
                   (channels (+ channel 1))))
               (setf! table (+ (* column height) row) (plus-cached-color target cache)))
             (rows (+ row 1))))
@@ -494,15 +494,15 @@
     table))
 
 (define (plus-mip-chain colors width texels cache)
-  (let ((tables (make-vector (+ (* (- plus-mip-levels 1) plus-mip-steps) 1) #f)))
+  (let ((tables (make-vector (+ (* (- *plus-mip-levels* 1) *plus-mip-steps*) 1) #f)))
     (let levels ((width width) (height 64) (colors colors) (level 0))
       (let* ((nextwidth (max 1 (quotient width 2)))
              (nextheight (max 1 (quotient height 2)))
              (coarse (if (= height 1) colors
                          (plus-mip-average colors width height nextwidth nextheight))))
         (let blends ((blend 0))
-          (when (< blend (if (= height 1) 1 plus-mip-steps))
-            (setf! tables (+ (* level plus-mip-steps) blend)
+          (when (< blend (if (= height 1) 1 *plus-mip-steps*))
+            (setf! tables (+ (* level *plus-mip-steps*) blend)
                    (vector width height
                            (if (and texels (= level 0) (= blend 0))
                                texels
@@ -520,7 +520,7 @@
       (when (PM_HasPage page)
         (let ((texels (PM_GetPage page))
               (colors (make-bytevector (* 64 64 3) 0))
-              (chains (make-vector plus-mip-levels #f)))
+              (chains (make-vector *plus-mip-levels* #f)))
           (let pixels ((pixel 0))
             (when (< pixel (* 64 64))
               (let ((source (* (ref texels pixel) 3))
@@ -547,16 +547,16 @@
          (footprint (/ (* 64 depth) (* TILEGLOBAL scale)))
          (horizontal (* footprint (max 1 (/ depth normal))))
          (aspect (let aspects ((ratio (/ (max 1 horizontal) (max 1 footprint))) (index 0))
-                   (if (and (< index (- plus-mip-levels 1)) (>= ratio 2))
+                   (if (and (< index (- *plus-mip-levels* 1)) (>= ratio 2))
                        (aspects (/ ratio 2) (+ index 1))
                        index)))
          (chain (ref *plus-mips* page aspect)))
     (let levels ((height 64) (level 0) (footprint (max 1 footprint)))
-      (cond ((= height 1) (ref chain (* level plus-mip-steps)))
+      (cond ((= height 1) (ref chain (* level *plus-mip-steps*)))
             ((>= footprint 2) (levels (quotient height 2) (+ level 1) (/ footprint 2)))
             (else
               (ref chain
-                   (+ (* level plus-mip-steps) (round (* plus-mip-steps (- footprint 1))))))))))
+                   (+ (* level *plus-mip-steps*) (round (* *plus-mip-steps* (- footprint 1))))))))))
 
 (define (plus-surface-colors)
   (if (= mapon -1)
@@ -582,31 +582,31 @@
          (distance (plus-palette-distance first second))
          (pixel-error (+ (* (- 1 mix) first-error) (* mix second-error)))
          (variance (* mix (- 1 mix) distance))
-         (limit (+ distance (/ (max 0 (- pixel-error variance)) plus-dither-contrast))))
+         (limit (+ distance (/ (max 0 (- pixel-error variance)) *plus-dither-contrast*))))
     (vector nearest (min first-error second-error) limit pixel-error)))
 
 (define (plus-build-palette surfaces)
-  (let* ((ramp (* plus-level-count (vector-length plus-ao-depths)))
+  (let* ((ramp (* *plus-level-count* (vector-length *plus-ao-depths*)))
          (count (* (vector-length surfaces) ramp))
          (targets (make-vector count #f))
          (colors (make-vector count #f))
          (samples (make-vector count #f))
          (weights (make-vector count 0)))
     (let slots ((slot 0))
-      (when (< slot (vector-length plus-palette-slots))
+      (when (< slot (vector-length *plus-palette-slots*))
         (let channels ((channel 0))
           (when (< channel 3)
-            (setf! gamepal (+ (* (ref plus-palette-slots slot) 3) channel) (ref gamepal channel))
+            (setf! gamepal (+ (* (ref *plus-palette-slots* slot) 3) channel) (ref gamepal channel))
             (channels (+ channel 1))))
         (slots (+ slot 1))))
 
     (let prepare ((index 0))
       (when (< index count)
-        (let* ((shade (remainder index plus-level-count))
-               (layer (remainder (quotient index plus-level-count) (vector-length plus-ao-depths)))
-               (depth (ref plus-ao-depths layer))
+        (let* ((shade (remainder index *plus-level-count*))
+               (layer (remainder (quotient index *plus-level-count*) (vector-length *plus-ao-depths*)))
+               (depth (ref *plus-ao-depths* layer))
                (color (ref surfaces (quotient index ramp)))
-               (target (plus-target color (plus-light-factor (+ shade plus-level-min))
+               (target (plus-target color (plus-light-factor (+ shade *plus-level-min*))
                                     depth plus-channel-value))
                (rounded (vector (round (ref target 0)) (round (ref target 1)) (round (ref target 2)))))
           (unless (= (plus-palette-error rounded (plus-nearest-color rounded)) 0)
@@ -620,7 +620,7 @@
         (prepare (+ index 1))))
 
     (let slots ((slot 0))
-      (when (< slot (vector-length plus-palette-slots))
+      (when (< slot (vector-length *plus-palette-slots*))
         (let ((best (let search ((index 0) (best #f) (error 0))
                       (cond ((= index count) best)
                             ((not (ref samples index)) (search (+ index 1) best error))
@@ -631,7 +631,7 @@
                                     (search (+ index 1) best error))))))))
           (when best
             (let ((target (ref colors best))
-                  (color (ref plus-palette-slots slot)))
+                  (color (ref *plus-palette-slots* slot)))
               (let channels ((channel 0))
                 (when (< channel 3)
                   (setf! gamepal (+ (* color 3) channel) (ref target channel))
@@ -659,9 +659,9 @@
 
 (define (plus-build-ao-shades depth)
   (let ((dark (plus-build-ao-colors depth))
-        (shades (make-vector plus-shade-count 0)))
+        (shades (make-vector *plus-shade-count* 0)))
     (let levels ((level 0))
-      (when (< level plus-shade-count)
+      (when (< level *plus-shade-count*)
         (let ((table (make-bytevector 256 0))
               (lit (ref *plus-shades* level)))
           (let colors ((color 0))
@@ -674,8 +674,8 @@
     shades))
 
 (define (plus-build-ao)
-  (set! *plus-ao-shades* (plus-build-ao-shades (ref plus-ao-depths 1)))
-  (set! *plus-corner-shades* (plus-build-ao-shades (ref plus-ao-depths 2)))
+  (set! *plus-ao-shades* (plus-build-ao-shades (ref *plus-ao-depths* 1)))
+  (set! *plus-corner-shades* (plus-build-ao-shades (ref *plus-ao-depths* 2)))
   (set! *plus-pillar-shades* (make-vector 9 (ref *plus-shades* (plus-shade 0))))
   (let levels ((level 1))
     (when (< level (vector-length *plus-pillar-shades*))
@@ -693,12 +693,12 @@
                                    256))))
           (setf! identity index index)
           (setf! *plus-luma* index luma)
-          (setf! *plus-emissive* index (if (>= luma plus-emissive-luma) 1 0)))
+          (setf! *plus-emissive* index (if (>= luma *plus-emissive-luma*) 1 0)))
         (loop (+ index 1))))
     (setf! *plus-shades* (plus-shade 0) identity))
   (let shades ((shade 0))
-    (when (< shade plus-shade-count)
-      (let ((level (+ (* shade plus-shade-step) plus-level-min)))
+    (when (< shade *plus-shade-count*)
+      (let ((level (+ (* shade *plus-shade-step*) *plus-level-min*)))
         (unless (= level 0)
           (setf! *plus-shades* shade (plus-build-table (plus-light-factor level)))))
       (plus-build-step)
@@ -728,7 +728,7 @@
 
 (define (plus-wall-distance worldx worldy tilex tiley)
   (let ((tile (tileat tilex tiley))
-        (limit (* plus-ao-width plus-ao-width)))
+        (limit (* *plus-ao-width* *plus-ao-width*)))
     (cond
       ((= tile 0) limit)
       ((and (> pwallstate 0)
@@ -755,11 +755,11 @@
                           (* (+ tilex 1) TILEGLOBAL) (* (+ tiley 1) TILEGLOBAL))))))
 
 (define (plus-ao-distance worldx worldy)
-  (let ((left (max 0 (arithmetic-shift (- worldx plus-ao-width) -16)))
-        (right (min (- MAPSIZE 1) (arithmetic-shift (+ worldx plus-ao-width) -16)))
-        (top (max 0 (arithmetic-shift (- worldy plus-ao-width) -16)))
-        (bottom (min (- MAPSIZE 1) (arithmetic-shift (+ worldy plus-ao-width) -16))))
-    (let columns ((tilex left) (distance (* plus-ao-width plus-ao-width)))
+  (let ((left (max 0 (arithmetic-shift (- worldx *plus-ao-width*) -16)))
+        (right (min (- MAPSIZE 1) (arithmetic-shift (+ worldx *plus-ao-width*) -16)))
+        (top (max 0 (arithmetic-shift (- worldy *plus-ao-width*) -16)))
+        (bottom (min (- MAPSIZE 1) (arithmetic-shift (+ worldy *plus-ao-width*) -16))))
+    (let columns ((tilex left) (distance (* *plus-ao-width* *plus-ao-width*)))
       (if (or (> tilex right) (= distance 0))
           distance
           (columns (+ tilex 1)
@@ -785,20 +785,20 @@
          (dx (min offsetx (- TILEGLOBAL offsetx)))
          (dy (min offsety (- TILEGLOBAL offsety))))
     (and (>= tilex 0) (< tilex MAPSIZE) (>= tiley 0) (< tiley MAPSIZE)
-         (>= dx 0) (< dx plus-ao-width) (>= dy 0) (< dy plus-ao-width)
-         (< (+ (* dx dx) (* dy dy)) (* plus-ao-width plus-ao-width))
+         (>= dx 0) (< dx *plus-ao-width*) (>= dy 0) (< dy *plus-ao-width*)
+         (< (+ (* dx dx) (* dy dy)) (* *plus-ao-width* *plus-ao-width*))
          (= (tileat tilex tiley) 0)
          (plus-corner-wall? (+ tilex (if (< offsetx (/ TILEGLOBAL 2)) -1 1)) tiley)
          (plus-corner-wall? tilex (+ tiley (if (< offsety (/ TILEGLOBAL 2)) -1 1))))))
 
 (define (plus-ao-layer worldx worldy edge)
-  (cond ((< (plus-ao-distance worldx worldy) (* plus-ao-width plus-ao-width))
+  (cond ((< (plus-ao-distance worldx worldy) (* *plus-ao-width* *plus-ao-width*))
          (if (plus-corner? worldx worldy) 2 1))
         (edge 1)
         (else 0)))
 
 (define (plus-ao level worldx worldy edge)
-  (if *plus-enabled*
+  (if *plus-active*
       (let ((shade (plus-shade level))
             (layer (plus-ao-layer worldx worldy edge)))
         (cond ((= layer 2) (ref *plus-corner-shades* shade))
@@ -811,7 +811,7 @@
     (let ((pressed (and (or (ref Keyboard sc_LShift) (ref Keyboard sc_RShift))
                         (ref Keyboard sc_P))))
       (when (and pressed (not *plus-key*))
-        (set! *plus-enabled* (not *plus-enabled*)))
+        (set! *plus-active* (not *plus-active*)))
       (set! *plus-key* pressed))))
 
 (define (plus-door-limit fromx fromy tox toy tilex tiley door)
@@ -960,9 +960,9 @@
   (let lights ((index 0))
     (when (< index statcount)
       (when (plus-light-shape? (ref stat-shape index))
-        (plus-build-light (ref stat-tilex index) (ref stat-tiley index) plus-light-radius
+        (plus-build-light (ref stat-tilex index) (ref stat-tiley index) *plus-light-radius*
                           (if (= (ref stat-shape index) (+ SPR_STAT_0 4))
-                              plus-chandelier-levels plus-light-levels)))
+                              *plus-chandelier-levels* *plus-light-levels*)))
       (lights (+ index 1))))
   (let points ((spot 0))
     (when (< spot (* MAPSIZE MAPSIZE))
@@ -1003,7 +1003,7 @@
       (plus-dirty-light (- spot MAPSIZE 1) 2))))
 
 (define (plus-update-lights)
-  (when *plus-enabled*
+  (when *plus-active*
     (let doors ((door 0))
       (when (< door doornum)
         (let ((position (ref doorposition door))
@@ -1040,7 +1040,7 @@
     (set! *plus-light-count* 0)))
 
 (define (plus-flash-at tilex tiley)
-  (when *plus-enabled*
+  (when *plus-active*
     (let ((flashmap (ref *plus-flash-maps* *plus-flash-next*))
           (queue (make-vector (* MAPSIZE MAPSIZE) 0))
           (distance (make-bytevector (* MAPSIZE MAPSIZE) 255))
@@ -1056,7 +1056,7 @@
                    (steps (ref distance spot)))
               (let visit ((direction 0))
                 (when (< direction 4)
-                  (let* ((offset (ref plus-neighbors direction))
+                  (let* ((offset (ref *plus-neighbors* direction))
                          (nextx (+ tx (ref offset 0)))
                          (nexty (+ ty (ref offset 1))))
                     (when (plus-light-passable? nextx nexty)
@@ -1074,13 +1074,13 @@
                          (ty (quotient spot MAPSIZE))
                          (steps (ref distance spot))
                          (level (if (= maxd 0)
-                                    plus-flash-levels
-                                    (max 1 (- plus-flash-levels
-                                              (truncate (/ (* plus-flash-levels steps) maxd)))))))
+                                    *plus-flash-max-level*
+                                    (max 1 (- *plus-flash-max-level*
+                                              (truncate (/ (* *plus-flash-max-level* steps) maxd)))))))
                     (setf! flashmap spot level)
                     (let walls ((direction 0))
                       (when (< direction 4)
-                        (let* ((offset (ref plus-neighbors direction))
+                        (let* ((offset (ref *plus-neighbors* direction))
                                (nextx (+ tx (ref offset 0)))
                                (nexty (+ ty (ref offset 1))))
                           (when (and (>= nextx 0) (< nextx MAPSIZE) (>= nexty 0) (< nexty MAPSIZE)
@@ -1093,7 +1093,7 @@
                   (begin
                     (setf! *plus-flash-starts* *plus-flash-next* TimeCount)
                     (set! *plus-flash-time* #f)
-                    (set! *plus-flash-next* (remainder (+ *plus-flash-next* 1) plus-flash-count))))))))))
+                    (set! *plus-flash-next* (remainder (+ *plus-flash-next* 1) *plus-flash-count*))))))))))
 
 (define (plus-enemy-shape? shape)
   (or (and (>= shape SPR_GRD_S_1) (< shape SPR_HYPO1))
@@ -1196,7 +1196,7 @@
     (when (< shape (vector-length *plus-sprites*))
       (when (PM_HasPage (+ PMSpriteStart shape))
         (let ((page (or (ref *plus-sprites* shape) (PM_GetPage (+ PMSpriteStart shape))))
-              (mips (make-vector plus-mip-levels #f)))
+              (mips (make-vector *plus-mip-levels* #f)))
           (let levels ((image (plus-sprite-image page)) (size 64) (level 0))
             (setf! mips level (plus-sprite-mip image size cache))
             (unless (= size 1)
@@ -1235,7 +1235,7 @@
     (if (and (> size 1) (>= footprint 2))
         (levels (quotient size 2) (+ level 1) (/ footprint 2))
         (let* ((fine (ref *plus-sprite-mips* shape level))
-               (coarse (ref *plus-sprite-mips* shape (min (- plus-mip-levels 1) (+ level 1))))
+               (coarse (ref *plus-sprite-mips* shape (min (- *plus-mip-levels* 1) (+ level 1))))
                (finecolors (ref fine 1))
                (finecoverage (ref fine 2))
                (coarsecolors (ref coarse 1))
@@ -1313,10 +1313,10 @@
     (set! *plus-mounts* (make-vector count #f)))
   (let shapes ((shape 0))
     (when (< shape (vector-length *plus-feet*))
-      (when (and (not (= shape plus-pillar)) (PM_HasPage (+ PMSpriteStart shape)))
+      (when (and (not (= shape *plus-pillar*)) (PM_HasPage (+ PMSpriteStart shape)))
         (let* ((offset (- shape SPR_STAT_0))
-               (contact (if (and (>= offset 0) (< offset (vector-length plus-contacts)))
-                            (ref plus-contacts offset)
+               (contact (if (and (>= offset 0) (< offset (vector-length *plus-contacts*)))
+                            (ref *plus-contacts* offset)
                             'none)))
           (when (or (eq? contact 'floor) (eq? contact 'both) (plus-enemy-shape? shape))
             (setf! *plus-feet* shape (plus-body-bounds shape)))
@@ -1345,7 +1345,7 @@
                                                (* (+ (ref *plus-vis-tile-y* index) 0.5) TILEGLOBAL)))
              (color (if ceiling?
                         (ref *plus-ao-shades* (plus-shade level) (ceiling-color))
-                        (plus-color FLOOR (min plus-level-max (+ level plus-shadow-depth)))))
+                        (plus-color FLOOR (min *plus-level-max* (+ level *plus-shadow-depth*)))))
              (luma (ref *plus-luma* color)))
         (let scan ((row (max half (- bottom depth))))
           (when (and (< row limit) (< row viewheight))
@@ -1363,7 +1363,7 @@
             (scan (+ row 1))))))))
 
 (define (plus-draw-shadows)
-  (when *plus-enabled*
+  (when *plus-active*
     (let sprites ((index 0))
       (when (< index *plus-vis-count*)
         (let ((shape (ref *plus-vis-shape* index)))
@@ -1391,7 +1391,7 @@
              (coverage (min 1 (/ width 0.5)))
              (xweight (/ 1 (* radiusx radiusx)))
              (yweight (/ 1 (* radiusy radiusy)))
-             (alpha (ref *plus-sprite-mips* plus-pillar 0 2))
+             (alpha (ref *plus-sprite-mips* *plus-pillar* 0 2))
              (start (max 0 (ceiling (- centerx radiusx band 0.5))))
              (end (min viewwidth (ceiling (- (+ centerx radiusx band) 0.5))))
              (limit (min viewheight (ceiling (- (+ centery radiusy band) 0.5)))))
@@ -1432,16 +1432,16 @@
 (define (plus-build-step)
   (when (and *plus-deadline* (>= (time-monotonic) *plus-deadline*))
     (IN_Yield)
-    (set! *plus-deadline* (+ (time-monotonic) plus-build-slice))))
+    (set! *plus-deadline* (+ (time-monotonic) *plus-build-slice*))))
 
 (define (plus-prepare surfaces)
-  (when plus-available
+  (when *plus-enabled*
     (unless (and *plus-resources* (equal? surfaces (ref *plus-resources* 0)))
       (let ((palette gamepal))
         ; The game coroutine keeps the renderer idle while these tables are rebuilt.
         (set! *plus-resources* #f)
         (set! gamepal (bytevector-copy *plus-base-palette* 0 PALETTEBYTES))
-        (set! *plus-deadline* (and in-yield (+ (time-monotonic) plus-build-slice)))
+        (set! *plus-deadline* (and in-yield (+ (time-monotonic) *plus-build-slice*)))
 
         (plus-build-palette surfaces)
         (plus-build-shades)
@@ -1457,27 +1457,27 @@
     (ref *plus-resources* 1)))
 
 (define (plus-warmup)
-  (when plus-available
+  (when *plus-enabled*
     (IN_Yield)
     (plus-prepare (vector FLOOR (ref vgaCeiling 0)))))
 
 (define (plus-palette-loaded)
-  (when plus-available
+  (when *plus-enabled*
     (set! *plus-base-palette* gamepal)
     (set! *plus-resources* #f)))
 
 (define (plus-startup)
-  (when plus-available
+  (when *plus-enabled*
     (plus-build-sprites)
     (plus-build-contacts)))
 
 (define (plus-level-loaded)
-  (when plus-available
+  (when *plus-enabled*
     (set! gamepal (plus-prepare (plus-surface-colors)))
     (InitRedShifts)
     (unless screenfaded (VL_SetPalette gamepal))
     (let reset ((slot 0))
-      (when (< slot plus-flash-count)
+      (when (< slot *plus-flash-count*)
         (plus-clear-map (ref *plus-flash-maps* slot))
         (setf! *plus-flash-starts* slot -1)
         (reset (+ slot 1))))
@@ -1500,7 +1500,7 @@
         (columns (+ column 1))))))
 
 (define *plus-dither* (make-vector 256 #f))
-(define plus-pattern
+(define *plus-pattern*
   (let ((pattern
           #(200 94 175 234 98 23 194 115 145 181 19 61 250 89 151 7
             168 37 72 122 52 170 132 77 50 245 106 203 163 21 231 123
@@ -1554,7 +1554,7 @@
                  (residual-green (- error-green (* weight delta-green)))
                  (residual-blue (- error-blue (* weight delta-blue)))
                  (score (+ (* residual-red residual-red) (* residual-green residual-green)
-                           (* residual-blue residual-blue) (* plus-dither-contrast distance))))
+                           (* residual-blue residual-blue) (* *plus-dither-contrast* distance))))
             (if (and (> weight 0) (or (not error) (< score error)))
                 (search (+ index 1) index weight score)
                 (search (+ index 1) second mix error)))))))
@@ -1564,16 +1564,16 @@
   (let surfaces ((index 0))
     (when (< index (vector-length colors))
       (let ((color (ref colors index))
-            (tables (make-vector (vector-length plus-ao-depths) #f)))
+            (tables (make-vector (vector-length *plus-ao-depths*) #f)))
         (let layers ((layer 0))
-          (when (< layer (vector-length plus-ao-depths))
-            (let ((table (make-vector plus-level-count #f)))
+          (when (< layer (vector-length *plus-ao-depths*))
+            (let ((table (make-vector *plus-level-count* #f)))
               (let shades ((shade 0))
-                (when (< shade plus-level-count)
+                (when (< shade *plus-level-count*)
                   (setf! table shade
                          (plus-dither-pair
-                           (plus-target color (plus-light-factor (+ shade plus-level-min))
-                                        (ref plus-ao-depths layer) plus-channel-value)))
+                           (plus-target color (plus-light-factor (+ shade *plus-level-min*))
+                                        (ref *plus-ao-depths* layer) plus-channel-value)))
                   (plus-build-step)
                   (shades (+ shade 1))))
               (setf! tables layer table))
@@ -1586,7 +1586,7 @@
     (ref pair (if (< threshold (ref pair 2)) 1 0))))
 
 (define (plus-draw-planes)
-  (when *plus-enabled*
+  (when *plus-active*
     (plus-build-planes)
     (let ((halfh (arithmetic-shift viewheight -1))
           (ceiling (ref *plus-dither* (ceiling-color)))
@@ -1607,20 +1607,20 @@
                     (let* ((worldx (+ viewx (* (ref *plus-plane-x* column) projection)))
                            (worldy (+ viewy (* (ref *plus-plane-y* column) projection)))
                            (level (plus-light-level 0 worldx worldy))
-                           (shade (max 0 (min (- plus-level-count 1) (round (- level plus-level-min)))))
+                           (shade (max 0 (min (- *plus-level-count* 1) (round (- level *plus-level-min*)))))
                            (layer (plus-ao-layer worldx worldy (= height boundary)))
                            (phase (bitwise-and column 15)))
                       (setf! framebuffer (+ top-offset column)
                              (plus-plane-color ceiling layer shade
-                                               (ref plus-pattern (+ top-pattern phase))))
+                                               (ref *plus-pattern* (+ top-pattern phase))))
                       (setf! framebuffer (+ bottom-offset column)
                              (plus-plane-color floor layer shade
-                                               (ref plus-pattern (+ bottom-pattern phase)))))))
+                                               (ref *plus-pattern* (+ bottom-pattern phase)))))))
                 (columns (+ column 1)))))
           (rows (+ height 1)))))))
 
 (define (plus-door-edge column height)
-  (when *plus-enabled*
+  (when *plus-active*
     (let* ((rows (plus-rows height))
            (top (truncate (/ (- viewheight rows) 2)))
            (start (max top 0))
@@ -2070,7 +2070,7 @@
               (plus-shape (ref *plus-vis-x* farthest) (ref *plus-vis-shape* farthest)
                           (ref *plus-vis-height* farthest) #t
                           (ref *plus-vis-tile-x* farthest) (ref *plus-vis-tile-y* farthest))
-              (when (= (ref *plus-vis-shape* farthest) plus-pillar)
+              (when (= (ref *plus-vis-shape* farthest) *plus-pillar*)
                 (plus-pillar-contact farthest #f)
                 (plus-pillar-contact farthest #t))
               (setf! *plus-vis-height* farthest 32000))))
@@ -2106,7 +2106,7 @@
 
 (define (plus-refresh)
   (when (plus-resize) (DrawPlayBorder))
-  (if *plus-enabled*
+  (if *plus-active*
       (let ((display (if fizzlein
                          (bytevector-copy framebuffer 0 (bytevector-length framebuffer))
                          #f)))
@@ -2121,7 +2121,7 @@
         (bytevector-copy! displayframebuffer 0 framebuffer 0 (bytevector-length framebuffer))
         (set! frameon (+ frameon 1))
         (PM_NextFrame))
-      (plus-base-refresh)))
+      (*plus-base-refresh*)))
 
 (define (plus-sb-segment data length)
   (dos:play-sound 'digi (plus-samples data length) DIGIHERTZ)
@@ -2360,17 +2360,17 @@
   (DrawScore))
 
 (define (plus-clear-split)
-  (plus-base-clear-split)
+  (*plus-base-clear-split*)
   (when (> *plus-screen-offset* 0)
     (VWB_Bar (- *plus-screen-offset*) 0 *plus-screen-offset* screenheight 127)
-    (VWB_Bar plus-ui-width 0 *plus-screen-offset* screenheight 127)))
+    (VWB_Bar *plus-ui-width* 0 *plus-screen-offset* screenheight 127)))
 
 (define (plus-menu-clear)
   (VWB_Bar (- *plus-screen-offset*) 0 screenwidth screenheight BORDCOLOR))
 
 (define (plus-menu-stripes row)
   (VWB_Bar (- *plus-screen-offset*) row screenwidth 24 0)
-  (VWB_Hlin (- *plus-screen-offset*) (+ *plus-screen-offset* plus-ui-width -1) (+ row 22) STRIPE))
+  (VWB_Hlin (- *plus-screen-offset*) (+ *plus-screen-offset* *plus-ui-width* -1) (+ row 22) STRIPE))
 
 (define (plus-shape-page page)
   (cond ((< page PMSpriteStart)
@@ -2391,7 +2391,7 @@
                            (+ WindowX 8 (quotient index 32)) 0))
                (loop (+ index 32))))))))
 
-(when plus-available
+(when *plus-enabled*
   (let ((page-startup PM_Startup)
         (check-keys CheckKeys))
     (set! PM_Startup (lambda () (page-startup) (plus-startup)))
