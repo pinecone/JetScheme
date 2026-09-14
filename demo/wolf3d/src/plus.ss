@@ -31,6 +31,9 @@
 (define plus:palette-sample-entry
   (struct 'plus:palette-sample-entry '(nearest error limit pixel-error)))
 
+(define (clamp value minimum maximum)
+  (max minimum (min maximum value)))
+
 (define (plus:keyboard-move)
   (if plus:*active*
       (let* ((step (* (if (ref buttonstate bt_run) 70 plus:*walk-speed*) tics))
@@ -323,7 +326,7 @@
                                                      plus:*flash-tics*))))
                             (slots (+ slot 1) (max brightest level))))))
              (bright (if (zero? flash) 0
-                         (min 4 (max 1 (truncate (/ (* 4 flash) plus:*flash-max-level*)))))))
+                         (clamp (truncate (/ (* 4 flash) plus:*flash-max-level*)) 1 4))))
         (setf! plus:*flash-levels* spot bright)
         (setf! plus:*flash-epochs* spot plus:*flash-epoch*)
         bright)))
@@ -352,8 +355,8 @@
   (if plus:*active*
       (let* ((tilex (/ worldx TILEGLOBAL))
              (tiley (/ worldy TILEGLOBAL))
-             (samplex (max 0 (min (- MAPSIZE 1) (- tilex 0.5))))
-             (sampley (max 0 (min (- MAPSIZE 1) (- tiley 0.5))))
+             (samplex (clamp (- tilex 0.5) 0 (- MAPSIZE 1)))
+             (sampley (clamp (- tiley 0.5) 0 (- MAPSIZE 1)))
              (left (floor samplex))
              (top (floor sampley))
              (spot (plus:light-index left top))
@@ -364,8 +367,8 @@
              (dark (- (+ plus:*ambient-depth* level) (* plus:*light-step* light)))
              (bright (if plus:*flash-active*
                          (plus:flash-level
-                           (plus:light-index (max 0 (min (- MAPSIZE 1) (floor tilex)))
-                                             (max 0 (min (- MAPSIZE 1) (floor tiley)))))
+                           (plus:light-index (clamp (floor tilex) 0 (- MAPSIZE 1))
+                                             (clamp (floor tiley) 0 (- MAPSIZE 1))))
                          0)))
         (max plus:*level-min* (- dark (* 16 bright))))
       0))
@@ -1591,8 +1594,9 @@
                  (distance (+ (* delta-red delta-red) (* delta-green delta-green)
                               (* delta-blue delta-blue)))
                  (weight (if (zero? distance) 0
-                             (max 0 (min 1 (/ (+ (* error-red delta-red) (* error-green delta-green)
-                                                (* error-blue delta-blue)) distance)))))
+                             (clamp (/ (+ (* error-red delta-red) (* error-green delta-green)
+                                          (* error-blue delta-blue)) distance)
+                                    0 1)))
                  (residual-red (- error-red (* weight delta-red)))
                  (residual-green (- error-green (* weight delta-green)))
                  (residual-blue (- error-blue (* weight delta-blue)))
@@ -1634,9 +1638,9 @@
     (let ((halfh (arithmetic-shift viewheight -1))
           (ceiling (ref plus:*dither* (ceiling-color)))
           (floor (ref plus:*dither* FLOOR)))
-      (let rows ((height 1))
+      (let rows ((height 1) (projection (/ 1 1.5)))
         (when (< height halfh)
-          (let* ((projection (/ 1 (+ height 0.5)))
+          (let* ((edge-projection (/ 1 (+ height 1.5)))
                  (top (- halfh 1 height))
                  (bottom (+ halfh height))
                  (top-offset (+ (* (+ viewtop top) screenwidth) viewleft))
@@ -1647,11 +1651,14 @@
               (when (< column viewwidth)
                 (let ((boundary (ref plus:*boundaries* column)))
                   (when (>= height boundary)
-                    (let* ((worldx (+ viewx (* (ref plus:*plane-x* column) projection)))
-                           (worldy (+ viewy (* (ref plus:*plane-y* column) projection)))
+                    (let* ((edge (= height boundary))
+                           (sample-projection (if edge edge-projection projection))
+                           (worldx (+ viewx (* (ref plus:*plane-x* column) sample-projection)))
+                           (worldy (+ viewy (* (ref plus:*plane-y* column) sample-projection)))
                            (level (plus:light-level 0 worldx worldy))
-                           (shade (max 0 (min (- plus:*level-count* 1) (round (- level plus:*level-min*)))))
-                           (layer (plus:ao-layer worldx worldy (= height boundary)))
+                           (shade (clamp (round (- level plus:*level-min*))
+                                         0 (- plus:*level-count* 1)))
+                           (layer (plus:ao-layer worldx worldy edge))
                            (phase (bitwise-and column 15)))
                       (setf! framebuffer (+ top-offset column)
                              (plus:plane-color ceiling layer shade
@@ -1659,8 +1666,8 @@
                       (setf! framebuffer (+ bottom-offset column)
                              (plus:plane-color floor layer shade
                                                (ref plus:*pattern* (+ bottom-pattern phase)))))))
-                (columns (+ column 1)))))
-          (rows (+ height 1)))))))
+                (columns (+ column 1))))
+            (rows (+ height 1) edge-projection)))))))
 
 (define (plus:door-edge column height)
   (when plus:*active*
@@ -1699,11 +1706,13 @@
 
 (define (plus:scale-post pixx scaleheight page column tilex tiley vertical)
   (let* ((rows (plus:rows scaleheight))
-         (level (let ((left (* tilex TILEGLOBAL))
-                      (top (* tiley TILEGLOBAL)))
-                  (plus:light-level (plus:distance-falloff-level rows viewheight)
-                                    (max (+ left 1) (min (+ left TILEGLOBAL -1) (ref plus:*wall-x* pixx)))
-                                    (max (+ top 1) (min (+ top TILEGLOBAL -1) (ref plus:*wall-y* pixx))))))
+         (tile-left (* tilex TILEGLOBAL))
+         (tile-top (* tiley TILEGLOBAL))
+         (lightx (clamp (ref plus:*wall-x* pixx)
+                        (+ tile-left 1) (+ tile-left TILEGLOBAL -1)))
+         (lighty (clamp (ref plus:*wall-y* pixx)
+                        (+ tile-top 1) (+ tile-top TILEGLOBAL -1)))
+         (level (plus:light-level (plus:distance-falloff-level rows viewheight) lightx lighty))
          (shade (ref plus:*shades* (plus:shade level)))
          (top (truncate (/ (- viewheight rows) 2)))
          (mip (plus:wall-mip page pixx vertical))
