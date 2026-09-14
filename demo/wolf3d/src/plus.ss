@@ -157,7 +157,7 @@
 (define plus:*light-map* (make-vector (* MAPSIZE MAPSIZE) 0))
 (define plus:*light-base* (make-vector (* MAPSIZE MAPSIZE) 0))
 (define plus:*light-paths* (make-vector (* MAPSIZE MAPSIZE) '()))
-(define plus:*light-watch* (make-vector MAXDOORS '()))
+(define plus:*light-watch* (make-vector MAXDOORS #()))
 (define plus:*light-positions* (make-vector MAXDOORS -1))
 (define plus:*light-dirty* (make-bytevector (* MAPSIZE MAPSIZE) 0))
 (define plus:*light-queue* (make-vector (* MAPSIZE MAPSIZE) 0))
@@ -745,18 +745,12 @@
 (define (plus:pushwall-tile? tile)
   (and (>= tile 128) (plus:bit-set? tile 64)))
 
-(define (plus:door-passes? position limit)
-  (or (= position 65535) (> position limit)))
-
 (define (plus:light-path-tile? tile)
   (or (zero? tile) (plus:door-tile? tile)))
 
 (define (plus:light-passable? tilex tiley)
   (and (plus:in-map? tilex tiley)
-       (let ((tile (tileat tilex tiley)))
-         (or (zero? tile)
-             (and (plus:door-tile? tile)
-                  (plus:door-passes? (ref doorposition (bitwise-and tile 127)) (/ TILEGLOBAL 2)))))))
+       (plus:light-path-tile? (tileat tilex tiley))))
 
 (define (plus:box-distance-squared worldx worldy left top right bottom)
   (let ((dx (max 0 (- left worldx) (- worldx right)))
@@ -881,19 +875,20 @@
                            (ray (+ tilex stepx) (+ tiley stepy)
                                 (+ crossx (* 2 dy)) (+ crossy (* 2 dx)) path))))))))))
 
-(define (plus:path-open? doors)
-  (or (null? doors)
+(define (plus:path-transmission doors)
+  (if (null? doors)
+      1
       (let ((door (car doors)))
-        (and (plus:door-passes? (ref doorposition (ref door 0)) (ref door 1))
-             (plus:path-open? (cdr doors))))))
+        (* (/ (ref doorposition (ref door 0)) 65535)
+           (plus:path-transmission (cdr doors))))))
 
 (define (plus:light-value spot)
   (let scan ((paths (ref plus:*light-paths* spot)) (light (ref plus:*light-base* spot)))
     (if (null? paths)
         light
         (let* ((path (car paths))
-               (level (ref path 0)))
-          (scan (cdr paths) (if (and (> level light) (plus:path-open? (ref path 1))) level light))))))
+               (level (* (ref path 0) (plus:path-transmission (ref path 1)))))
+          (scan (cdr paths) (max level light))))))
 
 (define (plus:build-light lightx lighty radius levels)
   (let ((left (max 0 (- lightx radius)))
@@ -981,13 +976,23 @@
       (plus:build-light-cell spot)
       (cells (+ spot 1)))))
 
-(define (plus:watch-light-path spot path)
+(define (plus:watch-light-path spot path watched)
   (for-each
     (lambda (requirement)
       (let ((door (ref requirement 0)))
-        (setf! plus:*light-watch* door
-               (cons (tuple (ref requirement 1) spot) (ref plus:*light-watch* door)))))
+        (unless (= (ref watched door) spot)
+          (setf! watched door spot)
+          (setf! plus:*light-watch* door (cons spot (ref plus:*light-watch* door))))))
     (ref path 1)))
+
+(define (plus:watch-vector spots)
+  (let ((watch (make-vector (length spots) 0)))
+    (let fill ((index 0) (spots spots))
+      (if (null? spots)
+          watch
+          (begin
+            (setf! watch index (car spots))
+            (fill (+ index 1) (cdr spots)))))))
 
 (define (plus:reset-lights!)
   (plus:clear-map! plus:*light-base*)
@@ -1013,18 +1018,23 @@
       (lights (+ index 1)))))
 
 (define (plus:finalize-lights!)
-  (let points ((spot 0))
-    (when (< spot (* MAPSIZE MAPSIZE))
-      (setf! plus:*light-paths* spot
-             (fold (lambda (path kept)
-                     (if (<= (ref path 0) (ref plus:*light-base* spot))
-                         kept
-                         (begin
-                           (plus:watch-light-path spot path)
-                           (cons path kept))))
-                   '() (ref plus:*light-paths* spot)))
-      (setf! plus:*light-map* spot (plus:light-value spot))
-      (points (+ spot 1))))
+  (let ((watched (make-vector MAXDOORS -1)))
+    (let points ((spot 0))
+      (when (< spot (* MAPSIZE MAPSIZE))
+        (setf! plus:*light-paths* spot
+               (fold (lambda (path kept)
+                       (if (<= (ref path 0) (ref plus:*light-base* spot))
+                           kept
+                           (begin
+                             (plus:watch-light-path spot path watched)
+                             (cons path kept))))
+                     '() (ref plus:*light-paths* spot)))
+        (setf! plus:*light-map* spot (plus:light-value spot))
+        (points (+ spot 1)))))
+  (let doors ((door 0))
+    (when (< door MAXDOORS)
+      (setf! plus:*light-watch* door (plus:watch-vector (ref plus:*light-watch* door)))
+      (doors (+ door 1))))
   (plus:build-light-cells))
 
 (define (plus:build-lights)
@@ -1075,16 +1085,11 @@
         (let ((position (ref doorposition door))
               (previous (ref plus:*light-positions* door)))
           (unless (= position previous)
-            (let watch ((entries (ref plus:*light-watch* door)))
-              (when (pair? entries)
-                (let* ((entry (car entries))
-                       (limit (ref entry 0)))
-                  (unless (eq? (plus:door-passes? previous limit) (plus:door-passes? position limit))
-                    (plus:dirty-light (ref entry 1) 1)))
-                (watch (cdr entries))))
-            (unless (eq? (plus:door-passes? previous (/ TILEGLOBAL 2))
-                         (plus:door-passes? position (/ TILEGLOBAL 2)))
-              (plus:dirty-cells (plus:light-index (ref doortilex door) (ref doortiley door))))
+            (let ((spots (ref plus:*light-watch* door)))
+              (let watch ((index 0))
+                (when (< index (vector-length spots))
+                  (plus:dirty-light (ref spots index) 1)
+                  (watch (+ index 1)))))
             (setf! plus:*light-positions* door position)))
         (doors (+ door 1))))
     (plus:update-dirty-lights!)
