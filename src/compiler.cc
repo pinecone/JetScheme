@@ -4043,7 +4043,10 @@ void Compiler::select_call_op(Expr* expr, Expr* current)
 
 	// Callee whose init value is this very closure and is never reassigned: the
 	// binding always holds the closure we're running, so call frame->closure
-	// directly
+	// directly. Non-tail calls only: a tail self-call that cannot use the
+	// self-tail loop (variadic or mismatched arity) has no direct tail opcode
+	// and must lower through the normal call machinery instead.
+	if (!is_tail(expr))
 	{
 		if (LambdaBindings& lb = lambda_bindings_[proc_binding.lambda];
 		    !get(lb.reassigned_after_init, proc_binding.breadth)

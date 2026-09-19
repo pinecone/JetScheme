@@ -70,3 +70,11 @@
 ;; not clobbered by the outer.
 ($check (eq? 1 (or (or #f 1) 2)))
 ($check (eq? 7 (or #f (or #f 7))))
+
+;; Direct self-call in a variadic function cannot use the self-tail loop
+;; (arity is dynamic); it must still compile to a normal tail call.
+(define vloop2
+  (lambda args
+    (if (zero? (car args)) 'done
+        (vloop2 (- (car args) 1)))))
+($check (eq? 'done (vloop2 50000)))
