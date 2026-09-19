@@ -556,15 +556,6 @@ Atom bytevector_u8_ref(VmState& s, Atom bv, Atom k)
 	return box(Number::trusted(mbv[index]));
 }
 
-static Atom bytevector_u8_set(VmState& s, Atom bv, Atom k, Atom b)
-{
-	size_t index{slow_unbox<uint64_t>(s, k)};
-	ByteVector& mbv = *slow_unbox<ByteVector>(s, bv);
-	JET_DIE_UNLESS(&s, index < mbv.size(), "bytevector-u8-set! index {} out of bounds", index);
-	mbv[index] = as_uint8_or_die(s, b);
-	return b;
-}
-
 static Atom bytevector_fill(VmState& state, Atom buffer, Atom start, Atom length, Atom value)
 {
 	ByteVector& bytes{*slow_unbox<ByteVector>(state, buffer)};
@@ -664,8 +655,6 @@ void init_bytevectors(VmState& s)
 	Env& e = s.env;
 	e.bind("bytevector?", make_prim<type_pred<jet::Type::ByteVector>>(s));
 	e.bind("bytevector-length", make_prim<bytevector_length>(s));
-	e.bind("bytevector-u8-ref", make_prim<bytevector_u8_ref>(s));
-	e.bind("bytevector-u8-set!", make_prim<bytevector_u8_set>(s));
 	e.bind("bytevector-fill!", make_prim<bytevector_fill>(s));
 	e.bind("make-bytevector", make_prim<make_bytevector>(s));
 	e.bind("bytevector", make_prim<bytevector_ctor>(s, n_ary()));
