@@ -15,7 +15,6 @@
 # Object files live under build/<variant>/ so all three variants coexist.
 
 CXX				 := clang++
-UNCRUSTIFY := uncrustify
 ASAN_RTDIR = $(shell $(CXX) -print-runtime-dir 2>/dev/null)
 
 # Parallel build by default; override with `make JOBS=1` or `make -j1`.
@@ -110,7 +109,6 @@ SOKOL_CXXFLAGS := $(VENDOR_CXXFLAGS) $(SOKOL_LANG)
 
 CORE_CC := $(wildcard $(SRC)/*.cc)
 ALL_CC := $(CORE_CC) $(MODULE_CC)
-ALL_CPP := $(ALL_CC) $(wildcard $(SRC)/*.h) $(MODULE_CPP) tests/profile.cc
 SOKOL_OBJ := $(patsubst %.cc,$(OBJDIR)/%.o,$(MODULE_SOKOL_CC))
 VENDOR_OBJ := $(patsubst %.cpp,$(OBJDIR)/%.o,$(MODULE_VENDOR_CC))
 ALL_OBJ := $(patsubst %.cc,$(OBJDIR)/%.o,$(ALL_CC)) $(SOKOL_OBJ) $(VENDOR_OBJ)
@@ -128,8 +126,8 @@ DEPS := $(ALL_OBJ:.o=.d) $(OBJDIR)/tests/profile.d
 
 .PHONY: all release debug profile all-variants \
 				test test-release test-profile sanitize show-sanitizers \
-				ab-cross-bench format format-check clean tags FORCE \
-				check-deps check-format-deps check-tags-deps check-python-deps
+				ab-cross-bench clean tags FORCE \
+				check-deps check-tags-deps check-python-deps
 .DEFAULT_GOAL := all
 
 all: $(JET_BIN)
@@ -266,13 +264,9 @@ check-deps:
 	fi; \
 	finish
 
-check-format-deps check-tags-deps check-python-deps:
+check-tags-deps check-python-deps:
 	@$(dependency_diagnostics) \
 	case '$@' in \
-		check-format-deps) \
-			if ! $(UNCRUSTIFY) --version >/dev/null 2>&1; then \
-				missing 'uncrustify' 'uncrustify' 'uncrustify'; \
-			fi ;; \
 		check-tags-deps) \
 			if ! ctags --version >/dev/null 2>&1; then \
 				missing 'Universal Ctags (ctags on PATH)' 'universal-ctags' 'universal-ctags'; \
@@ -338,14 +332,6 @@ sanitize:
 ab-cross-bench:
 	@printf '  BENCH cross\n'
 	$(Q)cd bench && ./ab-cross $(REF)
-
-format: | check-format-deps
-	@printf '  FMT   source\n'
-	$(Q)$(UNCRUSTIFY) -q -c uncrustify.cfg --replace --no-backup $(ALL_CPP)
-
-format-check: | check-format-deps
-	@printf '  FMT   source\n'
-	$(Q)$(UNCRUSTIFY) -q -c uncrustify.cfg --check $(ALL_CPP)
 
 clean:
 	@printf '  CLEAN build\n'
