@@ -53,7 +53,7 @@
 	X(Slot,      "slot")                  \
 	X(StructType,"struct type")           \
 	X(Struct,    "struct")                \
-	X(Unknown,   "unknown")
+	X(Unknown,   "void")
 
 namespace jet
 {

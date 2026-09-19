@@ -1001,6 +1001,11 @@ Atom display_to(VmState& s, Atom a, std::string& out)
 		}
 
 		default:
+			if (is_hole(a))
+			{
+				out += "#<hole>";
+				break;
+			}
 			out += "#<";
 			out += type_name(a.type());
 			out += '>';
