@@ -17,8 +17,11 @@ struct CompileFlags
 	bool lift_lambdas = true;
 };
 
-Bytecode compile(std::string source, std::string filename = "<stdin>", CompileFlags flags = {},
-                 std::string_view prelude = {});
+Bytecode compile(
+	std::string source,
+	std::string filename = "<stdin>",
+	CompileFlags flags = {},
+	std::string_view prelude = {});
 
 struct VmState;
-void init_reader(VmState& s);
+void init_reader(VmState& vm);

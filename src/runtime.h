@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Kirill Zorin
 
-#ifndef runtime_h
-#define runtime_h
+#pragma once
 
 #include "atom.h"
 #include "error.h"
 #include "numbers.h"
 #include "platform.h"
 #include "vm.h"
+
 #include <algorithm>
 #include <ankerl/unordered_dense.h>
 #include <bit>
@@ -26,11 +26,15 @@
 
 struct Cons
 {
-	Cons(Atom car_, Atom cdr_) : car{car_}, cdr{cdr_} {}
+	Cons(Atom car_value, Atom cdr_value)
+		: car{car_value}, cdr{cdr_value}
+	{
+	}
+
 	mutable Atom car, cdr;
 };
 
-bool operator==(Cons& p1, Cons& p2);
+bool operator==(Cons& first, Cons& second);
 
 JET_ALWAYS_INLINE inline Atom cons(VmState& s, Atom obj1, Atom obj2)
 {
@@ -111,8 +115,12 @@ class StructType
 {
 public:
 	StructType(VmState& s, Atom name, std::vector<Atom> field_names, Arity arity, const StructOps& ops)
-		: name_{name}, field_names_{std::move(field_names)}, arity_{arity},
-		destructor_id_{s.gc.register_struct_destructor(s, ops.destroy)}, kind_{ops.kind}, ops_{&ops}
+		: name_{name},
+		  field_names_{std::move(field_names)},
+		  arity_{arity},
+		  destructor_id_{s.gc.register_struct_destructor(s, ops.destroy)},
+		  kind_{ops.kind},
+		  ops_{&ops}
 	{
 	}
 
@@ -783,7 +791,7 @@ inline bool operator==(Struct& a, Struct& b)
 }
 
 template <>
-struct box_unbox_t<Struct>
+struct BoxUnbox<Struct>
 {
 	static Struct* unbox(Atom x) { return static_cast<Struct*>(x.as_ptr()); }
 };
@@ -1400,8 +1408,8 @@ Atom arith_binary_fun(VmState& s, Atom* first, Atom*)
 template <typename T>
 bool compare_objects(Atom obj1, Atom obj2)
 {
-	decltype(box_unbox_t<T>::unbox(obj1)) a = unbox<T>(obj1);
-	decltype(box_unbox_t<T>::unbox(obj2)) b = unbox<T>(obj2);
+	decltype(BoxUnbox<T>::unbox(obj1)) a = unbox<T>(obj1);
+	decltype(BoxUnbox<T>::unbox(obj2)) b = unbox<T>(obj2);
 	if constexpr (std::is_pointer_v<decltype(a)>)
 	{
 		return *a == *b;
@@ -1520,5 +1528,3 @@ void init_port_file(VmState& s);
 
 void init_runtime(VmState& s);
 void init_cmdline(VmState& s, int argc, char* argv[]);
-
-#endif

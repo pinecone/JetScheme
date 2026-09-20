@@ -2,7 +2,15 @@
 // Copyright (c) 2026 Kirill Zorin
 
 #include "dos.h"
+
 #include "runtime.h"
+
+#define SOKOL_GLCORE
+#include "sokol/sokol_app.h"
+#include "sokol/sokol_audio.h"
+#include "sokol/sokol_gfx.h"
+#include "sokol/sokol_glue.h"
+#include "sokol/sokol_log.h"
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wold-style-cast"
 #include "ymfm/src/ymfm_opl.h"
@@ -12,13 +20,6 @@
 #include <cmath>
 #include <mutex>
 #include <vector>
-
-#define SOKOL_GLCORE
-#include "sokol/sokol_app.h"
-#include "sokol/sokol_audio.h"
-#include "sokol/sokol_gfx.h"
-#include "sokol/sokol_glue.h"
-#include "sokol/sokol_log.h"
 
 namespace
 {
@@ -231,7 +232,7 @@ void main() {
 			return 0.0f;
 		}
 
-		size_t index = static_cast<size_t>(voice.cursor);
+		size_t index{static_cast<size_t>(voice.cursor)};
 		if (index >= voice.samples.size())
 		{
 			voice.playing = false;
@@ -246,8 +247,8 @@ void main() {
 	{
 		if (audio.adlib_step == 0.0)
 		{
-			audio.adlib_step = static_cast<double>(audio.adlib.sample_rate(ADLIB_CLOCK)) /
-			                   saudio_sample_rate();
+			audio.adlib_step = static_cast<double>(audio.adlib.sample_rate(ADLIB_CLOCK))
+				/ saudio_sample_rate();
 		}
 
 		audio.adlib_phase += audio.adlib_step;
@@ -269,13 +270,13 @@ void main() {
 
 		for (int frame{0}; frame < num_frames; frame++)
 		{
-			float digi = next_sample(audio.voices[VOICE_DIGI]);
-			float pc = next_sample(audio.voices[VOICE_PC]);
-			float adlib = next_adlib_sample();
+			float digi{next_sample(audio.voices[VOICE_DIGI])};
+			float pc{next_sample(audio.voices[VOICE_PC])};
+			float adlib{next_adlib_sample()};
 
 			for (int channel{0}; channel < num_channels; channel++)
 			{
-				float mixed = digi * gains[channel & 1] + pc + adlib;
+				float mixed{digi * gains[channel & 1] + pc + adlib};
 				buffer[frame * num_channels + channel] = std::clamp(mixed, -1.0f, 1.0f);
 			}
 		}
@@ -353,7 +354,7 @@ void main() {
 
 	size_t voice_index(VmState& s, Atom channel)
 	{
-		const std::string& name = *slow_unbox<Symbol>(s, channel);
+		const std::string& name{*slow_unbox<Symbol>(s, channel)};
 
 		if (name == "digi")
 		{
@@ -369,7 +370,7 @@ void main() {
 
 	sapp_keycode key_code(VmState& s, Atom key)
 	{
-		const std::string& name = *slow_unbox<Symbol>(s, key);
+		const std::string& name{*slow_unbox<Symbol>(s, key)};
 
 		if (name.size() == 1 && name[0] >= 'a' && name[0] <= 'z')
 		{
@@ -470,8 +471,8 @@ void main() {
 		};
 
 		const char* fragment_source = video.screen_emulation == ScreenEmulation::Crt
-		                              ? CRT_FRAGMENT_SOURCE
-		                              : PLAIN_FRAGMENT_SOURCE;
+			? CRT_FRAGMENT_SOURCE
+			: PLAIN_FRAGMENT_SOURCE;
 		video.pipeline = make_pipeline(fragment_source);
 
 		video.ready = true;
@@ -530,7 +531,7 @@ static Atom frame_loop(VmState& s, Atom title, Atom width, Atom height, Atom emu
 {
 	JET_DIE_UNLESS(&s, video.vm == nullptr, "frame-loop: already running");
 
-	const std::string& emulation_name = *slow_unbox<Symbol>(s, emulation);
+	const std::string& emulation_name{*slow_unbox<Symbol>(s, emulation)};
 	if (emulation_name == "none")
 	{
 		video.screen_emulation = ScreenEmulation::None;
@@ -548,8 +549,12 @@ static Atom frame_loop(VmState& s, Atom title, Atom width, Atom height, Atom emu
 	video.frame_proc = frame;
 	video.width = static_cast<int>(slow_unbox<Number>(s, width));
 	video.height = static_cast<int>(slow_unbox<Number>(s, height));
-	JET_DIE_UNLESS(&s, video.width > 0 && video.height > 0, "frame-loop: window is {}x{}", video.width,
-	               video.height);
+	JET_DIE_UNLESS(
+		&s,
+		video.width > 0 && video.height > 0,
+		"frame-loop: window is {}x{}",
+		video.width,
+		video.height);
 
 	s.stack_top = s.stack_base + s.frames.back().top;
 
@@ -568,27 +573,30 @@ static Atom frame_loop(VmState& s, Atom title, Atom width, Atom height, Atom emu
 	vm_exit(s, 0);
 }
 
-static Number output_width(VmState& state)
+static Number output_width(VmState& vm)
 {
-	JET_DIE_UNLESS(&state, video.ready, "output-width: no window; call frame-loop first");
+	JET_DIE_UNLESS(&vm, video.ready, "output-width: no window; call frame-loop first");
 	return Number::from_ieee(sapp_width());
 }
 
-static Number output_height(VmState& state)
+static Number output_height(VmState& vm)
 {
-	JET_DIE_UNLESS(&state, video.ready, "output-height: no window; call frame-loop first");
+	JET_DIE_UNLESS(&vm, video.ready, "output-height: no window; call frame-loop first");
 	return Number::from_ieee(sapp_height());
 }
 
-static Atom set_framebuffer_size(VmState& state, Atom width, Atom height)
+static Atom set_framebuffer_size(VmState& vm, Atom width, Atom height)
 {
-	JET_DIE_UNLESS(&state, video.ready, "set-framebuffer-size: no window; call frame-loop first");
-	double columns{static_cast<double>(slow_unbox<Number>(state, width))};
-	double rows{static_cast<double>(slow_unbox<Number>(state, height))};
+	JET_DIE_UNLESS(&vm, video.ready, "set-framebuffer-size: no window; call frame-loop first");
+	double columns{static_cast<double>(slow_unbox<Number>(vm, width))};
+	double rows{static_cast<double>(slow_unbox<Number>(vm, height))};
 	int limit{sg_query_limits().max_image_size_2d};
-	JET_DIE_UNLESS(&state, columns >= 1 && columns <= limit && columns == std::floor(columns) &&
-	               rows >= 1 && rows <= limit && rows == std::floor(rows),
-	               "set-framebuffer-size: dimensions must be integers from 1 to {}", limit);
+	JET_DIE_UNLESS(
+		&vm,
+		columns >= 1 && columns <= limit && columns == std::floor(columns)
+		&& rows >= 1 && rows <= limit && rows == std::floor(rows),
+		"set-framebuffer-size: dimensions must be integers from 1 to {}",
+		limit);
 	if (columns == video.width && rows == video.height)
 	{
 		return Atom{};
@@ -606,11 +614,14 @@ static Atom display_framebuffer(VmState& s, Atom pixels)
 {
 	JET_DIE_UNLESS(&s, video.ready, "display-framebuffer: no window; call frame-loop first");
 
-	ByteVector& bytes = *slow_unbox<ByteVector>(s, pixels);
-	size_t expected = static_cast<size_t>(video.width) * static_cast<size_t>(video.height);
-	JET_DIE_UNLESS(&s, bytes.size() == expected, "display-framebuffer: {} bytes, expected {}",
-	               bytes.size(),
-	               expected);
+	ByteVector& bytes{*slow_unbox<ByteVector>(s, pixels)};
+	size_t expected{static_cast<size_t>(video.width) * static_cast<size_t>(video.height)};
+	JET_DIE_UNLESS(
+		&s,
+		bytes.size() == expected,
+		"display-framebuffer: {} bytes, expected {}",
+		bytes.size(),
+		expected);
 
 	sg_image_data upload{};
 	upload.mip_levels[0] = sg_range{bytes.data(), bytes.size()};
@@ -647,16 +658,19 @@ static Atom display_framebuffer(VmState& s, Atom pixels)
 
 static Atom set_palette(VmState& s, Atom colors)
 {
-	ByteVector& bytes = *slow_unbox<ByteVector>(s, colors);
-	JET_DIE_UNLESS(&s, bytes.size() == PALETTE_COLORS * 3, "set-palette: {} bytes, expected {}",
-	               bytes.size(),
-	               PALETTE_COLORS * 3);
+	ByteVector& bytes{*slow_unbox<ByteVector>(s, colors)};
+	JET_DIE_UNLESS(
+		&s,
+		bytes.size() == PALETTE_COLORS * 3,
+		"set-palette: {} bytes, expected {}",
+		bytes.size(),
+		PALETTE_COLORS * 3);
 
 	for (size_t index{0}; index < PALETTE_COLORS; index++)
 	{
 		for (size_t channel{0}; channel < 3; channel++)
 		{
-			uint8_t six_bit = bytes[index * 3 + channel];
+			uint8_t six_bit{bytes[index * 3 + channel]};
 			video.rgba[index * 4 + channel] = static_cast<uint8_t>((six_bit << 2) | (six_bit >> 4));
 		}
 		video.rgba[index * 4 + 3] = 255;
@@ -671,9 +685,9 @@ static Atom set_palette(VmState& s, Atom colors)
 
 static Atom play_sound(VmState& s, Atom channel, Atom pcm, Atom rate)
 {
-	size_t slot = voice_index(s, channel);
-	ByteVector& bytes = *slow_unbox<ByteVector>(s, pcm);
-	double hertz = slow_unbox<Number>(s, rate);
+	size_t slot{voice_index(s, channel)};
+	ByteVector& bytes{*slow_unbox<ByteVector>(s, pcm)};
+	double hertz{slow_unbox<Number>(s, rate)};
 	JET_DIE_UNLESS(&s, hertz > 0.0, "play-sound: rate is {}", hertz);
 	JET_DIE_UNLESS(&s, !bytes.empty(), "play-sound: no samples");
 
@@ -725,12 +739,16 @@ static Atom adlib_write(VmState& s, Atom register_value, Atom data_value)
 
 static Atom set_sound_attenuation(VmState& s, Atom left, Atom right)
 {
-	int left_step = static_cast<int>(slow_unbox<Number>(s, left));
-	int right_step = static_cast<int>(slow_unbox<Number>(s, right));
-	JET_DIE_UNLESS(&s, left_step >= 0 && left_step <= MAX_ATTENUATION && right_step >= 0 &&
-	               right_step <= MAX_ATTENUATION,
-	               "set-sound-attenuation: {} and {}, expected 0 to {}", left_step, right_step,
-	               MAX_ATTENUATION);
+	int left_step{static_cast<int>(slow_unbox<Number>(s, left))};
+	int right_step{static_cast<int>(slow_unbox<Number>(s, right))};
+	JET_DIE_UNLESS(
+		&s,
+		left_step >= 0 && left_step <= MAX_ATTENUATION && right_step >= 0
+		&& right_step <= MAX_ATTENUATION,
+		"set-sound-attenuation: {} and {}, expected 0 to {}",
+		left_step,
+		right_step,
+		MAX_ATTENUATION);
 
 	const std::lock_guard<std::mutex> held{audio.lock};
 	audio.left = static_cast<float>(MAX_ATTENUATION - left_step) / MAX_ATTENUATION;
@@ -741,7 +759,7 @@ static Atom set_sound_attenuation(VmState& s, Atom left, Atom right)
 
 static Atom stop_sound(VmState& s, Atom channel)
 {
-	size_t slot = voice_index(s, channel);
+	size_t slot{voice_index(s, channel)};
 
 	const std::lock_guard<std::mutex> held{audio.lock};
 	audio.voices[slot].playing = false;
@@ -751,7 +769,7 @@ static Atom stop_sound(VmState& s, Atom channel)
 
 static bool sound_playing(VmState& s, Atom channel)
 {
-	size_t slot = voice_index(s, channel);
+	size_t slot{voice_index(s, channel)};
 
 	const std::lock_guard<std::mutex> held{audio.lock};
 	return audio.voices[slot].playing;
@@ -809,23 +827,23 @@ static Atom request_quit(VmState&)
 
 void init_dos(VmState& s)
 {
-	Env& e = s.env;
-	e.bind("dos:frame-loop", make_prim<frame_loop>(s));
-	e.bind("dos:output-width", make_prim<output_width>(s));
-	e.bind("dos:output-height", make_prim<output_height>(s));
-	e.bind("dos:set-framebuffer-size", make_prim<set_framebuffer_size>(s));
-	e.bind("dos:display-framebuffer", make_prim<display_framebuffer>(s));
-	e.bind("dos:set-palette", make_prim<set_palette>(s));
-	e.bind("dos:key-down?", make_prim<key_down>(s));
-	e.bind("dos:get-mouse-motion-x", make_prim<get_mouse_motion_x>(s));
-	e.bind("dos:get-mouse-motion-y", make_prim<get_mouse_motion_y>(s));
-	e.bind("dos:mouse-button-down?", make_prim<mouse_button_down>(s));
-	e.bind("dos:play-sound", make_prim<play_sound>(s));
-	e.bind("dos:stop-sound", make_prim<stop_sound>(s));
-	e.bind("dos:adlib-reset", make_prim<adlib_reset>(s));
-	e.bind("dos:adlib-write", make_prim<adlib_write>(s));
-	e.bind("dos:set-sound-attenuation", make_prim<set_sound_attenuation>(s));
-	e.bind("dos:sound-playing?", make_prim<sound_playing>(s));
-	e.bind("dos:set-window-title", make_prim<set_window_title>(s));
-	e.bind("dos:request-quit", make_prim<request_quit>(s));
+	Env& env{s.env};
+	env.bind("dos:frame-loop", make_prim<frame_loop>(s));
+	env.bind("dos:output-width", make_prim<output_width>(s));
+	env.bind("dos:output-height", make_prim<output_height>(s));
+	env.bind("dos:set-framebuffer-size", make_prim<set_framebuffer_size>(s));
+	env.bind("dos:display-framebuffer", make_prim<display_framebuffer>(s));
+	env.bind("dos:set-palette", make_prim<set_palette>(s));
+	env.bind("dos:key-down?", make_prim<key_down>(s));
+	env.bind("dos:get-mouse-motion-x", make_prim<get_mouse_motion_x>(s));
+	env.bind("dos:get-mouse-motion-y", make_prim<get_mouse_motion_y>(s));
+	env.bind("dos:mouse-button-down?", make_prim<mouse_button_down>(s));
+	env.bind("dos:play-sound", make_prim<play_sound>(s));
+	env.bind("dos:stop-sound", make_prim<stop_sound>(s));
+	env.bind("dos:adlib-reset", make_prim<adlib_reset>(s));
+	env.bind("dos:adlib-write", make_prim<adlib_write>(s));
+	env.bind("dos:set-sound-attenuation", make_prim<set_sound_attenuation>(s));
+	env.bind("dos:sound-playing?", make_prim<sound_playing>(s));
+	env.bind("dos:set-window-title", make_prim<set_window_title>(s));
+	env.bind("dos:request-quit", make_prim<request_quit>(s));
 }

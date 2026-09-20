@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Kirill Zorin
 
-#ifndef numbers_h
-#define numbers_h
+#pragma once
 
 #include "atom.h"
 #include "platform.h"
+
 #include <cstdint>
 
 JET_ALWAYS_INLINE inline bool as_uint64(Atom atom, uint64_t& value)
@@ -47,8 +47,11 @@ inline decltype(auto) slow_unbox<uint64_t>(VmState& state, Atom atom)
 {
 	type_check(state, atom, jet::Type::Number);
 	uint64_t value;
-	JET_DIE_UNLESS(&state, as_uint64(atom, value), "expected exact integer in uint64 range, got {}",
-	               unbox<Number>(atom));
+	JET_DIE_UNLESS(
+		&state,
+		as_uint64(atom, value),
+		"expected exact integer in uint64 range, got {}",
+		unbox<Number>(atom));
 	return value;
 }
 
@@ -56,8 +59,11 @@ inline uint8_t as_uint8_or_die(VmState& state, Atom atom)
 {
 	type_check(state, atom, jet::Type::Number);
 	uint8_t value;
-	JET_DIE_UNLESS(&state, as_uint8(atom, value), "expected exact integer in uint8 range, got {}",
-	               unbox<Number>(atom));
+	JET_DIE_UNLESS(
+		&state,
+		as_uint8(atom, value),
+		"expected exact integer in uint8 range, got {}",
+		unbox<Number>(atom));
 	return value;
 }
 
@@ -78,4 +84,3 @@ JET_ALWAYS_INLINE inline Atom truncate_number(Atom value)
 	return value;
 }
 
-#endif

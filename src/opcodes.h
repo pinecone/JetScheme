@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Kirill Zorin
 
-#ifndef opcodes_h
-#define opcodes_h
+#pragma once
 
 #include "error.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <string_view>
@@ -12,13 +12,13 @@
 struct Struct;
 
 #define JET_REPLICATE_N 4
-#define JET_REPLICATE(X, name, disp)                                                                        \
-	X(name##_0, disp "_0", 0) X(name##_1, disp "_1", 1)                                                     \
+#define JET_REPLICATE(X, name, disp)                                                                       \
+	X(name##_0, disp "_0", 0) X(name##_1, disp "_1", 1)                                                      \
 	X(name##_2, disp "_2", 2) X(name##_3, disp "_3", 3)
 
 // X(c++_name, "disasm_name") -- short, RISC-ish display strings keep traces
 // scannable; C++ identifiers stay descriptive for source readability.
-#define JET_OPCODES(X)                                                                                      \
+#define JET_OPCODES(X)                                                                                     \
 	X(halt,                "halt")                                                                           \
 	X(skip,                "b")                                                                              \
 	X(label,               "label")                                                                          \
@@ -63,7 +63,7 @@ struct Struct;
 	X(call,                "call")                                                                           \
 	X(tcall,               "tcall")                                                                          \
 	X(call_self_tail,      "cselft")                                                                         \
-	X(apply,              "apply")                                                                          \
+	X(apply,               "apply")                                                                          \
 	X(iter_next1,          "iter1")                                                                          \
 	X(iter_next2,          "iter2")                                                                          \
 	JET_REPLICATE(X, call_local,           "cl")                                                             \
@@ -84,34 +84,34 @@ struct Struct;
 	X(reset,               "reset")                                                                          \
 	X(retk,                "retk")                                                                           \
 	X(coro,                "coro")                                                                           \
-	X(retc,            "retc")                                                                          \
-	X(retu,       "retu")                                                                          \
-	X(return_to_host,      "rethost") \
-	X(trunc,               "trunc") \
-	X(sqrt,                "sqrt") \
-	X(floor,               "floor") \
-	X(round,               "round") \
-	X(ceil,                "ceil") \
-	X(min,                 "min") \
-	X(max,                 "max") \
-	X(mink,                "mink") \
-	X(maxk,                "maxk") \
-	X(fadd,                "fadd") \
-	X(fsub,                "fsub") \
-	X(fmul,                "fmul") \
-	X(fdiv,                "fdiv") \
-	X(fmin,                "fmin") \
-	X(fmax,                "fmax") \
-	X(ftrunc,              "ftrunc") \
-	X(fsqrt,               "fsqrt") \
-	X(ffloor,              "ffloor") \
-	X(fround,              "fround") \
-	X(fceil,               "fceil") \
-	X(fnumeq,              "fnumeq") \
-	X(flt,                 "flt") \
-	X(fle,                 "fle") \
-	X(fgt,                 "fgt") \
-	X(fge,                 "fge")
+	X(retc,                 "retc")                                                                          \
+	X(retu,                 "retu")                                                                          \
+	X(return_to_host,       "rethost")                                                                       \
+	X(trunc,                "trunc")                                                                         \
+	X(sqrt,                 "sqrt")                                                                          \
+	X(floor,                "floor")                                                                         \
+	X(round,                "round")                                                                         \
+	X(ceil,                 "ceil")                                                                          \
+	X(min,                  "min")                                                                           \
+	X(max,                  "max")                                                                           \
+	X(mink,                 "mink")                                                                          \
+	X(maxk,                 "maxk")                                                                          \
+	X(fadd,                 "fadd")                                                                          \
+	X(fsub,                 "fsub")                                                                          \
+	X(fmul,                 "fmul")                                                                          \
+	X(fdiv,                 "fdiv")                                                                          \
+	X(fmin,                 "fmin")                                                                          \
+	X(fmax,                 "fmax")                                                                          \
+	X(ftrunc,               "ftrunc")                                                                        \
+	X(fsqrt,                "fsqrt")                                                                         \
+	X(ffloor,               "ffloor")                                                                        \
+	X(fround,               "fround")                                                                        \
+	X(fceil,                "fceil")                                                                         \
+	X(fnumeq,               "fnumeq")                                                                        \
+	X(flt,                  "flt")                                                                           \
+	X(fle,                  "fle")                                                                           \
+	X(fgt,                  "fgt")                                                                           \
+	X(fge,                  "fge")
 
 enum class Opcode : uint8_t
 {
@@ -127,7 +127,9 @@ struct std::formatter<Opcode> : std::formatter<std::string_view>
 	{
 		switch (opcode)
 		{
-#define X(name, disp, ...) case Opcode::name: return std::formatter<std::string_view>::format(#name, context);
+#define X(name, disp, ...) \
+	case Opcode::name:       \
+		return std::formatter<std::string_view>::format(#name, context);
 		JET_OPCODES(X)
 #undef X
 		}
@@ -243,9 +245,6 @@ struct IterIc
 {
 	uint64_t dispatch_key;
 };
-
-// Register ISA: every dst/src/a/b/w operand is a frame-relative slot index,
-// stack_base[frame_base + r].
 
 struct OP_mov
 {
@@ -476,8 +475,8 @@ inline size_t opcode_step(uint8_t op, const uint8_t* operands)
 			return OPCODE_SIZE + sizeof(OP_box);
 		case Opcode::clos:
 		{
-			const OP_clos* c = reinterpret_cast<const OP_clos*>(operands);
-			return OPCODE_SIZE + sizeof(OP_clos) + c->n_captures * sizeof(OP_make_closure_capture);
+			const OP_clos* closure{reinterpret_cast<const OP_clos*>(operands)};
+			return OPCODE_SIZE + sizeof(OP_clos) + closure->n_captures * sizeof(OP_make_closure_capture);
 		}
 		case Opcode::add:
 		case Opcode::sub:
@@ -589,4 +588,3 @@ inline size_t opcode_step(uint8_t op, const uint8_t* operands)
 	return OPCODE_SIZE;
 }
 
-#endif

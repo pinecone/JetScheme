@@ -1,14 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Kirill Zorin
 
-#include <cstdint>
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <string>
-#include <string_view>
-#include <vector>
-
 #include "compiler.h"
 #include "debug.h"
 #include "error.h"
@@ -17,50 +9,60 @@
 #include "runtime.h"
 #include "vm.h"
 
-using namespace std;
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <string>
+#include <string_view>
+#include <vector>
 
-static bool slurp_text(const string& path, string& out)
+static bool slurp_text(const std::string& path, std::string& out)
 {
-	FILE* f = (path == "-") ? stdin : fopen(path.c_str(), "rb");
-	if (!f)
+	FILE* file{(path == "-") ? stdin : std::fopen(path.c_str(), "rb")};
+	if (!file)
 	{
 		return false;
 	}
 	char buf[4096];
-	size_t n;
-	while ((n = fread(buf, 1, sizeof(buf), f)) > 0)
+	std::size_t len;
+	while ((len = std::fread(buf, 1, sizeof(buf), file)) > 0)
 	{
-		out.append(buf, n);
+		out.append(buf, len);
 	}
-	if (f != stdin)
+	if (file != stdin)
 	{
-		fclose(f);
+		std::fclose(file);
 	}
 	return true;
 }
 
-static bool slurp_bytes(const string& path, vector<uint8_t>& out)
+static bool slurp_bytes(const std::string& path, std::vector<uint8_t>& out)
 {
-	FILE* f = (path == "-") ? stdin : fopen(path.c_str(), "rb");
-	if (!f)
+	FILE* file{(path == "-") ? stdin : std::fopen(path.c_str(), "rb")};
+	if (!file)
 	{
 		return false;
 	}
 	uint8_t buf[4096];
-	size_t n;
-	while ((n = fread(buf, 1, sizeof(buf), f)) > 0)
+	std::size_t len;
+	while ((len = std::fread(buf, 1, sizeof(buf), file)) > 0)
 	{
-		out.insert(out.end(), buf, buf + n);
+		out.insert(out.end(), buf, buf + len);
 	}
-	if (f != stdin)
+	if (file != stdin)
 	{
-		fclose(f);
+		std::fclose(file);
 	}
 	return true;
 }
 
-static Bytecode compile_source(string source, string filename, const string& prelude_path,
-                               string_view built_in_prelude, CompileFlags flags)
+static Bytecode compile_source(
+	std::string source,
+	std::string filename,
+	const std::string& prelude_path,
+	std::string_view built_in_prelude,
+	CompileFlags flags)
 {
 	if (!prelude_path.empty())
 	{
@@ -78,15 +80,15 @@ static Bytecode compile_source(string source, string filename, const string& pre
 	init_modules(vm);
 	init_cmdline(vm, script_argc, script_argv);
 
-	LoadedProgram prog = load_program(vm, image.bytes, image.size);
+	LoadedProgram prog{load_program(vm, image.bytes, image.size)};
 
-	Frame frame = {prog.code, nullptr, 0, prog.n_toplevel_slots};
+	Frame frame{prog.code, nullptr, 0, prog.n_toplevel_slots};
 	eval(vm, frame, prog.constants.data(), prog.constants.size(), prog.n_toplevel_slots);
 }
 
-static void usage(FILE* o)
+static void usage(FILE* output)
 {
-	static constexpr char text[] =
+	static constexpr char USAGE_TEXT[] =
 		R"(usage: jet <command> [args]
   jet <file.ss> [script-args]          shorthand for 'jet run <file.ss>'
   jet run <file.ss> [script-args]      compile and execute in one step
@@ -108,13 +110,13 @@ options for run/exec (debug build only):
 env:
   JET_PRELUDE=<path>                   override the prelude path
 )";
-	fputs(text, o);
+	std::fputs(USAGE_TEXT, output);
 }
 
-static bool ends_with(const string& s, const char* suffix)
+static bool ends_with(const std::string& text, const char* suffix)
 {
-	size_t n = strlen(suffix);
-	return s.size() >= n && s.compare(s.size() - n, n, suffix) == 0;
+	std::size_t len{std::strlen(suffix)};
+	return text.size() >= len && text.compare(text.size() - len, len, suffix) == 0;
 }
 
 int main(int argc, char* argv[])
@@ -125,7 +127,7 @@ int main(int argc, char* argv[])
 		return 1;
 	}
 
-	string cmd{argv[1]};
+	std::string cmd{argv[1]};
 
 	if (cmd == "help" || cmd == "-h" || cmd == "--help")
 	{
@@ -133,17 +135,17 @@ int main(int argc, char* argv[])
 		return 0;
 	}
 
-	int args_start = 2;
+	int args_start{2};
 	if (cmd != "compile" && cmd != "run" && cmd != "exec" && ends_with(cmd, ".ss"))
 	{
 		cmd = "run";
 		args_start = 1;
 	}
 
-	bool want_eval = (cmd == "eval");
-	bool want_compile = (cmd == "compile" || cmd == "run" || cmd == "disasm" || want_eval);
-	bool want_exec = (cmd == "exec" || cmd == "run" || want_eval);
-	bool want_disasm = (cmd == "disasm");
+	bool want_eval{cmd == "eval"};
+	bool want_compile{cmd == "compile" || cmd == "run" || cmd == "disasm" || want_eval};
+	bool want_exec{cmd == "exec" || cmd == "run" || want_eval};
+	bool want_disasm{cmd == "disasm"};
 	if (!want_compile && !want_exec)
 	{
 		print(stderr, "error: unknown command '{}'\n", cmd);
@@ -151,33 +153,33 @@ int main(int argc, char* argv[])
 		return 1;
 	}
 
-	bool no_prelude = false;
-	CompileFlags flags;
-	string input_path;
-	int script_arg_start = argc;
-	for (int i = args_start; i < argc; ++i)
+	bool no_prelude{false};
+	CompileFlags flags{};
+	std::string input_path;
+	int script_arg_start{argc};
+	for (int i{args_start}; i < argc; ++i)
 	{
-		if (strcmp(argv[i], "--no-prelude") == 0)
+		if (std::strcmp(argv[i], "--no-prelude") == 0)
 		{
 			no_prelude = true;
 			continue;
 		}
-		if (strcmp(argv[i], "--no-inline") == 0)
+		if (std::strcmp(argv[i], "--no-inline") == 0)
 		{
 			flags.inlining = false;
 			continue;
 		}
-		if (strcmp(argv[i], "--no-lift-lambdas") == 0)
+		if (std::strcmp(argv[i], "--no-lift-lambdas") == 0)
 		{
 			flags.lift_lambdas = false;
 			continue;
 		}
-		if (strcmp(argv[i], "--no-specialize-ops") == 0)
+		if (std::strcmp(argv[i], "--no-specialize-ops") == 0)
 		{
 			flags.specialize_ops = false;
 			continue;
 		}
-		if (strcmp(argv[i], "--trace") == 0)
+		if (std::strcmp(argv[i], "--trace") == 0)
 		{
 #ifdef JET_TRACE
 			g_trace_enabled = true;
@@ -198,19 +200,21 @@ int main(int argc, char* argv[])
 		input_path = "-";
 	}
 
-	vector<uint8_t> bc;
+	std::vector<uint8_t> bc;
 
 	if (bool input_is_bc = want_disasm && ends_with(input_path, ".bc"); want_compile && !input_is_bc)
 	{
-		const char* override = no_prelude ? nullptr : getenv("JET_PRELUDE");
-		string prelude_path = override && *override ? override : "";
-		string_view built_in_prelude;
+		const char* prelude_override{no_prelude ? nullptr : std::getenv("JET_PRELUDE")};
+		std::string prelude_path{prelude_override && *prelude_override ? prelude_override : ""};
+		std::string_view built_in_prelude;
 		if (!no_prelude && prelude_path.empty())
 		{
-			built_in_prelude = {reinterpret_cast<const char*>(prelude_source), prelude_source_size};
+			built_in_prelude = std::string_view{
+				reinterpret_cast<const char*>(prelude_source),
+				prelude_source_size};
 		}
-		string source;
-		string filename;
+		std::string source;
+		std::string filename;
 		if (want_eval)
 		{
 			source = input_path;
@@ -238,15 +242,15 @@ int main(int argc, char* argv[])
 
 	if (want_exec)
 	{
-		vector<char*> shim;
+		std::vector<char*> shim;
 		shim.push_back(argv[0]);
-		for (int i = script_arg_start; i < argc; ++i)
+		for (int i{script_arg_start}; i < argc; ++i)
 		{
 			shim.push_back(argv[i]);
 		}
 		execute_bytecode(image, static_cast<int>(shim.size()), shim.data());
 	}
 
-	fwrite(bc.data(), 1, bc.size(), stdout);
+	std::fwrite(bc.data(), 1, bc.size(), stdout);
 	return 0;
 }

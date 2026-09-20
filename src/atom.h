@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Kirill Zorin
 
-#ifndef atom_h
-#define atom_h
+#pragma once
 
 #include "debug.h"
 #include "error.h"
+
 #include <bit>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <cstdint>
 #include <new>
 #include <string>
 #include <string_view>
@@ -18,42 +18,42 @@
 #include <utility>
 #include <vector>
 
-#define JET_IMM_TYPES(X)                  \
-	X(Boolean,   boolean,    bool)        \
-	X(Character, character,  Character)   \
-	X(EmptyList, empty_list, EmptyList)   \
-	X(Symbol,     symbol,      Symbol)
+#define JET_IMM_TYPES(X)                                 \
+	X(Boolean, boolean, bool)                              \
+	X(Character, character, Character)                     \
+	X(EmptyList, empty_list, EmptyList)                    \
+	X(Symbol, symbol, Symbol)
 
-#define JET_HEAP_TYPES(X)                  \
-	X(Pair,       pair,        Cons)       \
-	X(Procedure,  procedure,   Lambda)     \
-	X(Primitive,  primitive,   Prim)       \
-	X(String,     string,      String)     \
-	X(Vector,     vector,      Vec)        \
-	X(ByteVector, bytevector, ByteVector)  \
-	X(Port,       port,       Port)        \
-	X(Slot,       slot,        Slot)       \
-	X(StructType, struct_type, StructType) \
-	X(Struct,     struct_,     Struct)
+#define JET_HEAP_TYPES(X)                                \
+	X(Pair, pair, Cons)                                    \
+	X(Procedure, procedure, Lambda)                        \
+	X(Primitive, primitive, Prim)                          \
+	X(String, string, String)                              \
+	X(Vector, vector, Vec)                                 \
+	X(ByteVector, bytevector, ByteVector)                  \
+	X(Port, port, Port)                                    \
+	X(Slot, slot, Slot)                                    \
+	X(StructType, struct_type, StructType)                 \
+	X(Struct, struct_, Struct)
 
-#define JET_ALL_TYPES(X)                  \
-	X(Number,    "number")                \
-	X(Boolean,   "boolean")               \
-	X(Character, "character")             \
-	X(EmptyList, "empty list")            \
-	X(Eof,       "eof")                   \
-	X(Pair,      "pair")                  \
-	X(Procedure, "procedure")             \
-	X(Primitive, "primitive")             \
-	X(Symbol,    "symbol")                \
-	X(String,    "string")                \
-	X(Vector,    "vector")                \
-	X(ByteVector,"bytevector")            \
-	X(Port,     "port")                  \
-	X(Slot,      "slot")                  \
-	X(StructType,"struct type")           \
-	X(Struct,    "struct")                \
-	X(Unknown,   "void")
+#define JET_ALL_TYPES(X)                                 \
+	X(Number, "number")                                    \
+	X(Boolean, "boolean")                                  \
+	X(Character, "character")                              \
+	X(EmptyList, "empty list")                             \
+	X(Eof, "eof")                                          \
+	X(Pair, "pair")                                        \
+	X(Procedure, "procedure")                              \
+	X(Primitive, "primitive")                              \
+	X(Symbol, "symbol")                                    \
+	X(String, "string")                                    \
+	X(Vector, "vector")                                    \
+	X(ByteVector, "bytevector")                            \
+	X(Port, "port")                                        \
+	X(Slot, "slot")                                        \
+	X(StructType, "struct type")                           \
+	X(Struct, "struct")                                    \
+	X(Unknown, "void")
 
 namespace jet
 {
@@ -73,7 +73,9 @@ struct std::formatter<jet::Type> : std::formatter<std::string_view>
 	{
 		switch (type)
 		{
-#define X(name, text) case jet::Type::name: return std::formatter<std::string_view>::format(#name, context);
+#define X(name, text) \
+	case jet::Type::name: \
+		return std::formatter<std::string_view>::format(#name, context);
 		JET_ALL_TYPES(X)
 #undef X
 			case jet::Type::TypeMax:
@@ -132,7 +134,7 @@ struct Number
 
 	static Number nan()
 	{
-		uint64_t nan_bits = CANONICAL_NAN;
+		uint64_t nan_bits{CANONICAL_NAN};
 		// the `asm` forces a real branch by making nan_bits opaque. without it clang
 		// if-converts the branch to branchless code, and the NaN fold lands on the FP
 		// dependency chain of every arithmetic op in the vm.
@@ -143,14 +145,14 @@ struct Number
 	static Number trusted(double value)
 	{
 #ifdef JET_DEBUG
-		uint64_t canon = std::bit_cast<uint64_t>(from_ieee(value).value);
+		uint64_t canon{std::bit_cast<uint64_t>(from_ieee(value).value)};
 		JET_DIE_UNLESS(nullptr, std::bit_cast<uint64_t>(value) == canon, "non-canonical number {}", value);
 #endif
 		return Number{value};
 	}
 
-	private:
-		explicit Number(double value) : value{value} {}
+private:
+	explicit Number(double value) : value{value} {}
 };
 
 namespace jet_tag
@@ -177,25 +179,25 @@ public:
 
 	Atom() : bits{QNAN_TAG} {}
 
-	static Atom from_bits(uint64_t b)
+	static Atom from_bits(uint64_t bit_pattern)
 	{
-		Atom a;
-		a.bits = b;
-		return a;
+		Atom atom{};
+		atom.bits = bit_pattern;
+		return atom;
 	}
 
-	static Atom from_double(double d)
+	static Atom from_double(double value)
 	{
-		Atom a;
-		memcpy(&a.bits, &d, sizeof(double));
-		return a;
+		Atom atom{};
+		std::memcpy(&atom.bits, &value, sizeof(double));
+		return atom;
 	}
 
 	double as_double()
 	{
-		double d;
-		memcpy(&d, &bits, sizeof(double));
-		return d;
+		double value{};
+		memcpy(&value, &bits, sizeof(double));
+		return value;
 	}
 
 	bool is_number() { return (bits & QNAN_TAG) != QNAN_TAG; }
@@ -218,15 +220,21 @@ public:
 
 	static Atom make_tagged(int tag, const void* ptr)
 	{
-		uint64_t p = std::bit_cast<uint64_t>(ptr) & PAYLOAD_MASK;
-		return from_bits(QNAN_TAG | (static_cast<uint64_t>(tag & 0x7) << 48) |
-		                 (static_cast<uint64_t>((tag >> 3) & 0x1) << 63) | p);
+		uint64_t payload_bits{std::bit_cast<uint64_t>(ptr) & PAYLOAD_MASK};
+		return from_bits(
+			QNAN_TAG
+			| (static_cast<uint64_t>(tag & 0x7) << 48)
+			| (static_cast<uint64_t>((tag >> 3) & 0x1) << 63)
+			| payload_bits);
 	}
 
 	static Atom make_immediate(int tag, uint64_t payload = 0)
 	{
-		return from_bits(QNAN_TAG | (static_cast<uint64_t>(tag & 0x7) << 48) |
-		                 (static_cast<uint64_t>((tag >> 3) & 0x1) << 63) | (payload & PAYLOAD_MASK));
+		return from_bits(
+			QNAN_TAG
+			| (static_cast<uint64_t>(tag & 0x7) << 48)
+			| (static_cast<uint64_t>((tag >> 3) & 0x1) << 63)
+			| (payload & PAYLOAD_MASK));
 	}
 
 	jet::Type type();
@@ -237,20 +245,14 @@ public:
 		{
 			return false;
 		}
-		int t = tag();
-		return t > jet_tag::eof_tag && t < jet_tag::HEAP_END;
+		int tag_value{tag()};
+		return tag_value > jet_tag::eof_tag && tag_value < jet_tag::HEAP_END;
 	}
 };
 
-inline Atom hole()
-{
-	return Atom::from_bits(HOLE_BITS);
-}
+inline Atom hole() { return Atom::from_bits(HOLE_BITS); }
 
-inline bool is_hole(Atom a)
-{
-	return a.bits == HOLE_BITS;
-}
+inline bool is_hole(Atom atom) { return atom.bits == HOLE_BITS; }
 
 inline jet::Type Atom::type()
 {
@@ -272,15 +274,9 @@ inline jet::Type Atom::type()
 }
 
 template <jet::Type type>
-bool is_type(Atom x)
-{
-	return type == x.type();
-}
+bool is_type(Atom atom) { return type == atom.type(); }
 
-inline uint16_t type_bits(Atom a)
-{
-	return static_cast<uint16_t>(a.bits >> 48);
-}
+inline uint16_t type_bits(Atom atom) { return static_cast<uint16_t>(atom.bits >> 48); }
 
 struct VectorCursor;
 
@@ -359,11 +355,11 @@ struct dynamic_type<Number>
 	static constexpr jet::Type id = jet::Type::Number;
 };
 
-#define X(name, tag_name, cpp) \
-	template <> struct dynamic_type<cpp> \
-	{ \
-		static constexpr jet::Type id = jet::Type::name; \
-		static constexpr int tag = jet_tag::tag_name; \
+#define X(name, tag_name, cpp)                              \
+	template <> struct dynamic_type<cpp>                     \
+	{                                                        \
+		static constexpr jet::Type id = jet::Type::name;      \
+		static constexpr int tag = jet_tag::tag_name;         \
 	};
 JET_IMM_TYPES(X)
 JET_HEAP_TYPES(X)
@@ -391,10 +387,10 @@ struct dynamic_type<OPortFile>
 };
 
 template <typename T>
-struct box_unbox_t;
+struct BoxUnbox;
 
 template <>
-struct box_unbox_t<Number>
+struct BoxUnbox<Number>
 {
 	static Atom box(Number number) { return Atom::from_double(number.value); }
 
@@ -402,23 +398,23 @@ struct box_unbox_t<Number>
 };
 
 template <>
-struct box_unbox_t<bool>
+struct BoxUnbox<bool>
 {
-	static Atom box(bool v) { return Atom::make_immediate(jet_tag::boolean, v ? 1 : 0); }
+	static Atom box(bool value) { return Atom::make_immediate(jet_tag::boolean, value ? 1 : 0); }
 
-	static bool unbox(Atom x) { return x.as_payload() != 0; }
+	static bool unbox(Atom atom) { return atom.as_payload() != 0; }
 };
 
 template <>
-struct box_unbox_t<Character>
+struct BoxUnbox<Character>
 {
-	static Atom box(Character v) { return Atom::make_immediate(jet_tag::character, v); }
+	static Atom box(Character value) { return Atom::make_immediate(jet_tag::character, value); }
 
-	static Character unbox(Atom x) { return static_cast<Character>(x.as_payload()); }
+	static Character unbox(Atom atom) { return static_cast<Character>(atom.as_payload()); }
 };
 
 template <>
-struct box_unbox_t<EmptyList>
+struct BoxUnbox<EmptyList>
 {
 	static Atom box(EmptyList = {}) { return Atom::make_immediate(jet_tag::empty_list); }
 
@@ -427,13 +423,13 @@ struct box_unbox_t<EmptyList>
 
 std::string_view type_name(jet::Type type);
 
-[[noreturn]] void die_type_mismatch(VmState& s, Atom a, jet::Type t);
+[[noreturn]] void die_type_mismatch(VmState& vm, Atom atom, jet::Type expected_type);
 
-inline void type_check(VmState& s, Atom a, jet::Type t)
+inline void type_check(VmState& vm, Atom atom, jet::Type expected_type)
 {
-	if (t != a.type()) [[unlikely]]
+	if (expected_type != atom.type()) [[unlikely]]
 	{
-		die_type_mismatch(s, a, t);
+		die_type_mismatch(vm, atom, expected_type);
 	}
 }
 
@@ -445,27 +441,25 @@ inline Atom box(Atom value)
 template <typename T>
 Atom box(T&& init)
 {
-	return box_unbox_t<typename std::remove_reference<T>::type>::box(static_cast<T&&>(init));
+	return BoxUnbox<typename std::remove_reference<T>::type>::box(static_cast<T&&>(init));
 }
 
 template <typename T, typename... Args>
 Atom box(Args&&... args)
 {
-	return box_unbox_t<T>::box(static_cast<Args&&>(args)...);
+	return BoxUnbox<T>::box(static_cast<Args&&>(args)...);
 }
 
 template <typename T>
-decltype(auto) unbox(Atom a)
+decltype(auto) unbox(Atom atom)
 {
 	// Unchecked. Caller has proven the type.
-	return box_unbox_t<T>::unbox(a);
+	return BoxUnbox<T>::unbox(atom);
 }
 
 template <typename T>
-decltype(auto) slow_unbox(VmState& s, Atom a)
+decltype(auto) slow_unbox(VmState& vm, Atom atom)
 {
-	type_check(s, a, dynamic_type<T>::id);
-	return box_unbox_t<T>::unbox(a);
+	type_check(vm, atom, dynamic_type<T>::id);
+	return BoxUnbox<T>::unbox(atom);
 }
-
-#endif

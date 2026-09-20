@@ -5,6 +5,7 @@
 #include "error.h"
 #include "runtime.h"
 #include "vm.h"
+
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
@@ -168,9 +169,9 @@ struct Arena
 
 	~Arena()
 	{
-		for (Block& b : blocks)
+		for (Block& block : blocks)
 		{
-			delete[] b.mem;
+			delete[] block.mem;
 		}
 	}
 
@@ -211,12 +212,12 @@ struct Arena
 		return p;
 	}
 
-	std::string_view copy_string(std::string_view s)
+	std::string_view copy_string(std::string_view src)
 	{
-		char* p = static_cast<char*>(alloc_raw(s.size() + 1, 1));
-		memcpy(p, s.data(), s.size());
-		p[s.size()] = '\0';
-		return {p, s.size()};
+		char* p = static_cast<char*>(alloc_raw(src.size() + 1, 1));
+		memcpy(p, src.data(), src.size());
+		p[src.size()] = '\0';
+		return {p, src.size()};
 	}
 
 	template <typename T>
@@ -549,13 +550,13 @@ inline bool is_ident_cont(char c)
 	return is_ident_start(c) || (c >= '0' && c <= '9') || c == '+' || c == '@';
 }
 
-static const locale_t c_locale = newlocale(LC_NUMERIC_MASK, "C", static_cast<locale_t>(0));
+static const locale_t C_LOCALE = newlocale(LC_NUMERIC_MASK, "C", nullptr);
 
 static double number_lit_value(std::string_view text)
 {
 	// NumberLit text is arena-interned by the lexer/parser (copy_string), so
 	// text.data() is NUL-terminated.
-	return strtod_l(text.data(), nullptr, c_locale);
+	return strtod_l(text.data(), nullptr, C_LOCALE);
 }
 
 struct ResolvedBinding
@@ -565,18 +566,18 @@ struct ResolvedBinding
 };
 
 template <typename T>
-typename std::vector<T>::reference get(std::vector<T>& v, size_t i)
+typename std::vector<T>::reference get(std::vector<T>& values, size_t idx)
 {
-	if (v.size() <= i)
+	if (values.size() <= idx)
 	{
-		v.resize(i + 1);
+		values.resize(idx + 1);
 	}
-	return v[i];
+	return values[idx];
 }
 
-static uint64_t binding_key(ResolvedBinding b)
+static uint64_t binding_key(ResolvedBinding binding)
 {
-	return (static_cast<uint64_t>(b.lambda->id) << 32) | static_cast<uint32_t>(b.breadth);
+	return (static_cast<uint64_t>(binding.lambda->id) << 32) | static_cast<uint32_t>(binding.breadth);
 }
 
 struct OrderedNameSet
@@ -613,7 +614,7 @@ struct Compiler
 	Program& ast();
 
 	Expr* make_expr(SourceLoc loc, ExprKind kind);
-	Expr* make_boolean_lit(SourceLoc loc, bool value);
+	Expr* make_boolean_lit(SourceLoc loc, bool val);
 	Expr* expand(Expr* expr);
 	Expr* expand_let(Expr* expr);
 	Expr* expand_letrec(Expr* expr);
@@ -666,7 +667,7 @@ struct Compiler
 	std::optional<ResolvedBinding> lookup_name(std::string_view name);
 	void push_lambda_scope(Expr* lambda);
 	void pop_lambda_scope();
-	bool prim_binding_lowerable(ResolvedBinding b, std::string_view prim);
+	bool prim_binding_lowerable(ResolvedBinding binding, std::string_view prim);
 	struct PrimLowering
 	{
 		enum class Kind { None, Unary, Arith, Ref };
@@ -675,8 +676,8 @@ struct Compiler
 		Opcode op_k{};
 	};
 	PrimLowering prim_call_lowering(Expr* call);
-	void record_ref(ResolvedBinding b);
-	void record_set(ResolvedBinding b, bool is_init, Expr* value);
+	void record_ref(ResolvedBinding binding);
+	void record_set(ResolvedBinding binding, bool is_init, Expr* value);
 	void collect_binding_uses(Program& program);
 	void collect_binding_uses_in(Expr* expr);
 	uint32_t binding_use_count(Expr* owner, uint32_t breadth);
@@ -741,11 +742,11 @@ inline char decode_char_literal(Compiler& db, SourceLoc loc, std::string_view bo
 		{"space",     0x20},
 		{"tab",       0x09},
 	};
-	for (Named n : names)
+	for (Named named : names)
 	{
-		if (n.name == body)
+		if (named.name == body)
 		{
-			return n.value;
+			return named.value;
 		}
 	}
 	JETC_DIE(db, loc, "unknown character name '#\\{}'", body);
@@ -781,8 +782,8 @@ namespace
 
 		char advance()
 		{
-			char c = port->read_byte();
-			if (c == '\n')
+			char character = port->read_byte();
+			if (character == '\n')
 			{
 				++line;
 				col = 1;
@@ -791,7 +792,7 @@ namespace
 			{
 				++col;
 			}
-			return c;
+			return character;
 		}
 
 		SourceLoc loc() { return {file_id, line, col}; }
@@ -800,12 +801,12 @@ namespace
 		{
 			while (!at_end())
 			{
-				char c = peek();
-				if (c == ' ' || c == '\t' || c == '\n' || c == '\r')
+				char character = peek();
+				if (character == ' ' || character == '\t' || character == '\n' || character == '\r')
 				{
 					advance();
 				}
-				else if (c == ';')
+				else if (character == ';')
 				{
 					while (!at_end() && peek() != '\n')
 					{
@@ -819,7 +820,7 @@ namespace
 			}
 		}
 
-		void emit(SourceLoc l, TokenKind kind, std::string_view text) { pending_ = {kind, text, l}; }
+		void emit(SourceLoc loc, TokenKind kind, std::string_view text) { pending_ = {kind, text, loc}; }
 
 		std::string_view intern(const std::string& buf) { return db.arena.copy_string(buf); }
 
@@ -987,9 +988,9 @@ namespace
 		{
 			SourceLoc start = loc();
 			std::string buf;
-			char c = peek();
+			char character = peek();
 
-			if (c == '+' || c == '-')
+			if (character == '+' || character == '-')
 			{
 				buf += advance();
 				if (at_end() || is_delimiter(peek()))
@@ -1007,19 +1008,19 @@ namespace
 				return;
 			}
 
-			if (c >= '0' && c <= '9')
+			if (character >= '0' && character <= '9')
 			{
 				finish_number(start, buf);
 				return;
 			}
 
-			if (is_ident_start(c))
+			if (is_ident_start(character))
 			{
 				finish_ident(start, buf);
 				return;
 			}
 
-			JETC_DIE(db, loc(), "unexpected character '{:c}'", c);
+			JETC_DIE(db, loc(), "unexpected character '{:c}'", character);
 		}
 
 		TokenKind classify_ident(std::string_view text)
@@ -1051,11 +1052,11 @@ namespace
 				{"or",      TokenKind::Or},
 				{"include", TokenKind::Include},
 			};
-			for (Keyword k : keywords)
+			for (Keyword keyword : keywords)
 			{
-				if (k.name == text)
+				if (keyword.name == text)
 				{
-					return k.kind;
+					return keyword.kind;
 				}
 			}
 			return TokenKind::Variable;
@@ -1069,29 +1070,29 @@ namespace
 				return {TokenKind::Eof, {}, loc()};
 			}
 
-			char c = peek();
-			SourceLoc l = loc();
+			char character = peek();
+			SourceLoc loc = this->loc();
 
-			switch (c)
+			switch (character)
 			{
 				case '(':
 					advance();
-					emit(l, TokenKind::LParen, intern(std::string{c}));
+					emit(loc, TokenKind::LParen, intern(std::string{character}));
 					break;
 
 				case ')':
 					advance();
-					emit(l, TokenKind::RParen, intern(std::string{c}));
+					emit(loc, TokenKind::RParen, intern(std::string{character}));
 					break;
 
 				case '\'':
 					advance();
-					emit(l, TokenKind::Quote, intern(std::string{c}));
+					emit(loc, TokenKind::Quote, intern(std::string{character}));
 					break;
 
 				case '`':
 					advance();
-					emit(l, TokenKind::Quasiquote, intern(std::string{c}));
+					emit(loc, TokenKind::Quasiquote, intern(std::string{character}));
 					break;
 
 				case ',':
@@ -1099,11 +1100,11 @@ namespace
 					if (!at_end() && peek() == '@')
 					{
 						advance();
-						emit(l, TokenKind::UnquoteSplicing, intern(std::string{",@"}));
+						emit(loc, TokenKind::UnquoteSplicing, intern(std::string{",@"}));
 					}
 					else
 					{
-						emit(l, TokenKind::Unquote, intern(std::string{c}));
+						emit(loc, TokenKind::Unquote, intern(std::string{character}));
 					}
 					break;
 
@@ -1119,12 +1120,12 @@ namespace
 					advance();
 					if (at_end() || is_delimiter(peek()))
 					{
-						emit(l, TokenKind::Dot, intern(std::string{c}));
+						emit(loc, TokenKind::Dot, intern(std::string{character}));
 					}
 					else
 					{
-						std::string buf{c};
-						finish_ident(l, buf);
+						std::string buf{character};
+						finish_ident(loc, buf);
 					}
 					break;
 
@@ -1140,9 +1141,9 @@ namespace
 		{
 			while (true)
 			{
-				Token t = next_token();
-				tokens.push_back(t);
-				if (t.kind == TokenKind::Eof)
+				Token token = next_token();
+				tokens.push_back(token);
+				if (token.kind == TokenKind::Eof)
 				{
 					break;
 				}
@@ -1155,9 +1156,9 @@ namespace
 		std::span<Token> tokens;
 		size_t pos = 0;
 		LexState* stream_lex = nullptr;
-		Token la_{};
+		Token la_;
 		bool la_valid_ = false;
-		Token current_{};
+		Token current_;
 
 		Compiler& db;
 		std::vector<Expr*> scratch{};
@@ -1213,11 +1214,11 @@ namespace
 
 		Expr* make_expr(SourceLoc loc, ExprKind kind)
 		{
-			Expr* e = db.arena.alloc<Expr>();
-			e->kind = kind;
-			e->id = db.next_expr_id_++;
-			e->loc = loc;
-			return e;
+			Expr* expr = db.arena.alloc<Expr>();
+			expr->kind = kind;
+			expr->id = db.next_expr_id_++;
+			expr->loc = loc;
+			return expr;
 		}
 
 		Slice<Expr*> make_slice(std::vector<Expr*>& vec) { return db.arena.copy_slice(vec); }
@@ -1911,10 +1912,10 @@ namespace
 			for (size_t i = names.size(); i-- > 0;)
 			{
 				Expr* let_expr = make_expr(loc, ExprKind::Let);
-				std::vector<std::string_view> n{names[i]};
-				std::vector<Expr*> v{vals[i]};
-				let_expr->let.names = make_string_slice(n);
-				let_expr->let.vals = make_slice(v);
+				std::vector<std::string_view> let_names{names[i]};
+				std::vector<Expr*> let_values{vals[i]};
+				let_expr->let.names = make_string_slice(let_names);
+				let_expr->let.vals = make_slice(let_values);
 				if (inner == nullptr)
 				{
 					let_expr->let.body = make_slice(body);
@@ -2073,10 +2074,10 @@ namespace
 			}
 			std::string source;
 			char read_buf[4096];
-			size_t n;
-			while ((n = fread(read_buf, 1, sizeof(read_buf), f)) > 0)
+			size_t len;
+			while ((len = fread(read_buf, 1, sizeof(read_buf), f)) > 0)
 			{
-				source.append(read_buf, n);
+				source.append(read_buf, len);
 			}
 			fclose(f);
 
@@ -2092,6 +2093,8 @@ namespace
 
 			ParseState inc_state{
 				.tokens = inc_tokens,
+				.la_ = {},
+				.current_ = {},
 				.db = db,
 			};
 			std::vector<Expr*> forms;
@@ -2114,19 +2117,19 @@ namespace
 			return e;
 		}
 
-		Expr* make_number_lit(SourceLoc loc, int value)
+		Expr* make_number_lit(SourceLoc loc, int val)
 		{
-			Expr* e = make_expr(loc, ExprKind::NumberLit);
-			e->number_lit.text = db.arena.copy_string(std::format("{}", value));
-			return e;
+			Expr* expr = make_expr(loc, ExprKind::NumberLit);
+			expr->number_lit.text = db.arena.copy_string(std::format("{}", val));
+			return expr;
 		}
 
 		// ($line) ==> the line of the form, ($col) ==> its column
-		Expr* parse_dollar_loc_field(SourceLoc loc, int value)
+		Expr* parse_dollar_loc_field(SourceLoc loc, int val)
 		{
 			advance();
 			expect(TokenKind::RParen);
-			return make_number_lit(loc, value);
+			return make_number_lit(loc, val);
 		}
 
 		// ($check expr) ==> (%check expr "file" line col)
@@ -2539,6 +2542,8 @@ Program& Compiler::ast()
 		{
 			ParseState state{
 				.tokens = toks,
+				.la_ = {},
+				.current_ = {},
 				.db = *this,
 			};
 			while (!state.at_end())
@@ -2611,11 +2616,11 @@ Expr* Compiler::make_expr(SourceLoc loc, ExprKind kind)
 	return e;
 }
 
-Expr* Compiler::make_boolean_lit(SourceLoc loc, bool value)
+Expr* Compiler::make_boolean_lit(SourceLoc loc, bool val)
 {
-	Expr* e = make_expr(loc, ExprKind::BooleanLit);
-	e->boolean_lit.value = value;
-	return e;
+	Expr* expr = make_expr(loc, ExprKind::BooleanLit);
+	expr->boolean_lit.value = val;
+	return expr;
 }
 
 template <typename F>
@@ -2830,11 +2835,11 @@ Expr* Compiler::expand(Expr* expr)
 		case ExprKind::SetRef:
 		case ExprKind::IterNext:
 		case ExprKind::If:
-			walk_children(*this, expr, [&](Expr*& c) { c = expand(c); });
+			walk_children(*this, expr, [&](Expr*& child) { child = expand(child); });
 			return expr;
 
 		case ExprKind::Lambda:
-			walk_children(*this, expr, [&](Expr*& c) { c = expand(c); });
+			walk_children(*this, expr, [&](Expr*& child) { child = expand(child); });
 			expr->lambda.body = hoist_defines_in_body(expr->loc, expr->lambda.body);
 			return expr;
 
@@ -2848,7 +2853,7 @@ Expr* Compiler::expand(Expr* expr)
 
 Expr* Compiler::expand_let(Expr* expr)
 {
-	walk_children(*this, expr, [&](Expr*& c) { c = expand(c); });
+	walk_children(*this, expr, [&](Expr*& child) { child = expand(child); });
 	expr->let.body = hoist_defines_in_body(expr->loc, expr->let.body);
 	return expr;
 }
@@ -2902,17 +2907,17 @@ Slice<Expr*> Compiler::hoist_defines_in_body(SourceLoc loc, Slice<Expr*> body)
 		return body;
 	}
 
-	uint32_t n = static_cast<uint32_t>(names.ordered.size());
+	uint32_t count = static_cast<uint32_t>(names.ordered.size());
 
-	Expr** vals = arena.alloc_array<Expr*>(n);
-	for (uint32_t i = 0; i < n; ++i)
+	Expr** vals = arena.alloc_array<Expr*>(count);
+	for (uint32_t i = 0; i < count; ++i)
 	{
 		vals[i] = make_boolean_lit(loc, false);
 	}
 
 	Expr* let_e = make_expr(loc, ExprKind::Let);
 	let_e->let.names = arena.copy_slice(names.ordered);
-	let_e->let.vals = {vals, n};
+	let_e->let.vals = {vals, count};
 	let_e->let.body = body;
 
 	return arena.copy_slice({let_e});
@@ -2927,17 +2932,17 @@ Expr* Compiler::expand_letrec(Expr* expr)
 	//   body ...)
 	// Sequential set!s give letrec* semantics, which is what almost all uses
 	// of letrec actually want and matches what we accept for both keywords.
-	uint32_t n = expr->let.names.size();
+	uint32_t name_count = expr->let.names.size();
 
-	Expr** sentinels = arena.alloc_array<Expr*>(n);
-	for (uint32_t i = 0; i < n; ++i)
+	Expr** sentinels = arena.alloc_array<Expr*>(name_count);
+	for (uint32_t i = 0; i < name_count; ++i)
 	{
 		sentinels[i] = make_boolean_lit(expr->loc, false);
 	}
 
-	uint32_t body_n = n + expr->let.body.size();
-	Expr** new_body = arena.alloc_array<Expr*>(body_n);
-	for (uint32_t i = 0; i < n; ++i)
+	uint32_t body_count = name_count + expr->let.body.size();
+	Expr** new_body = arena.alloc_array<Expr*>(body_count);
+	for (uint32_t i = 0; i < name_count; ++i)
 	{
 		Expr* set_e = make_expr(expr->let.vals[i]->loc, ExprKind::SetBang);
 		set_e->set_bang.name = expr->let.names[i];
@@ -2947,13 +2952,13 @@ Expr* Compiler::expand_letrec(Expr* expr)
 	}
 	for (uint32_t i = 0; i < expr->let.body.size(); ++i)
 	{
-		new_body[n + i] = expr->let.body[i];
+		new_body[name_count + i] = expr->let.body[i];
 	}
 
 	Expr* let_e = make_expr(expr->loc, ExprKind::Let);
 	let_e->let.names = expr->let.names;
-	let_e->let.vals = {sentinels, n};
-	let_e->let.body = {new_body, body_n};
+	let_e->let.vals = {sentinels, name_count};
+	let_e->let.body = {new_body, body_count};
 
 	return expand_let(let_e);
 }
@@ -3035,7 +3040,7 @@ Expr* Compiler::compute_anf(Expr* expr)
 
 		case ExprKind::Lambda:
 		case ExprKind::Let:
-			walk_children(*this, expr, [&](Expr*& c) { c = compute_anf(c); });
+			walk_children(*this, expr, [&](Expr*& child) { child = compute_anf(child); });
 			return expr;
 
 		case ExprKind::If:
@@ -3132,9 +3137,9 @@ Expr* Compiler::compute_anf(Expr* expr)
 
 void Compiler::verify_anf(Expr* expr)
 {
-	auto&& is_anf_atom = [](Expr* e) -> bool
+	auto&& is_anf_atom = [](Expr* expr) -> bool
 	{
-		switch (e->kind)
+		switch (expr->kind)
 		{
 			case ExprKind::NumberLit:
 			case ExprKind::StringLit:
@@ -3150,16 +3155,16 @@ void Compiler::verify_anf(Expr* expr)
 				return false;
 		}
 	};
-	auto check_atom = [&](Expr* e)
+	auto&& check_atom = [&](Expr* expr)
 	{
 		JETC_DIE_UNLESS(
 			*this,
-			e->loc,
-			is_anf_atom(e),
+			expr->loc,
+			is_anf_atom(expr),
 			"anf: non-atomic operand (kind {})",
-			e->kind
+			expr->kind
 			);
-		verify_anf(e);
+		verify_anf(expr);
 	};
 
 	switch (expr->kind)
@@ -3190,71 +3195,71 @@ void Compiler::verify_anf(Expr* expr)
 			break;
 
 		default:
-			walk_children(*this, expr, [&](Expr* e) { verify_anf(e); });
+			walk_children(*this, expr, [&](Expr* child) { verify_anf(child); });
 			break;
 	}
 }
 
-bool Compiler::prim_binding_lowerable(ResolvedBinding b, std::string_view prim)
+bool Compiler::prim_binding_lowerable(ResolvedBinding binding, std::string_view prim)
 {
-	if (b.lambda != toplevel_lambda_)
+	if (binding.lambda != toplevel_lambda_)
 	{
 		return false;
 	}
 	LambdaBindings& tl = lambda_bindings_[toplevel_lambda_];
-	if (get(tl.reassigned_after_init, b.breadth))
+	if (get(tl.reassigned_after_init, binding.breadth))
 	{
 		return false;
 	}
-	Expr* init = get(tl.bound_init, b.breadth);
+	Expr* init = get(tl.bound_init, binding.breadth);
 	return init && init->kind == ExprKind::PrimRef && init->prim_ref.name == prim;
 }
 
-void Compiler::record_ref(ResolvedBinding b)
+void Compiler::record_ref(ResolvedBinding binding)
 {
 	// Codegen wires each transit lambda's clos to forward the Slot, so
 	// every lambda between owner and the current scope needs an upvalue entry.
-	if (lambdas_.back() == b.lambda)
+	if (lambdas_.back() == binding.lambda)
 	{
 		return;
 	}
 
-	LambdaBindings& ob = lambda_bindings_[b.lambda];
-	get(ob.captured, b.breadth) = true;
-	if (!get(ob.is_initialized, b.breadth))
+	LambdaBindings& ob = lambda_bindings_[binding.lambda];
+	get(ob.captured, binding.breadth) = true;
+	if (!get(ob.is_initialized, binding.breadth))
 	{
-		get(ob.captured_before_init, b.breadth) = true;
+		get(ob.captured_before_init, binding.breadth) = true;
 	}
 
-	uint32_t bw = static_cast<uint32_t>(b.breadth);
-	uint64_t key = binding_key(b);
+	uint32_t bw = static_cast<uint32_t>(binding.breadth);
+	uint64_t key = binding_key(binding);
 	for (size_t i = lambdas_.size(); i-- > 0;)
 	{
 		Expr* lam = lambdas_[i];
-		if (lam == b.lambda)
+		if (lam == binding.lambda)
 		{
 			return;
 		}
 		if (LambdaBindings& lb = lambda_bindings_[lam]; lb.upvalue_keys.insert(key).second)
 		{
-			lb.upvalues.push_back({b.lambda, bw});
+			lb.upvalues.push_back({binding.lambda, bw});
 		}
 	}
 	JETC_DIE(*this, SourceLoc::none(), "record_ref: owner not in lambdas_");
 }
 
-void Compiler::record_set(ResolvedBinding b, bool is_init, Expr* value)
+void Compiler::record_set(ResolvedBinding binding, bool is_init, Expr* val)
 {
-	LambdaBindings& lb = lambda_bindings_[b.lambda];
-	if (!is_init || get(lb.is_initialized, b.breadth))
+	LambdaBindings& lb = lambda_bindings_[binding.lambda];
+	if (!is_init || get(lb.is_initialized, binding.breadth))
 	{
-		get(lb.reassigned_after_init, b.breadth) = true;
+		get(lb.reassigned_after_init, binding.breadth) = true;
 		return;
 	}
-	get(lb.is_initialized, b.breadth) = true;
-	if (value)
+	get(lb.is_initialized, binding.breadth) = true;
+	if (val)
 	{
-		get(lb.bound_init, b.breadth) = value;
+		get(lb.bound_init, binding.breadth) = val;
 	}
 }
 
@@ -3296,11 +3301,11 @@ void Compiler::freeze_lambda(Expr* lambda)
 
 	lambda->lambda.upvalues = arena.copy_slice(lb.upvalues);
 
-	uint32_t n = lambda->lambda.names.size();
-	bool* captured_data = arena.alloc_array<bool>(n);
-	bool* captured_before_init_data = arena.alloc_array<bool>(n);
-	bool* reassigned_data = arena.alloc_array<bool>(n);
-	for (uint32_t i = 0; i < n; ++i)
+	uint32_t name_count = lambda->lambda.names.size();
+	bool* captured_data = arena.alloc_array<bool>(name_count);
+	bool* captured_before_init_data = arena.alloc_array<bool>(name_count);
+	bool* reassigned_data = arena.alloc_array<bool>(name_count);
+	for (uint32_t i = 0; i < name_count; ++i)
 	{
 		captured_data[i] = get(lb.captured, i);
 		// The is_initialized gate keeps never-initialized bindings (parameters) out:
@@ -3308,9 +3313,9 @@ void Compiler::freeze_lambda(Expr* lambda)
 		captured_before_init_data[i] = get(lb.captured_before_init, i) && get(lb.is_initialized, i);
 		reassigned_data[i] = get(lb.reassigned_after_init, i);
 	}
-	lambda->lambda.captured_locals = {captured_data, n};
-	lambda->lambda.captured_before_init_locals = {captured_before_init_data, n};
-	lambda->lambda.reassigned_after_init_locals = {reassigned_data, n};
+	lambda->lambda.captured_locals = {captured_data, name_count};
+	lambda->lambda.captured_before_init_locals = {captured_before_init_data, name_count};
+	lambda->lambda.reassigned_after_init_locals = {reassigned_data, name_count};
 }
 
 void Compiler::compute_binding_addresses(Program& program)
@@ -3353,12 +3358,12 @@ void Compiler::collect_binding_uses_in(Expr* expr)
 {
 	if (expr->kind == ExprKind::VarRef || expr->kind == ExprKind::SetBang)
 	{
-		if (ResolvedBinding b = bindings_[expr->id]; b.lambda)
+		if (ResolvedBinding binding = bindings_[expr->id]; binding.lambda)
 		{
-			++binding_use_counts_[binding_key(b)];
+			++binding_use_counts_[binding_key(binding)];
 		}
 	}
-	walk_children(*this, expr, [&](Expr* e) { collect_binding_uses_in(e); });
+	walk_children(*this, expr, [&](Expr* child) { collect_binding_uses_in(child); });
 }
 
 void Compiler::collect_binding_uses(Program& program)
@@ -3428,7 +3433,7 @@ void Compiler::compute_binding_addresses_in(Expr* expr)
 
 			push_lambda_scope(expr);
 			frame_names_.push_back(std::move(names));
-			walk_children(*this, expr, [&](Expr* e) { compute_binding_addresses_in(e); });
+			walk_children(*this, expr, [&](Expr* child) { compute_binding_addresses_in(child); });
 			expr->lambda.names = arena.copy_slice(frame_names_.back());
 			frame_names_.pop_back();
 			pop_lambda_scope();
@@ -3535,7 +3540,10 @@ void Compiler::compute_binding_addresses_in(Expr* expr)
 		}
 
 		default:
-			walk_children(*this, expr, [&](Expr* e) { compute_binding_addresses_in(e); });
+			walk_children(*this, expr, [&](Expr* child)
+			{
+				compute_binding_addresses_in(child);
+			});
 			break;
 	}
 }
@@ -3553,7 +3561,10 @@ void Compiler::recompute_lambda_bindings_in(Expr* expr)
 
 		case ExprKind::Lambda:
 			push_lambda_scope(expr);
-			walk_children(*this, expr, [&](Expr* e) { recompute_lambda_bindings_in(e); });
+			walk_children(*this, expr, [&](Expr* child)
+			{
+				recompute_lambda_bindings_in(child);
+			});
 			pop_lambda_scope();
 			all_lambdas_.push_back(expr);
 			break;
@@ -3561,14 +3572,17 @@ void Compiler::recompute_lambda_bindings_in(Expr* expr)
 		case ExprKind::SetBang:
 		{
 			recompute_lambda_bindings_in(expr->set_bang.value);
-			ResolvedBinding b = bindings_[expr->id];
-			record_ref(b);
-			record_set(b, expr->set_bang.is_init, expr->set_bang.value);
+			ResolvedBinding binding = bindings_[expr->id];
+			record_ref(binding);
+			record_set(binding, expr->set_bang.is_init, expr->set_bang.value);
 			break;
 		}
 
 		default:
-			walk_children(*this, expr, [&](Expr* e) { recompute_lambda_bindings_in(e); });
+			walk_children(*this, expr, [&](Expr* child)
+			{
+				recompute_lambda_bindings_in(child);
+			});
 			break;
 	}
 }
@@ -3591,7 +3605,10 @@ void Compiler::collect_tail_calls(Expr* expr, bool in_tail)
 			{
 				tail_cache_[expr->id] = true;
 			}
-			walk_children(*this, expr, [&](Expr* e) { collect_tail_calls(e, false); });
+			walk_children(*this, expr, [&](Expr* child)
+			{
+				collect_tail_calls(child, false);
+			});
 			break;
 
 		case ExprKind::Lambda:
@@ -3633,7 +3650,10 @@ void Compiler::collect_tail_calls(Expr* expr, bool in_tail)
 			break;
 
 		default:
-			walk_children(*this, expr, [&](Expr* e) { collect_tail_calls(e, false); });
+			walk_children(*this, expr, [&](Expr* child)
+			{
+				collect_tail_calls(child, false);
+			});
 			break;
 	}
 }
@@ -3661,9 +3681,9 @@ namespace
 		return std::nullopt;
 	}
 
-	bool is_literal_key(Expr* e)
+	bool is_literal_key(Expr* expr)
 	{
-		switch (e->kind)
+		switch (expr->kind)
 		{
 			case ExprKind::NumberLit:
 			case ExprKind::SymbolLit:
@@ -3677,16 +3697,16 @@ namespace
 	}
 
 	template <typename T>
-	T narrow_or_die(Compiler& db, SourceLoc loc, size_t v)
+	T narrow_or_die(Compiler& db, SourceLoc loc, size_t val)
 	{
 		JETC_DIE_WHEN(
 			db,
 			loc,
-			v > std::numeric_limits<T>::max(),
+			val > std::numeric_limits<T>::max(),
 			"codegen: value {} overflows a narrower field",
-			v
+			val
 			);
-		return static_cast<T>(v);
+		return static_cast<T>(val);
 	}
 
 	std::optional<Opcode> unary_arith_opcode(std::string_view name)
@@ -3781,9 +3801,9 @@ void Compiler::run_op_selection(Program& program)
 	recompute_lambda_bindings(program);
 	collect_binding_uses(program);
 
-	for (Expr* L : all_lambdas_)
+	for (Expr* lambda : all_lambdas_)
 	{
-		freeze_lambda(L);
+		freeze_lambda(lambda);
 	}
 
 	collect_branch_fusion_facts(program);
@@ -3813,13 +3833,19 @@ void Compiler::select_ops_in(Expr* expr, Expr* current)
 			}
 			else
 			{
-				walk_children(*this, expr, [&](Expr* e) { select_ops_in(e, current); });
+				walk_children(*this, expr, [&](Expr* child)
+				{
+					select_ops_in(child, current);
+				});
 			}
 			select_call_op(expr, current);
 			break;
 
 		case ExprKind::Lambda:
-			walk_children(*this, expr, [&](Expr* e) { select_ops_in(e, expr); });
+			walk_children(*this, expr, [&](Expr* child)
+			{
+				select_ops_in(child, expr);
+			});
 			break;
 
 		case ExprKind::SetBang:
@@ -3828,20 +3854,29 @@ void Compiler::select_ops_in(Expr* expr, Expr* current)
 			break;
 
 		case ExprKind::SetRef:
-			walk_children(*this, expr, [&](Expr* e) { select_ops_in(e, current); });
+			walk_children(*this, expr, [&](Expr* child)
+			{
+				select_ops_in(child, current);
+			});
 			select_field_op(expr, current, expr->set_ref.obj, expr->set_ref.key, Opcode::stf, Opcode::stfk);
 			break;
 
 		case ExprKind::IterNext:
 		{
-			walk_children(*this, expr, [&](Expr* e) { select_ops_in(e, current); });
+			walk_children(*this, expr, [&](Expr* child)
+			{
+				select_ops_in(child, current);
+			});
 			OpSelection& sel = selected_ops_[expr->id].emplace();
 			sel.op = expr->iter_next.names.size() == 1 ? Opcode::iter_next1 : Opcode::iter_next2;
 			break;
 		}
 
 		default:
-			walk_children(*this, expr, [&](Expr* e) { select_ops_in(e, current); });
+			walk_children(*this, expr, [&](Expr* child)
+			{
+				select_ops_in(child, current);
+			});
 			break;
 	}
 }
@@ -3950,7 +3985,10 @@ void Compiler::collect_intrinsic_callees(Expr* expr, Expr* current)
 	{
 		current = expr;
 	}
-	walk_children(*this, expr, [&](Expr* e) { collect_intrinsic_callees(e, current); });
+	walk_children(*this, expr, [&](Expr* child)
+	{
+		collect_intrinsic_callees(child, current);
+	});
 }
 
 void Compiler::select_call_op(Expr* expr, Expr* current)
@@ -4122,7 +4160,10 @@ void Compiler::collect_branch_fusion_facts(Program& program)
 				}
 			}
 		}
-		walk_children(*this, expr, [&](Expr* child) { self(child, self); });
+		walk_children(*this, expr, [&](Expr* child)
+		{
+			self(child, self);
+		});
 	};
 	for (Expr* form : program.forms)
 	{
@@ -4147,7 +4188,10 @@ void Compiler::collect_branch_fusion_facts(Program& program)
 				candidate->branch = expr;
 			}
 		}
-		walk_children(*this, expr, [&](Expr* child) { self(child, self); });
+		walk_children(*this, expr, [&](Expr* child)
+		{
+			self(child, self);
+		});
 	};
 	for (Expr* form : program.forms)
 	{
@@ -4188,8 +4232,13 @@ void Compiler::select_branch_fusions()
 	}
 }
 
-void Compiler::select_field_op(Expr* expr, Expr* current, Expr* receiver, Expr* key, Opcode reg_op,
-                               Opcode const_op)
+void Compiler::select_field_op(
+	Expr* expr,
+	Expr* current,
+	Expr* receiver,
+	Expr* key,
+	Opcode reg_op,
+	Opcode const_op)
 {
 	OpSelection& sel = selected_ops_[expr->id].emplace();
 
@@ -4204,18 +4253,19 @@ void Compiler::select_field_op(Expr* expr, Expr* current, Expr* receiver, Expr* 
 
 void Compiler::select_var_op(Expr* expr, Expr* current, bool is_set)
 {
-	ResolvedBinding b = binding(expr);
-	bool slot = needs_slot(b.lambda, static_cast<uint32_t>(b.breadth));
+	ResolvedBinding binding_result = binding(expr);
+	bool slot = needs_slot(binding_result.lambda, static_cast<uint32_t>(binding_result.breadth));
 	OpSelection& sel = selected_ops_[expr->id].emplace();
-	if (b.lambda == current)
+	if (binding_result.lambda == current)
 	{
 		// mov marks a plain register access: refs read the register directly
 		// (no code), sets write it.
 		sel.op = slot ? (is_set ? Opcode::std : Opcode::ldd) : Opcode::mov;
-		sel.u.var.addr = narrow_or_die<uint16_t>(*this, expr->loc, b.breadth);
+		sel.u.var.addr = narrow_or_die<uint16_t>(*this, expr->loc, binding_result.breadth);
 		return;
 	}
-	std::optional<uint16_t> found = find_upvalue(current, b.lambda, static_cast<uint32_t>(b.breadth));
+	std::optional<uint16_t> found =
+		find_upvalue(current, binding_result.lambda, static_cast<uint32_t>(binding_result.breadth));
 	std::string_view name = expr->kind == ExprKind::SetBang ? expr->set_bang.name : expr->var_ref.name;
 	JETC_DIE_UNLESS(
 		*this,
@@ -4235,64 +4285,64 @@ namespace
 	// Let + VarRef pair on top of the expression itself.
 	constexpr uint32_t INLINE_BUDGET = 32;
 
-	uint32_t count_exprs(Expr* e);
+	uint32_t count_exprs(Expr* expr);
 
 	uint32_t count_exprs_slice(Slice<Expr*> body)
 	{
-		uint32_t n = 0;
+		uint32_t count = 0;
 		for (uint32_t i = 0; i < body.size(); ++i)
 		{
-			n += count_exprs(body[i]);
+			count += count_exprs(body[i]);
 		}
-		return n;
+		return count;
 	}
 
-	uint32_t count_exprs(Expr* e)
+	uint32_t count_exprs(Expr* expr)
 	{
-		if (!e)
+		if (!expr)
 		{
 			return 0;
 		}
-		uint32_t n = 1;
-		switch (e->kind)
+		uint32_t count = 1;
+		switch (expr->kind)
 		{
 			case ExprKind::Call:
-				n += count_exprs(e->call.proc);
-				n += count_exprs_slice(e->call.args);
+				count += count_exprs(expr->call.proc);
+				count += count_exprs_slice(expr->call.args);
 				break;
 			case ExprKind::Apply:
-				n += count_exprs(e->apply.proc);
-				n += count_exprs(e->apply.args);
+				count += count_exprs(expr->apply.proc);
+				count += count_exprs(expr->apply.args);
 				break;
 			case ExprKind::If:
-				n += count_exprs(e->if_.test);
-				n += count_exprs(e->if_.consequent);
-				n += count_exprs(e->if_.alternate);
+				count += count_exprs(expr->if_.test);
+				count += count_exprs(expr->if_.consequent);
+				count += count_exprs(expr->if_.alternate);
 				break;
 			case ExprKind::Lambda:
-				n += count_exprs_slice(e->lambda.body);
+				count += count_exprs_slice(expr->lambda.body);
 				break;
 			case ExprKind::SetBang:
-				n += count_exprs(e->set_bang.value);
+				count += count_exprs(expr->set_bang.value);
 				break;
 			case ExprKind::SetRef:
-				n += count_exprs(e->set_ref.obj);
-				n += count_exprs(e->set_ref.key);
-				n += count_exprs(e->set_ref.value);
+				count += count_exprs(expr->set_ref.obj);
+				count += count_exprs(expr->set_ref.key);
+				count += count_exprs(expr->set_ref.value);
 				break;
 			case ExprKind::IterNext:
-				n += count_exprs(e->iter_next.cursor);
-				n += count_exprs(e->iter_next.consequent);
-				n += count_exprs(e->iter_next.alternate);
+				count += count_exprs(expr->iter_next.cursor);
+				count += count_exprs(expr->iter_next.consequent);
+				count += count_exprs(expr->iter_next.alternate);
 				break;
 			case ExprKind::Let:
-				n += count_exprs_slice(e->let.vals);
-				n += count_exprs_slice(e->let.body);
+				count += count_exprs_slice(expr->let.vals);
+				count += count_exprs_slice(expr->let.body);
 				break;
 			default:
 				break;
 		}
-		return n;
+		return count;
 	}
 
 	struct AnfInline
@@ -4587,7 +4637,10 @@ namespace
 							}
 						}
 					}
-					walk_children(db, expr, [&](Expr*& c) { c = walk(c); });
+					walk_children(db, expr, [&](Expr*& child)
+					{
+						child = walk(child);
+					});
 					return expr;
 				}
 
@@ -4596,14 +4649,20 @@ namespace
 				case ExprKind::SetRef:
 				case ExprKind::IterNext:
 				case ExprKind::If:
-					walk_children(db, expr, [&](Expr*& c) { c = walk(c); });
+					walk_children(db, expr, [&](Expr*& child)
+					{
+						child = walk(child);
+					});
 					return expr;
 
 				case ExprKind::Lambda:
 				{
 					bool guard = candidate_lambdas.count(expr) && active.insert(expr).second;
 					hosts.push_back(expr);
-					walk_children(db, expr, [&](Expr*& c) { c = walk(c); });
+					walk_children(db, expr, [&](Expr*& child)
+					{
+						child = walk(child);
+					});
 					hosts.pop_back();
 					if (guard)
 					{
@@ -4630,7 +4689,10 @@ namespace
 							}
 						}
 					}
-					walk_children(db, expr, [&](Expr*& c) { c = walk(c); });
+					walk_children(db, expr, [&](Expr*& child)
+					{
+						child = walk(child);
+					});
 					return expr;
 				}
 
@@ -4715,22 +4777,25 @@ namespace
 			return e;
 		}
 
-		void walk(Expr* e)
+		void walk(Expr* expr)
 		{
-			walk_children(db, e, [&](Expr* c) { walk(c); });
-			if (e->kind != ExprKind::Call || !lowerable(e))
+			walk_children(db, expr, [&](Expr* child)
+			{
+				walk(child);
+			});
+			if (expr->kind != ExprKind::Call || !lowerable(expr))
 			{
 				return;
 			}
 			// (op a b c) -> (op (op a b) c), left-nested like the prim's fold:
 			// bit-identical for arithmetic doubles, a left-to-right path for ref.
-			Slice<Expr*> args = e->call.args;
+			Slice<Expr*> args = expr->call.args;
 			Expr* acc = args[0];
 			for (uint32_t i = 1; i + 1 < args.size(); ++i)
 			{
-				acc = make_binary(e->loc, clone_proc(e->call.proc), acc, args[i]);
+				acc = make_binary(expr->loc, clone_proc(expr->call.proc), acc, args[i]);
 			}
-			e->call.args = db.arena.copy_slice({acc, args.back()});
+			expr->call.args = db.arena.copy_slice({acc, args.back()});
 		}
 	};
 
@@ -4786,7 +4851,10 @@ namespace
 				default:
 				{
 					bool found = false;
-					walk_children(db, expr, [&](Expr*& c) { found = found || name_used_as_value(c, name); });
+					walk_children(db, expr, [&](Expr*& child)
+					{
+						found = found || name_used_as_value(child, name);
+					});
 					return found;
 				}
 			}
@@ -4859,9 +4927,9 @@ namespace
 				default:
 				{
 					bool ok = true;
-					walk_children(db, expr, [&](Expr*& c)
+					walk_children(db, expr, [&](Expr*& child)
 					{
-						ok = ok && self_calls_all_tail(c, name, false);
+						ok = ok && self_calls_all_tail(child, name, false);
 					});
 					return ok;
 				}
@@ -4917,9 +4985,9 @@ namespace
 					return;
 				default:
 				{
-					auto&& collect_child = [&](Expr* c)
+					auto&& collect_child = [&](Expr* child)
 					{
-						collect_captures_in(c, lambda, self_name, out, seen);
+						collect_captures_in(child, lambda, self_name, out, seen);
 					};
 					walk_children(db, expr, collect_child);
 					return;
@@ -4954,24 +5022,27 @@ namespace
 			    && expr->call.proc->kind == ExprKind::VarRef
 			    && expr->call.proc->var_ref.name == name)
 			{
-				uint32_t n = static_cast<uint32_t>(expr->call.args.size());
-				Expr** new_args = db.arena.alloc_array<Expr*>(n + captures.size());
+				uint32_t arg_count = static_cast<uint32_t>(expr->call.args.size());
+				Expr** new_args = db.arena.alloc_array<Expr*>(arg_count + captures.size());
 				for (uint32_t i = 0; i < captures.size(); ++i)
 				{
 					new_args[i] = make_resolved_ref(expr->loc, captures[i]);
 				}
-				for (uint32_t i = 0; i < n; ++i)
+				for (uint32_t i = 0; i < arg_count; ++i)
 				{
 					new_args[captures.size() + i] = expr->call.args[i];
 				}
-				expr->call.args = {new_args, static_cast<uint32_t>(n + captures.size())};
+				expr->call.args = {new_args, static_cast<uint32_t>(arg_count + captures.size())};
 				for (Expr* arg : expr->call.args)
 				{
 					prepend_capture_args(arg, name, captures);
 				}
 				return;
 			}
-			walk_children(db, expr, [&](Expr*& c) { prepend_capture_args(c, name, captures); });
+			walk_children(db, expr, [&](Expr*& child)
+			{
+				prepend_capture_args(child, name, captures);
+			});
 		}
 
 		Expr* try_lift(Expr* let_expr)
@@ -5084,7 +5155,10 @@ namespace
 
 		Expr* walk(Expr* expr)
 		{
-			walk_children(db, expr, [&](Expr*& c) { c = walk(c); });
+			walk_children(db, expr, [&](Expr*& child)
+			{
+				child = walk(child);
+			});
 			if (expr->kind == ExprKind::Let)
 			{
 				return try_lift(expr);
@@ -5120,13 +5194,19 @@ namespace
 			struct { uint16_t reg; } box;                            // box
 			struct { uint16_t src; } ret;                            // retv
 			struct { uint32_t id; uint16_t src; } label;             // label; if_false/skip target
-			struct { uint32_t id; uint16_t a; uint16_t b; } if_cmp;  // if_eq..if_ltk; rk holds the pool idx in b
+			struct
+			{
+				uint32_t id;
+				uint16_t lhs;
+				uint16_t rhs;
+			} if_cmp; // if_eq..if_ltk; pool index in rhs
 			// One payload for every call op: call/tcall read callee, call_upval_slot
 			// reads upvalue_idx, call_local/call_upval read idx, the rest only w+nargs.
-			struct { uint16_t w; uint16_t nargs; uint16_t callee; uint16_t upvalue_idx; uint16_t idx; } call;
+			struct { uint16_t width; uint16_t nargs; uint16_t callee; uint16_t upvalue_idx; uint16_t idx; } call;
 			struct { uint16_t dst; uint16_t pool_idx; uint16_t first_capture; uint16_t n_captures; } closure;
-			struct { uint16_t dst; uint16_t a; uint16_t b; } arith;  // rr; rk holds the pool idx in b
-			struct { uint16_t dst; uint16_t obj; uint16_t key; uint16_t val; } field;  // ldf stf; *k holds the pool idx in key
+			struct { uint16_t dst; uint16_t lhs; uint16_t rhs; } arith;  // rr; rk holds the pool idx in rhs
+			struct { uint16_t dst; uint16_t obj; uint16_t key; uint16_t val; } field;
+			// ldf stf; *k holds the pool idx in key
 			struct { uint32_t id; uint16_t cursor; uint16_t dst0; uint16_t dst1; } iter;
 		} u;
 		// Stamped from the SourceLoc passed to LirEmitter::emit; line 0 means
@@ -5305,25 +5385,25 @@ namespace
 			}
 		}
 
-		void emit_arithmetic(Expr* expression, LirInst instruction)
+		void emit_arithmetic(Expr* expression, LirInst inst)
 		{
 			LirLambda& lambda{current_lambda()};
-			std::optional<Opcode> opcode{unboxed_float_opcode(instruction.op)};
+			std::optional<Opcode> opcode{unboxed_float_opcode(inst.op)};
 			if (opcode && !lambda.code.empty() && (lambda.chain.binding || lambda.chain.expr))
 			{
 				LirInst& previous{lambda.code.back()};
-				auto&& matches = [&](size_t operand)
+				auto&& matches = [&](size_t arg)
 				{
-					Expr* argument{expression->call.args[operand]};
+					Expr* argument{expression->call.args[arg]};
 					return argument == lambda.chain.expr
 					       || (lambda.chain.binding && argument->kind == ExprKind::VarRef
 					           && binding_key(db.binding(argument)) == *lambda.chain.binding);
 				};
-				bool constant{takes_literal_key(instruction.op)};
-				bool left{matches(0) && instruction.u.arith.a == previous.u.arith.dst};
-				bool right{expression->call.args.size() == 2 && !constant && matches(1)
-				           && instruction.u.arith.b == previous.u.arith.dst};
-				if (left || right)
+				bool constant{takes_literal_key(inst.op)};
+				bool lhs{matches(0) && inst.u.arith.lhs == previous.u.arith.dst};
+				bool rhs{expression->call.args.size() == 2 && !constant && matches(1)
+				         && inst.u.arith.rhs == previous.u.arith.dst};
+				if (lhs || rhs)
 				{
 					UnboxedFloatMode mode;
 					switch (previous.unboxed_float_mode)
@@ -5345,13 +5425,18 @@ namespace
 							JETC_DIE(db, expression->loc, "codegen: unfinished unboxed float chain");
 					}
 					unboxed_float_rewrite(previous.loc, previous, *unboxed_float_opcode(previous.op), mode);
-					unboxed_float_rewrite(expression->loc, instruction, *opcode,
-					                      constant ? UnboxedFloatMode::StoreConstant
-					                      : left ? UnboxedFloatMode::StoreLeft
-					                             : UnboxedFloatMode::StoreRight);
+					unboxed_float_rewrite(
+						expression->loc,
+						inst,
+						*opcode,
+						constant
+							? UnboxedFloatMode::StoreConstant
+							: lhs
+								? UnboxedFloatMode::StoreLeft
+								: UnboxedFloatMode::StoreRight);
 				}
 			}
-			emit(expression->loc, instruction);
+			emit(expression->loc, inst);
 			if (opcode && unboxed_float_kind(*opcode) != UnboxedFloatKind::Comparison)
 			{
 				lambda.chain.expr = expression;
@@ -5518,19 +5603,19 @@ namespace
 		template <typename T>
 		uint16_t intern_typed(ConstTag t, T& payload)
 		{
-			std::string s;
-			s.push_back(static_cast<char>(t));
-			s.append(reinterpret_cast<char*>(&payload), sizeof(T));
-			return intern_constant(s);
+			std::string serialized;
+			serialized.push_back(static_cast<char>(t));
+			serialized.append(reinterpret_cast<char*>(&payload), sizeof(T));
+			return intern_constant(serialized);
 		}
 
 		uint16_t intern_name(ConstTag t, std::string_view payload)
 		{
-			std::string s;
-			s.push_back(static_cast<char>(t));
-			s.append(payload.data(), payload.size());
-			s.push_back(0);
-			return intern_constant(s);
+			std::string serialized;
+			serialized.push_back(static_cast<char>(t));
+			serialized.append(payload.data(), payload.size());
+			serialized.push_back(0);
+			return intern_constant(serialized);
 		}
 
 		uint16_t intern_text(SourceLoc loc, std::string_view payload)
@@ -5538,18 +5623,18 @@ namespace
 			JETC_DIE_WHEN(db, loc, payload.size() > UINT32_MAX, "string literal is too long");
 			uint32_t n_bytes = static_cast<uint32_t>(payload.size());
 
-			std::string s;
-			s.push_back(static_cast<char>(ConstTag::String));
-			s.append(reinterpret_cast<const char*>(&n_bytes), sizeof(n_bytes));
-			s.append(payload.data(), payload.size());
-			return intern_constant(s);
+			std::string serialized;
+			serialized.push_back(static_cast<char>(ConstTag::String));
+			serialized.append(reinterpret_cast<const char*>(&n_bytes), sizeof(n_bytes));
+			serialized.append(payload.data(), payload.size());
+			return intern_constant(serialized);
 		}
 
 		uint16_t intern_empty(ConstTag t)
 		{
-			std::string s;
-			s.push_back(static_cast<char>(t));
-			return intern_constant(s);
+			std::string serialized;
+			serialized.push_back(static_cast<char>(t));
+			return intern_constant(serialized);
 		}
 
 		uint16_t intern_global_name(std::string_view name)
@@ -5564,8 +5649,8 @@ namespace
 				case ExprKind::NumberLit:
 				{
 					double val = number_lit_value(e->number_lit.text);
-					Number n = Number::from_ieee(val);
-					return intern_typed(ConstTag::Number, n);
+					Number number = Number::from_ieee(val);
+					return intern_typed(ConstTag::Number, number);
 				}
 				case ExprKind::SymbolLit:
 					return intern_name(ConstTag::Symbol, e->symbol_lit.name);
@@ -5576,8 +5661,8 @@ namespace
 				}
 				case ExprKind::BooleanLit:
 				{
-					bool v = e->boolean_lit.value;
-					return intern_typed(ConstTag::Boolean, v);
+					bool val = e->boolean_lit.value;
+					return intern_typed(ConstTag::Boolean, val);
 				}
 				case ExprKind::StringLit:
 					return intern_text(e->loc, e->string_lit.value);
@@ -5595,33 +5680,33 @@ namespace
 
 		uint16_t emit_sequence_value(SourceLoc empty_loc, Slice<Expr*>& forms)
 		{
-			uint32_t n = forms.size();
-			if (n == 0)
+			uint32_t form_count = forms.size();
+			if (form_count == 0)
 			{
-				uint16_t t = alloc_reg(empty_loc);
-				emit_ldk(empty_loc, t, intern_empty(ConstTag::Unknown));
-				return t;
+				uint16_t result_reg = alloc_reg(empty_loc);
+				emit_ldk(empty_loc, result_reg, intern_empty(ConstTag::Unknown));
+				return result_reg;
 			}
-			for (uint32_t i = 0; i + 1 < n; ++i)
+			for (uint32_t i = 0; i + 1 < form_count; ++i)
 			{
 				emit_ignoring_result(forms[i]);
 			}
-			return emit_to_any_reg(forms[n - 1]);
+			return emit_to_any_reg(forms[form_count - 1]);
 		}
 
 		void emit_sequence_to(SourceLoc loc, Slice<Expr*>& forms, uint16_t dst)
 		{
-			uint32_t n = forms.size();
-			if (n == 0)
+			uint32_t form_count = forms.size();
+			if (form_count == 0)
 			{
 				emit_ldk(loc, dst, intern_empty(ConstTag::Unknown));
 				return;
 			}
-			for (uint32_t i = 0; i + 1 < n; ++i)
+			for (uint32_t i = 0; i + 1 < form_count; ++i)
 			{
 				emit_ignoring_result(forms[i]);
 			}
-			emit_to_reg(forms[n - 1], dst);
+			emit_to_reg(forms[form_count - 1], dst);
 		}
 
 		void emit_ignoring_result(Expr* expr)
@@ -5674,8 +5759,8 @@ namespace
 			outer_lambdas.push_back(expr);
 			lambda_stack.push_back(idx);
 			emit_prologue(expr);
-			uint16_t r = emit_sequence_value(expr->loc, expr->lambda.body);
-			emit_ret(expr->loc, r);
+			uint16_t result_reg = emit_sequence_value(expr->loc, expr->lambda.body);
+			emit_ret(expr->loc, result_reg);
 			lambda_stack.pop_back();
 			outer_lambdas.pop_back();
 
@@ -5767,12 +5852,12 @@ namespace
 				case Opcode::std:
 				case Opcode::stu:
 				{
-					uint16_t v = emit_to_any_reg(expr->set_bang.value);
-					emit_store(expr->loc, sel.op, sel.u.var.addr, v);
+					uint16_t value_reg = emit_to_any_reg(expr->set_bang.value);
+					emit_store(expr->loc, sel.op, sel.u.var.addr, value_reg);
 					// Like emit_set_ref, the value register stays alive for the
 					// caller: emit_to_reg moves it into dst before releasing, and
 					// emit_to_any_reg returns it still marked as a temp.
-					return v;
+					return value_reg;
 				}
 				default:
 					JETC_DIE(db, expr->loc, "codegen: unexpected set! selection {}", sel.op);
@@ -5881,8 +5966,8 @@ namespace
 		void emit_let_bindings(Expr* expr, std::vector<uint16_t>& owned)
 		{
 			uint32_t sb = expr->let.slot_base;
-			uint32_t n = expr->let.names.size();
-			for (uint32_t i = 0; i < n; ++i)
+			uint32_t count = expr->let.names.size();
+			for (uint32_t i = 0; i < count; ++i)
 			{
 				uint16_t breadth = narrow_or_die<uint16_t>(db, expr->loc, sb + i);
 				Expr* val = expr->let.vals[i];
@@ -5952,7 +6037,7 @@ namespace
 				emit_to_reg(val, home);
 				unboxed_float_mark_binding(expr->let.owner, breadth, home);
 			}
-			for (uint32_t i = 0; i < n; ++i)
+			for (uint32_t i = 0; i < count; ++i)
 			{
 				if (needs_slot(expr->let.owner, sb + i))
 				{
@@ -6030,7 +6115,7 @@ namespace
 					uint16_t w = alloc_window(expr->loc, 2);
 					uint16_t result = narrow_or_die<uint16_t>(db, expr->loc, w + 1);
 					emit_to_reg(expr->call.args[0], result);
-					i.u.call.w = w;
+					i.u.call.width = w;
 					i.u.call.nargs = 1;
 					emit(expr->loc, i);
 					// Slot 0 roots the escape or coroutine only while the op runs
@@ -6088,7 +6173,7 @@ namespace
 							emit_to_reg(expr->call.args[k], k);
 						}
 					}
-					i.u.call.w = 0;
+					i.u.call.width = 0;
 					i.u.call.nargs = nargs;
 					emit(expr->loc, i);
 					for (const std::pair<const uint16_t, uint16_t>& save : saved)
@@ -6125,7 +6210,7 @@ namespace
 
 			uint16_t w = claim_call_window(expr, nargs);
 			emit_window_args(expr->call.args, w);
-			i.u.call.w = w;
+			i.u.call.width = w;
 			i.u.call.nargs = nargs;
 			emit(expr->loc, i);
 			if (callee_temp)
@@ -6145,7 +6230,7 @@ namespace
 			emit_to_reg(expr->apply.proc, w);
 			emit_to_reg(expr->apply.args, static_cast<uint16_t>(w + 1));
 			LirInst i = inst(Opcode::apply);
-			i.u.call.w = w;
+			i.u.call.width = w;
 			emit(expr->loc, i);
 			release_reg(narrow_or_die<uint16_t>(db, expr->loc, w + 1));
 			return w;
@@ -6350,8 +6435,8 @@ namespace
 
 				case ExprKind::BooleanLit:
 				{
-					bool v = expr->boolean_lit.value;
-					emit_ldk(expr->loc, dst, intern_typed(ConstTag::Boolean, v));
+					bool val = expr->boolean_lit.value;
+					emit_ldk(expr->loc, dst, intern_typed(ConstTag::Boolean, val));
 					break;
 				}
 
@@ -6412,7 +6497,7 @@ namespace
 							LirInst instruction{inst(sel.op)};
 							instruction.u.arith = {dst, emit_to_any_reg(expr->call.args[0]), 0};
 							emit_arithmetic(expr, instruction);
-							release_if_temp(instruction.u.arith.a);
+							release_if_temp(instruction.u.arith.lhs);
 							break;
 						}
 
@@ -6438,18 +6523,18 @@ namespace
 						case Opcode::eqk:
 						case Opcode::ltk:
 						{
-							bool k = takes_literal_key(sel.op);
+							bool takes_key = takes_literal_key(sel.op);
 							LirInst i = inst(sel.op);
 							i.u.arith.dst = dst;
-							i.u.arith.a = emit_to_any_reg(expr->call.args[0]);
-							i.u.arith.b = k
+							i.u.arith.lhs = emit_to_any_reg(expr->call.args[0]);
+							i.u.arith.rhs = takes_key
 							              ? intern_literal_key(expr->call.args[1])
 							              : emit_to_any_reg(expr->call.args[1]);
 							emit_arithmetic(expr, i);
-							release_if_temp(i.u.arith.a);
-							if (!k)
+							release_if_temp(i.u.arith.lhs);
+							if (!takes_key)
 							{
-								release_if_temp(i.u.arith.b);
+								release_if_temp(i.u.arith.rhs);
 							}
 							break;
 						}
@@ -6527,15 +6612,15 @@ namespace
 						Compiler::OpSelection sel = selection(cmp, "fused test");
 						LirInst i = inst(sel.op);
 						i.u.if_cmp.id = l_alt;
-						i.u.if_cmp.a = emit_to_any_reg(cmp->call.args[0]);
+						i.u.if_cmp.lhs = emit_to_any_reg(cmp->call.args[0]);
 						bool cmp_k = takes_literal_key(sel.op);
-						i.u.if_cmp.b = cmp_k ? intern_literal_key(cmp->call.args[1])
+						i.u.if_cmp.rhs = cmp_k ? intern_literal_key(cmp->call.args[1])
 						               : emit_to_any_reg(cmp->call.args[1]);
 						emit(expr->loc, i);
-						release_if_temp(i.u.if_cmp.a);
+						release_if_temp(i.u.if_cmp.lhs);
 						if (!cmp_k)
 						{
-							release_if_temp(i.u.if_cmp.b);
+							release_if_temp(i.u.if_cmp.rhs);
 						}
 					}
 					else
@@ -6582,18 +6667,18 @@ namespace
 		size_t v_cut = 0;
 		size_t v_cself = 0;
 
-		static size_t encoded_size(const LirInst& i)
+		static size_t encoded_size(const LirInst& inst)
 		{
-			if (i.op == Opcode::label)
+			if (inst.op == Opcode::label)
 			{
 				return 0;
 			}
-			if (i.op == Opcode::clos)
+			if (inst.op == Opcode::clos)
 			{
 				return OPCODE_SIZE + sizeof(OP_clos) +
-				       i.u.closure.n_captures * sizeof(OP_make_closure_capture);
+				       inst.u.closure.n_captures * sizeof(OP_make_closure_capture);
 			}
-			return opcode_step(static_cast<uint8_t>(i.op), nullptr);
+			return opcode_step(static_cast<uint8_t>(inst.op), nullptr);
 		}
 
 		void emit_raw(Bytecode& bc, const void* data, size_t size)
@@ -6695,8 +6780,8 @@ namespace
 			entry.append(reinterpret_cast<char*>(&is_n_ary), sizeof(is_n_ary));
 			if (!is_n_ary)
 			{
-				size_t n = static_cast<size_t>(L.n_params);
-				entry.append(reinterpret_cast<char*>(&n), sizeof(n));
+				size_t parameter_count = static_cast<size_t>(L.n_params);
+				entry.append(reinterpret_cast<char*>(&parameter_count), sizeof(parameter_count));
 			}
 			uint16_t n_regs = narrow_or_die<uint16_t>(db, L.loc, L.frame_regs());
 			entry.append(reinterpret_cast<char*>(&n_regs), sizeof(n_regs));
@@ -6783,7 +6868,7 @@ namespace
 				case Opcode::ceil:
 				{
 					emit_opcode(bc, i.op);
-					OP_unary operands{i.u.arith.dst, i.u.arith.a};
+					OP_unary operands{i.u.arith.dst, i.u.arith.lhs};
 					emit_operand(bc, operands);
 					break;
 				}
@@ -6883,8 +6968,8 @@ namespace
 					emit_opcode(bc, i.op);
 					OP_binop_rr op{};
 					op.dst = i.u.arith.dst;
-					op.a = i.u.arith.a;
-					op.b = i.u.arith.b;
+					op.a = i.u.arith.lhs;
+					op.b = i.u.arith.rhs;
 					emit_operand(bc, op);
 					break;
 				}
@@ -6909,7 +6994,7 @@ namespace
 					emit_opcode(bc, i.op);
 					JETC_DIE_UNLESS(db, i.loc, unboxed_float_valid(i.op, i.unboxed_float_mode),
 					               "codegen: invalid unboxed float instruction");
-					OP_unboxed_float operands{i.u.arith.dst, i.u.arith.a, i.u.arith.b, i.unboxed_float_mode};
+					OP_unboxed_float operands{i.u.arith.dst, i.u.arith.lhs, i.u.arith.rhs, i.unboxed_float_mode};
 					emit_operand(bc, operands);
 					break;
 				}
@@ -6937,8 +7022,8 @@ namespace
 				{
 					emit_opcode(bc, i.op);
 					OP_if_cmp op{};
-					op.a = i.u.if_cmp.a;
-					op.b = i.u.if_cmp.b;
+					op.a = i.u.if_cmp.lhs;
+					op.b = i.u.if_cmp.rhs;
 					op.size = static_cast<uint32_t>(
 						label_target(i.loc, label_pos, i.u.if_cmp.id) - (bc.size() + sizeof(OP_if_cmp)));
 					emit_operand(bc, op);
@@ -6968,7 +7053,7 @@ namespace
 				{
 					emit_opcode(bc, i.op);
 					OP_call op{};
-					op.w = i.u.call.w;
+					op.w = i.u.call.width;
 					op.callee = i.u.call.callee;
 					op.nargs = i.u.call.nargs;
 					emit_operand(bc, op);
@@ -6979,7 +7064,7 @@ namespace
 				{
 					emit_opcode(bc, Opcode::call_self_tail);
 					OP_call_self_tail op{};
-					op.w = i.u.call.w;
+					op.w = i.u.call.width;
 					op.nargs = i.u.call.nargs;
 					emit_operand(bc, op);
 					break;
@@ -6989,7 +7074,7 @@ namespace
 				{
 					emit_opcode(bc, Opcode::apply);
 					OP_apply op{};
-					op.w = i.u.call.w;
+					op.w = i.u.call.width;
 					emit_operand(bc, op);
 					break;
 				}
@@ -6999,7 +7084,7 @@ namespace
 				{
 					emit_opcode(bc, i.op);
 					OP_reset op{};
-					op.w = i.u.call.w;
+					op.w = i.u.call.width;
 					emit_operand(bc, op);
 					break;
 				}
@@ -7034,7 +7119,7 @@ namespace
 				{
 					emit_replicated(bc, i.op, i.op == Opcode::call_upval_slot_tail_0 ? v_cust : v_cus);
 					OP_call_slot op{};
-					op.w = i.u.call.w;
+					op.w = i.u.call.width;
 					op.upvalue_idx = i.u.call.upvalue_idx;
 					op.nargs = i.u.call.nargs;
 					emit_operand(bc, op);
@@ -7055,7 +7140,7 @@ namespace
 					                  : v_cut;
 					emit_replicated(bc, i.op, counter);
 					OP_call_atom op{};
-					op.w = i.u.call.w;
+					op.w = i.u.call.width;
 					op.idx = i.u.call.idx;
 					op.nargs = i.u.call.nargs;
 					emit_operand(bc, op);
@@ -7066,7 +7151,7 @@ namespace
 				{
 					emit_replicated(bc, i.op, v_cself);
 					OP_call_self op{};
-					op.w = i.u.call.w;
+					op.w = i.u.call.width;
 					op.nargs = i.u.call.nargs;
 					emit_operand(bc, op);
 					break;
@@ -7187,9 +7272,9 @@ namespace
 			uint32_t n_slots = narrow_or_die<uint32_t>(db, prog.lambdas[0].loc, prog.lambdas[0].frame_regs());
 			uint8_t* sp = reinterpret_cast<uint8_t*>(&n_slots);
 			out.insert(out.end(), sp, sp + sizeof(n_slots));
-			uint32_t n = static_cast<uint32_t>(prog.pool.size());
-			uint8_t* np = reinterpret_cast<uint8_t*>(&n);
-			out.insert(out.end(), np, np + sizeof(n));
+			uint32_t pool_size = static_cast<uint32_t>(prog.pool.size());
+			uint8_t* buf = reinterpret_cast<uint8_t*>(&pool_size);
+			out.insert(out.end(), buf, buf + sizeof(pool_size));
 			for (std::string& entry : prog.pool)
 			{
 				out.insert(out.end(), entry.begin(), entry.end());
@@ -7225,85 +7310,87 @@ Bytecode compile(std::string source, std::string filename, CompileFlags flags, s
 namespace
 {
 
-	Atom datum_to_atom(VmState& s, Expr* e)
+	Atom datum_to_atom(VmState& vm, Expr* expr)
 	{
-		switch (e->kind)
+		switch (expr->kind)
 		{
 			case ExprKind::NumberLit:
 			{
-				double v = number_lit_value(e->number_lit.text);
-				return box(Number::from_ieee(v));
+				double val = number_lit_value(expr->number_lit.text);
+				return box(Number::from_ieee(val));
 			}
 			case ExprKind::StringLit:
-				return s.gc.alloc_tagged<String>(s, e->string_lit.value);
+				return vm.gc.alloc_tagged<String>(vm, expr->string_lit.value);
 			case ExprKind::BooleanLit:
-				return box(e->boolean_lit.value);
+				return box(expr->boolean_lit.value);
 			case ExprKind::CharacterLit:
-				return box(static_cast<Character>(e->character_lit.value));
+				return box(static_cast<Character>(expr->character_lit.value));
 			case ExprKind::SymbolLit:
-				return box(s.symbols.intern(e->symbol_lit.name));
+				return box(vm.symbols.intern(expr->symbol_lit.name));
 			case ExprKind::Call:
 			{
-				Expr* proc = e->call.proc;
-				JET_DIE_UNLESS(&s, proc->kind == ExprKind::VarRef, "datum_to_atom: bad call proc");
+				Expr* proc = expr->call.proc;
+				JET_DIE_UNLESS(&vm, proc->kind == ExprKind::VarRef, "datum_to_atom: bad call proc");
 				std::string_view name = proc->var_ref.name;
 				if (name == "list")
 				{
 					Atom result = box(EmptyList{});
-					for (size_t i = e->call.args.size(); i-- > 0;)
+					for (size_t i = expr->call.args.size(); i-- > 0;)
 					{
-						result = cons(s, datum_to_atom(s, e->call.args[i]), result);
+						result = cons(vm, datum_to_atom(vm, expr->call.args[i]), result);
 					}
 					return result;
 				}
 				if (name == "cons")
 				{
-					JET_DIE_UNLESS(&s, e->call.args.size() == 2, "datum_to_atom: cons arity");
-					return cons(s, datum_to_atom(s, e->call.args[0]),
-					            datum_to_atom(s, e->call.args[1]));
+					JET_DIE_UNLESS(&vm, expr->call.args.size() == 2, "datum_to_atom: cons arity");
+					return cons(
+						vm,
+						datum_to_atom(vm, expr->call.args[0]),
+						datum_to_atom(vm, expr->call.args[1]));
 				}
 				if (name == "vector")
 				{
-					Vec v;
-					for (uint32_t i = 0; i < e->call.args.size(); ++i)
+					Vec values;
+					for (uint32_t i = 0; i < expr->call.args.size(); ++i)
 					{
-						v.push_back(datum_to_atom(s, e->call.args[i]));
+						values.push_back(datum_to_atom(vm, expr->call.args[i]));
 					}
-					return s.gc.alloc_tagged<Vec>(s, std::move(v));
+					return vm.gc.alloc_tagged<Vec>(vm, std::move(values));
 				}
 				if (name == "bytevector")
 				{
 					ByteVector bv;
-					bv.reserve(e->call.args.size());
-					for (uint32_t i = 0; i < e->call.args.size(); ++i)
+					bv.reserve(expr->call.args.size());
+					for (uint32_t i = 0; i < expr->call.args.size(); ++i)
 					{
-						Atom byte_val = datum_to_atom(s, e->call.args[i]);
-						bv.push_back(as_uint8_or_die(s, byte_val));
+						Atom val = datum_to_atom(vm, expr->call.args[i]);
+						bv.push_back(as_uint8_or_die(vm, val));
 					}
-					return s.gc.alloc_tagged<ByteVector>(s, std::move(bv));
+					return vm.gc.alloc_tagged<ByteVector>(vm, std::move(bv));
 				}
 				if (is_struct_constructor(name))
 				{
-					Atom* bound_type = s.env.lookup(name);
+					Atom* bound_type = vm.env.lookup(name);
 					JET_DIE_UNLESS(
-						&s,
+						&vm,
 						bound_type,
 						"read: '{}' is unbound",
 						name
 						);
 					std::vector<Atom> args;
-					args.reserve(e->call.args.size());
-					for (uint32_t i = 0; i < e->call.args.size(); ++i)
+					args.reserve(expr->call.args.size());
+					for (uint32_t i = 0; i < expr->call.args.size(); ++i)
 					{
-						args.push_back(datum_to_atom(s, e->call.args[i]));
+						args.push_back(datum_to_atom(vm, expr->call.args[i]));
 					}
-					return construct_struct(s, unbox<StructType>(*bound_type), args.data(),
+					return construct_struct(vm, unbox<StructType>(*bound_type), args.data(),
 					                        args.data() + args.size());
 				}
-				JET_DIE(&s, "datum_to_atom: unexpected call proc");
+				JET_DIE(&vm, "datum_to_atom: unexpected call proc");
 			}
 			default:
-				JET_DIE(&s, "datum_to_atom: unexpected ExprKind {}", e->kind);
+				JET_DIE(&vm, "datum_to_atom: unexpected ExprKind {}", expr->kind);
 		}
 	}
 
@@ -7319,6 +7406,8 @@ namespace
 		ParseState parser{
 			.tokens = {},
 			.stream_lex = &lex,
+			.la_ = {},
+			.current_ = {},
 			.db = db,
 		};
 		if (parser.at_end())
@@ -7331,8 +7420,8 @@ namespace
 
 } // namespace
 
-void init_reader(VmState& s)
+void init_reader(VmState& vm)
 {
-	Env& e = s.env;
-	e.bind("read", make_prim<read_port>(s));
+	Env& environment = vm.env;
+	environment.bind("read", make_prim<read_port>(vm));
 }

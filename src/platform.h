@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Kirill Zorin
 
-#ifndef platform_h
-#define platform_h
+#pragma once
 
 #include <cstdio>
 #include <format>
@@ -45,8 +44,7 @@
 template <typename... Args>
 JET_NOINLINE void print(FILE* out, std::format_string<Args...> format, Args... args)
 {
-	std::string text = std::format(format, std::move(args)...);
+	std::string text{std::format(format, std::move(args)...)};
 	std::fwrite(text.data(), 1, text.size(), out);
 }
 
-#endif
