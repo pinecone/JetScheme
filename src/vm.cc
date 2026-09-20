@@ -2083,10 +2083,13 @@ static constexpr auto& op_ltk = op_binop_rk_impl<lt_atoms>;
 JET_PRESERVE_NONE static void op_if_false(VM_OP_PARAMS)
 {
 	OP_if_false* op{reinterpret_cast<OP_if_false*>(pc)};
-	pc += sizeof(*op);
 	if (!is_true(frame_regs[op->src]))
 	{
-		pc += op->size;
+		pc += sizeof(*op) + op->size;
+	}
+	else
+	{
+		pc += sizeof(*op);
 	}
 	DISPATCH();
 }
@@ -2095,10 +2098,13 @@ template <auto Op>
 JET_PRESERVE_NONE static void op_if_cmp_rr_impl(VM_OP_PARAMS)
 {
 	OP_if_cmp* op{reinterpret_cast<OP_if_cmp*>(pc)};
-	pc += sizeof(*op);
 	if (!is_true(Op(s, frame_regs[op->a], frame_regs[op->b])))
 	{
-		pc += op->size;
+		pc += sizeof(*op) + op->size;
+	}
+	else
+	{
+		pc += sizeof(*op);
 	}
 	DISPATCH();
 }
@@ -2107,10 +2113,13 @@ template <auto Op>
 JET_PRESERVE_NONE static void op_if_cmp_rk_impl(VM_OP_PARAMS)
 {
 	OP_if_cmp* op{reinterpret_cast<OP_if_cmp*>(pc)};
-	pc += sizeof(*op);
 	if (!is_true(Op(s, frame_regs[op->a], s.constants[op->b])))
 	{
-		pc += op->size;
+		pc += sizeof(*op) + op->size;
+	}
+	else
+	{
+		pc += sizeof(*op);
 	}
 	DISPATCH();
 }
