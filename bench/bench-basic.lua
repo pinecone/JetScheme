@@ -2174,7 +2174,7 @@ return {
 end)()
 
 local function main()
-  local iterations = 200
+  local iterations = 30
   for _ = 1, iterations do run_iteration(cases) end
   print("ok")
 end

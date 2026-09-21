@@ -62,7 +62,7 @@ switch (benchmarkName) {
     break;
   case 'bench-basic':
     load(benchmarkFile);
-    runBasic(200);
+    runBasic(30);
     break;
   case 'bench-cdjs':
     runAwfy(1000);
