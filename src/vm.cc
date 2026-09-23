@@ -1064,8 +1064,8 @@ JET_PRESERVE_NONE static void op_iter_impl(VM_OP_PARAMS)
 	{
 		// The coroutine `StructType` is held by the permanent `%coroutine` `Env` binding.
 		uint64_t type_key{std::bit_cast<uint64_t>(unbox<Struct>(value)->type)};
-		JET_PROFILE_MISS(op->ic.dispatch_key, type_key);
-		op->ic.dispatch_key = type_key;
+		JET_PROFILE_MISS(op->dispatch_key, type_key);
+		op->dispatch_key = type_key;
 		VmOp coro_handler{op_iter_next_coro<Op, outputs>};
 		std::memcpy(pc - OPCODE_SIZE, &coro_handler, sizeof(coro_handler));
 		JET_MUSTTAIL return op_iter_next_coro<Op, outputs>(VM_OP_ARGS);
@@ -1075,7 +1075,7 @@ JET_PRESERVE_NONE static void op_iter_impl(VM_OP_PARAMS)
 		JET_MUSTTAIL return die_iter_expected_cursor(VM_OP_ARGS);
 	}
 	Cursor* cursor{static_cast<Cursor*>(unbox<Struct>(value))};
-	JET_PROFILE_MISS(op->ic.dispatch_key, std::bit_cast<uint64_t>(cursor->type));
+	JET_PROFILE_MISS(op->dispatch_key, std::bit_cast<uint64_t>(cursor->type));
 	VmOp handler{outputs == 1 ? cursor->ops->next1 : cursor->ops->next2};
 	if (!handler) [[unlikely]]
 	{
@@ -1084,7 +1084,7 @@ JET_PRESERVE_NONE static void op_iter_impl(VM_OP_PARAMS)
 	// Each cursor StructType is held by a permanent Env binding (%vector-cursor,
 	// %hashset-cursor, %hashmap-cursor), so the type pointer outlives every cursor
 	// and cannot be recycled behind this key.
-	op->ic.dispatch_key = std::bit_cast<uint64_t>(cursor->type);
+	op->dispatch_key = std::bit_cast<uint64_t>(cursor->type);
 	std::memcpy(pc - OPCODE_SIZE, &handler, sizeof(handler));
 	JET_MUSTTAIL return handler(VM_OP_ARGS);
 }
@@ -1107,7 +1107,7 @@ JET_PRESERVE_NONE static void op_iter_next_fast(VM_OP_PARAMS)
 	Op* op{reinterpret_cast<Op*>(pc)};
 	Atom value{frame_regs[op->cursor]};
 	if (!value.tag_is<jet_tag::struct_>()
-	    || op->ic.dispatch_key != std::bit_cast<uint64_t>(unbox<Struct>(value)->type)) [[unlikely]]
+	    || op->dispatch_key != std::bit_cast<uint64_t>(unbox<Struct>(value)->type)) [[unlikely]]
 	{
 		JET_MUSTTAIL return op_iter_impl<Op, Access::outputs>(VM_OP_ARGS);
 	}
@@ -1363,16 +1363,14 @@ namespace
 	} shape_table_init;
 } // namespace
 
-static constexpr auto& op_ldf = op_field_impl<FieldAccess::Load, FieldKeySource::Register>;
-static constexpr auto& op_stf = op_field_impl<FieldAccess::Store, FieldKeySource::Register>;
-static constexpr auto& op_ldfk = op_field_impl<FieldAccess::Load, FieldKeySource::Constant>;
-static constexpr auto& op_stfk = op_field_impl<FieldAccess::Store, FieldKeySource::Constant>;
-static constexpr auto& op_ldfh = op_field_impl<FieldAccess::Load, FieldKeySource::Register, FieldMiss::Hole>;
-static constexpr auto& op_ldfkh = op_field_impl<FieldAccess::Load, FieldKeySource::Constant, FieldMiss::Hole>;
-static constexpr auto& op_ldfo =
-	op_field_impl<FieldAccess::Load, FieldKeySource::Register, FieldMiss::Default>;
-static constexpr auto& op_ldfko =
-	op_field_impl<FieldAccess::Load, FieldKeySource::Constant, FieldMiss::Default>;
+static constexpr auto& op_ldf = op_field_impl<FieldAccess::Load, FieldKeySource::Register, FieldMiss::Die, OP_ldf>;
+static constexpr auto& op_stf = op_field_impl<FieldAccess::Store, FieldKeySource::Register, FieldMiss::Die, OP_stf>;
+static constexpr auto& op_ldfk = op_field_impl<FieldAccess::Load, FieldKeySource::Constant, FieldMiss::Die, OP_ldfk>;
+static constexpr auto& op_stfk = op_field_impl<FieldAccess::Store, FieldKeySource::Constant, FieldMiss::Die, OP_stfk>;
+static constexpr auto& op_ldfh = op_field_impl<FieldAccess::Load, FieldKeySource::Register, FieldMiss::Hole, OP_ldfh>;
+static constexpr auto& op_ldfkh = op_field_impl<FieldAccess::Load, FieldKeySource::Constant, FieldMiss::Hole, OP_ldfkh>;
+static constexpr auto& op_ldfo = op_field_impl<FieldAccess::Load, FieldKeySource::Register, FieldMiss::Default, OP_ldfo>;
+static constexpr auto& op_ldfok = op_field_impl<FieldAccess::Load, FieldKeySource::Constant, FieldMiss::Default, OP_ldfok>;
 
 template <typename Op, int outputs>
 JET_NOINLINE JET_PRESERVE_NONE static void op_iter_coro_slow(VM_OP_PARAMS)
@@ -1412,7 +1410,7 @@ JET_PRESERVE_NONE static void op_iter_next_coro(VM_OP_PARAMS)
 	Op* op{reinterpret_cast<Op*>(pc)};
 	Atom value{frame_regs[op->cursor]};
 	if (!value.tag_is<jet_tag::struct_>()
-	    || op->ic.dispatch_key != std::bit_cast<uint64_t>(unbox<Struct>(value)->type)) [[unlikely]]
+	    || op->dispatch_key != std::bit_cast<uint64_t>(unbox<Struct>(value)->type)) [[unlikely]]
 	{
 		JET_MUSTTAIL return op_iter_impl<Op, outputs>(VM_OP_ARGS);
 	}
@@ -1604,7 +1602,7 @@ JET_PRESERVE_NONE static void op_mov(VM_OP_PARAMS)
 
 JET_PRESERVE_NONE static void op_trunc(VM_OP_PARAMS)
 {
-	OP_unary* operands{reinterpret_cast<OP_unary*>(pc)};
+	OP_trunc* operands{reinterpret_cast<OP_trunc*>(pc)};
 	pc += sizeof(*operands);
 	Atom value{frame_regs[operands->src]};
 	type_check(s, value, jet::Type::Number);
@@ -1612,10 +1610,10 @@ JET_PRESERVE_NONE static void op_trunc(VM_OP_PARAMS)
 	DISPATCH();
 }
 
-template <double (*op)(double), auto normalize = Number::from_ieee>
+template <double (*op)(double), typename Instr, auto normalize = Number::from_ieee>
 JET_PRESERVE_NONE static void op_unary(VM_OP_PARAMS)
 {
-	OP_unary* operands{reinterpret_cast<OP_unary*>(pc)};
+	Instr* operands{reinterpret_cast<Instr*>(pc)};
 	pc += sizeof(*operands);
 	Atom value{frame_regs[operands->src]};
 	type_check(s, value, jet::Type::Number);
@@ -1623,17 +1621,17 @@ JET_PRESERVE_NONE static void op_unary(VM_OP_PARAMS)
 	DISPATCH();
 }
 
-static constexpr auto& op_sqrt = op_unary<std::sqrt, Number::from_sum>;
-static constexpr auto& op_floor = op_unary<std::floor>;
-static constexpr auto& op_round = op_unary<std::round>;
-static constexpr auto& op_ceil = op_unary<std::ceil>;
+static constexpr auto& op_sqrt = op_unary<std::sqrt, OP_sqrt, Number::from_sum>;
+static constexpr auto& op_floor = op_unary<std::floor, OP_floor>;
+static constexpr auto& op_round = op_unary<std::round, OP_round>;
+static constexpr auto& op_ceil = op_unary<std::ceil, OP_ceil>;
 
 JET_PRESERVE_NONE static void op_mov2(VM_OP_PARAMS)
 {
 	OP_mov2* op{reinterpret_cast<OP_mov2*>(pc)};
 	pc += sizeof(*op);
-	frame_regs[op->first.dst] = frame_regs[op->first.src];
-	frame_regs[op->second.dst] = frame_regs[op->second.src];
+	frame_regs[op->dst0] = frame_regs[op->src0];
+	frame_regs[op->dst1] = frame_regs[op->src1];
 	DISPATCH();
 }
 
@@ -1723,19 +1721,19 @@ JET_PRESERVE_NONE static void op_clos(VM_OP_PARAMS)
 	DISPATCH();
 }
 
-template <auto Op>
+template <auto Op, typename Instr>
 JET_PRESERVE_NONE static void op_binop_rr_impl(VM_OP_PARAMS)
 {
-	OP_binop_rr* op{reinterpret_cast<OP_binop_rr*>(pc)};
+	auto* op{reinterpret_cast<Instr*>(pc)};
 	pc += sizeof(*op);
 	frame_regs[op->dst] = Op(s, frame_regs[op->a], frame_regs[op->b]);
 	DISPATCH();
 }
 
-template <auto Op>
+template <auto Op, typename Instr>
 JET_PRESERVE_NONE static void op_binop_rk_impl(VM_OP_PARAMS)
 {
-	OP_binop_rk* op{reinterpret_cast<OP_binop_rk*>(pc)};
+	auto* op{reinterpret_cast<Instr*>(pc)};
 	pc += sizeof(*op);
 	frame_regs[op->dst] = Op(s, frame_regs[op->a], s.constants[op->b]);
 	DISPATCH();
@@ -2058,27 +2056,27 @@ static constexpr auto& op_fle = op_unboxed_float<Opcode::fle, UnboxedFloatMode::
 static constexpr auto& op_fgt = op_unboxed_float<Opcode::fgt, UnboxedFloatMode::StoreLeft>;
 static constexpr auto& op_fge = op_unboxed_float<Opcode::fge, UnboxedFloatMode::StoreLeft>;
 
-static constexpr auto& op_add = op_binop_rr_impl<add_atoms>;
-static constexpr auto& op_sub = op_binop_rr_impl<sub_atoms>;
-static constexpr auto& op_mul = op_binop_rr_impl<mul_atoms>;
-static constexpr auto& op_div = op_binop_rr_impl<div_atoms>;
-static constexpr auto& op_min = op_binop_rr_impl<min_atoms>;
-static constexpr auto& op_max = op_binop_rr_impl<max_atoms>;
-static constexpr auto& op_numeq = op_binop_rr_impl<numeq_atoms>;
-static constexpr auto& op_eq = op_binop_rr_impl<eq_atoms>;
-static constexpr auto& op_lt = op_binop_rr_impl<lt_atoms>;
-static constexpr auto& op_le = op_binop_rr_impl<le_atoms>;
-static constexpr auto& op_gt = op_binop_rr_impl<gt_atoms>;
-static constexpr auto& op_ge = op_binop_rr_impl<ge_atoms>;
-static constexpr auto& op_addk = op_binop_rk_impl<add_atoms>;
-static constexpr auto& op_subk = op_binop_rk_impl<sub_atoms>;
-static constexpr auto& op_mulk = op_binop_rk_impl<mul_atoms>;
-static constexpr auto& op_divk = op_binop_rk_impl<div_atoms>;
-static constexpr auto& op_mink = op_binop_rk_impl<min_atoms>;
-static constexpr auto& op_maxk = op_binop_rk_impl<max_atoms>;
-static constexpr auto& op_numeqk = op_binop_rk_impl<numeq_atoms>;
-static constexpr auto& op_eqk = op_binop_rk_impl<eq_atoms>;
-static constexpr auto& op_ltk = op_binop_rk_impl<lt_atoms>;
+static constexpr auto& op_add = op_binop_rr_impl<add_atoms, OP_add>;
+static constexpr auto& op_sub = op_binop_rr_impl<sub_atoms, OP_sub>;
+static constexpr auto& op_mul = op_binop_rr_impl<mul_atoms, OP_mul>;
+static constexpr auto& op_div = op_binop_rr_impl<div_atoms, OP_div>;
+static constexpr auto& op_min = op_binop_rr_impl<min_atoms, OP_min>;
+static constexpr auto& op_max = op_binop_rr_impl<max_atoms, OP_max>;
+static constexpr auto& op_numeq = op_binop_rr_impl<numeq_atoms, OP_numeq>;
+static constexpr auto& op_eq = op_binop_rr_impl<eq_atoms, OP_eq>;
+static constexpr auto& op_lt = op_binop_rr_impl<lt_atoms, OP_lt>;
+static constexpr auto& op_le = op_binop_rr_impl<le_atoms, OP_le>;
+static constexpr auto& op_gt = op_binop_rr_impl<gt_atoms, OP_gt>;
+static constexpr auto& op_ge = op_binop_rr_impl<ge_atoms, OP_ge>;
+static constexpr auto& op_addk = op_binop_rk_impl<add_atoms, OP_addk>;
+static constexpr auto& op_subk = op_binop_rk_impl<sub_atoms, OP_subk>;
+static constexpr auto& op_mulk = op_binop_rk_impl<mul_atoms, OP_mulk>;
+static constexpr auto& op_divk = op_binop_rk_impl<div_atoms, OP_divk>;
+static constexpr auto& op_mink = op_binop_rk_impl<min_atoms, OP_mink>;
+static constexpr auto& op_maxk = op_binop_rk_impl<max_atoms, OP_maxk>;
+static constexpr auto& op_numeqk = op_binop_rk_impl<numeq_atoms, OP_numeqk>;
+static constexpr auto& op_eqk = op_binop_rk_impl<eq_atoms, OP_eqk>;
+static constexpr auto& op_ltk = op_binop_rk_impl<lt_atoms, OP_ltk>;
 
 JET_PRESERVE_NONE static void op_if_false(VM_OP_PARAMS)
 {
@@ -2094,10 +2092,10 @@ JET_PRESERVE_NONE static void op_if_false(VM_OP_PARAMS)
 	DISPATCH();
 }
 
-template <auto Op>
+template <auto Op, typename Instr>
 JET_PRESERVE_NONE static void op_if_cmp_rr_impl(VM_OP_PARAMS)
 {
-	OP_if_cmp* op{reinterpret_cast<OP_if_cmp*>(pc)};
+	auto* op{reinterpret_cast<Instr*>(pc)};
 	if (!is_true(Op(s, frame_regs[op->a], frame_regs[op->b])))
 	{
 		pc += sizeof(*op) + op->size;
@@ -2109,10 +2107,10 @@ JET_PRESERVE_NONE static void op_if_cmp_rr_impl(VM_OP_PARAMS)
 	DISPATCH();
 }
 
-template <auto Op>
+template <auto Op, typename Instr>
 JET_PRESERVE_NONE static void op_if_cmp_rk_impl(VM_OP_PARAMS)
 {
-	OP_if_cmp* op{reinterpret_cast<OP_if_cmp*>(pc)};
+	auto* op{reinterpret_cast<Instr*>(pc)};
 	if (!is_true(Op(s, frame_regs[op->a], s.constants[op->b])))
 	{
 		pc += sizeof(*op) + op->size;
@@ -2124,15 +2122,15 @@ JET_PRESERVE_NONE static void op_if_cmp_rk_impl(VM_OP_PARAMS)
 	DISPATCH();
 }
 
-static constexpr auto& op_if_numeq = op_if_cmp_rr_impl<numeq_atoms>;
-static constexpr auto& op_if_eq = op_if_cmp_rr_impl<eq_atoms>;
-static constexpr auto& op_if_lt = op_if_cmp_rr_impl<lt_atoms>;
-static constexpr auto& op_if_le = op_if_cmp_rr_impl<le_atoms>;
-static constexpr auto& op_if_gt = op_if_cmp_rr_impl<gt_atoms>;
-static constexpr auto& op_if_ge = op_if_cmp_rr_impl<ge_atoms>;
-static constexpr auto& op_if_numeqk = op_if_cmp_rk_impl<numeq_atoms>;
-static constexpr auto& op_if_eqk = op_if_cmp_rk_impl<eq_atoms>;
-static constexpr auto& op_if_ltk = op_if_cmp_rk_impl<lt_atoms>;
+static constexpr auto& op_if_numeq = op_if_cmp_rr_impl<numeq_atoms, OP_if_numeq>;
+static constexpr auto& op_if_eq = op_if_cmp_rr_impl<eq_atoms, OP_if_eq>;
+static constexpr auto& op_if_lt = op_if_cmp_rr_impl<lt_atoms, OP_if_lt>;
+static constexpr auto& op_if_le = op_if_cmp_rr_impl<le_atoms, OP_if_le>;
+static constexpr auto& op_if_gt = op_if_cmp_rr_impl<gt_atoms, OP_if_gt>;
+static constexpr auto& op_if_ge = op_if_cmp_rr_impl<ge_atoms, OP_if_ge>;
+static constexpr auto& op_if_numeqk = op_if_cmp_rk_impl<numeq_atoms, OP_if_numeqk>;
+static constexpr auto& op_if_eqk = op_if_cmp_rk_impl<eq_atoms, OP_if_eqk>;
+static constexpr auto& op_if_ltk = op_if_cmp_rk_impl<lt_atoms, OP_if_ltk>;
 
 JET_PRESERVE_NONE static void op_retv(VM_OP_PARAMS)
 {
@@ -2402,13 +2400,13 @@ static bool cache_lambda_entry(VmState& vm, Atom callee, Ic* op)
 	return true;
 }
 
-template <int N, CallTail tail, CalleeKind kind = CalleeKind::Stub>
+template <int N, CallTail tail, CalleeKind kind, typename Instr>
 JET_PRESERVE_NONE static void op_call_slot_impl(VM_OP_PARAMS);
 
-template <int N, CallTail tail>
+template <int N, CallTail tail, typename Instr>
 JET_NOINLINE JET_PRESERVE_NONE static void op_call_slot_slow(VM_OP_PARAMS)
 {
-	OP_call_slot* op{reinterpret_cast<OP_call_slot*>(pc)};
+	auto* op{reinterpret_cast<Instr*>(pc)};
 	Slot* slot{unbox<Slot>(frame->closure->captures[op->upvalue_idx])};
 	callee = slot->value;
 	JET_PROFILE_CALL_MISS(op->ic_atom, callee);
@@ -2417,29 +2415,29 @@ JET_NOINLINE JET_PRESERVE_NONE static void op_call_slot_slow(VM_OP_PARAMS)
 	op->ic_slot = std::bit_cast<uint64_t>(slot);
 	op->ic_atom = callee.bits;
 	op->ic_version = slot->version;
-	VmOp fast{op_call_slot_impl<N, tail, CalleeKind::Lambda>};
+	VmOp fast{op_call_slot_impl<N, tail, CalleeKind::Lambda, Instr>};
 	if (!cache_lambda_entry<tail>(s, callee, op))
 	{
-		op->ic_stub = std::bit_cast<uint64_t>(stub);
-		fast = op_call_slot_impl<N, tail, CalleeKind::Stub>;
+		op->ic_code = std::bit_cast<uint64_t>(stub);
+		fast = op_call_slot_impl<N, tail, CalleeKind::Stub, Instr>;
 	}
 	std::memcpy(reinterpret_cast<Code*>(op) - OPCODE_SIZE, &fast, sizeof(fast));
 	JET_MUSTTAIL return fast(VM_OP_ARGS);
 }
 
-template <int N, CallTail tail, CalleeKind kind>
+template <int N, CallTail tail, CalleeKind kind, typename Instr>
 JET_PRESERVE_NONE static void op_call_slot_impl(VM_OP_PARAMS)
 {
 	if constexpr (kind == CalleeKind::Stub)
 	{
 		JET_GC_CHECK();
 	}
-	OP_call_slot* op{reinterpret_cast<OP_call_slot*>(pc)};
+	auto* op{reinterpret_cast<Instr*>(pc)};
 	if constexpr (kind == CalleeKind::Lambda)
 	{
 		if (op->ic_epoch != s.gc.epoch) [[unlikely]]
 		{
-			JET_MUSTTAIL return op_call_slot_slow<N, tail>(VM_OP_ARGS);
+			JET_MUSTTAIL return op_call_slot_slow<N, tail, Instr>(VM_OP_ARGS);
 		}
 	}
 
@@ -2448,17 +2446,17 @@ JET_PRESERVE_NONE static void op_call_slot_impl(VM_OP_PARAMS)
 	{
 		if constexpr (kind == CalleeKind::Stub)
 		{
-			JET_MUSTTAIL return op_call_slot_slow<N, tail>(VM_OP_ARGS);
+			JET_MUSTTAIL return op_call_slot_slow<N, tail, Instr>(VM_OP_ARGS);
 		}
 
 		Atom current{slot->value};
 		if (!is_type<jet::Type::Procedure>(current)) [[unlikely]]
 		{
-			JET_MUSTTAIL return op_call_slot_slow<N, tail>(VM_OP_ARGS);
+			JET_MUSTTAIL return op_call_slot_slow<N, tail, Instr>(VM_OP_ARGS);
 		}
 		if (op->ic_code != std::bit_cast<uint64_t>(unbox<Lambda>(current)->code)) [[unlikely]]
 		{
-			JET_MUSTTAIL return op_call_slot_slow<N, tail>(VM_OP_ARGS);
+			JET_MUSTTAIL return op_call_slot_slow<N, tail, Instr>(VM_OP_ARGS);
 		}
 
 		op->ic_slot = std::bit_cast<uint64_t>(slot);
@@ -2471,9 +2469,9 @@ JET_PRESERVE_NONE static void op_call_slot_impl(VM_OP_PARAMS)
 	JET_CALL_WINDOW(op->w, op->nargs);
 	if constexpr (kind == CalleeKind::Lambda)
 	{
-		JET_MUSTTAIL return op_enter_lambda_fast<tail, OP_call_slot>(VM_OP_ARGS);
+		JET_MUSTTAIL return op_enter_lambda_fast<tail, Instr>(VM_OP_ARGS);
 	}
-	uint64_t stub_bits{op->ic_stub};
+	uint64_t stub_bits{op->ic_code};
 	JET_MUSTTAIL return std::bit_cast<VmOp>(stub_bits)(VM_OP_ARGS);
 }
 
@@ -2483,13 +2481,13 @@ enum class CalleeSource
 	Upval
 };
 
-template <int N, CallTail tail, CalleeSource source, CalleeKind kind = CalleeKind::Stub>
+template <int N, CallTail tail, CalleeSource source, CalleeKind kind, typename Instr>
 JET_PRESERVE_NONE static void op_call_atom_impl(VM_OP_PARAMS);
 
-template <int N, CallTail tail, CalleeSource source>
+template <int N, CallTail tail, CalleeSource source, typename Instr>
 JET_NOINLINE JET_PRESERVE_NONE static void op_call_atom_slow(VM_OP_PARAMS)
 {
-	OP_call_atom* op{reinterpret_cast<OP_call_atom*>(pc)};
+	auto* op{reinterpret_cast<Instr*>(pc)};
 	if constexpr (source == CalleeSource::Local)
 	{
 		callee = frame_regs[op->idx];
@@ -2502,29 +2500,29 @@ JET_NOINLINE JET_PRESERVE_NONE static void op_call_atom_slow(VM_OP_PARAMS)
 	frame->code = pc + sizeof(*op);
 	VmOp stub{resolve_callee(s, callee, op->nargs, tail)};
 	op->ic_atom = callee.bits;
-	VmOp fast{op_call_atom_impl<N, tail, source, CalleeKind::Lambda>};
+	VmOp fast{op_call_atom_impl<N, tail, source, CalleeKind::Lambda, Instr>};
 	if (!cache_lambda_entry<tail>(s, callee, op))
 	{
-		op->ic_stub = std::bit_cast<uint64_t>(stub);
-		fast = op_call_atom_impl<N, tail, source, CalleeKind::Stub>;
+		op->ic_code = std::bit_cast<uint64_t>(stub);
+		fast = op_call_atom_impl<N, tail, source, CalleeKind::Stub, Instr>;
 	}
 	std::memcpy(reinterpret_cast<Code*>(op) - OPCODE_SIZE, &fast, sizeof(fast));
 	JET_MUSTTAIL return fast(VM_OP_ARGS);
 }
 
-template <int N, CallTail tail, CalleeSource source, CalleeKind kind>
+template <int N, CallTail tail, CalleeSource source, CalleeKind kind, typename Instr>
 JET_PRESERVE_NONE static void op_call_atom_impl(VM_OP_PARAMS)
 {
 	if constexpr (kind == CalleeKind::Stub)
 	{
 		JET_GC_CHECK();
 	}
-	OP_call_atom* op{reinterpret_cast<OP_call_atom*>(pc)};
+	auto* op{reinterpret_cast<Instr*>(pc)};
 	if constexpr (kind == CalleeKind::Lambda)
 	{
 		if (op->ic_epoch != s.gc.epoch) [[unlikely]]
 		{
-			JET_MUSTTAIL return op_call_atom_slow<N, tail, source>(VM_OP_ARGS);
+			JET_MUSTTAIL return op_call_atom_slow<N, tail, source, Instr>(VM_OP_ARGS);
 		}
 	}
 
@@ -2542,15 +2540,15 @@ JET_PRESERVE_NONE static void op_call_atom_impl(VM_OP_PARAMS)
 	{
 		if constexpr (kind == CalleeKind::Stub)
 		{
-			JET_MUSTTAIL return op_call_atom_slow<N, tail, source>(VM_OP_ARGS);
+			JET_MUSTTAIL return op_call_atom_slow<N, tail, source, Instr>(VM_OP_ARGS);
 		}
 		if (!is_type<jet::Type::Procedure>(current)) [[unlikely]]
 		{
-			JET_MUSTTAIL return op_call_atom_slow<N, tail, source>(VM_OP_ARGS);
+			JET_MUSTTAIL return op_call_atom_slow<N, tail, source, Instr>(VM_OP_ARGS);
 		}
 		if (op->ic_code != std::bit_cast<uint64_t>(unbox<Lambda>(current)->code)) [[unlikely]]
 		{
-			JET_MUSTTAIL return op_call_atom_slow<N, tail, source>(VM_OP_ARGS);
+			JET_MUSTTAIL return op_call_atom_slow<N, tail, source, Instr>(VM_OP_ARGS);
 		}
 
 		op->ic_atom = current.bits;
@@ -2561,9 +2559,9 @@ JET_PRESERVE_NONE static void op_call_atom_impl(VM_OP_PARAMS)
 	JET_CALL_WINDOW(op->w, op->nargs);
 	if constexpr (kind == CalleeKind::Lambda)
 	{
-		JET_MUSTTAIL return op_enter_lambda_fast<tail, OP_call_atom>(VM_OP_ARGS);
+		JET_MUSTTAIL return op_enter_lambda_fast<tail, Instr>(VM_OP_ARGS);
 	}
-	uint64_t stub_bits{op->ic_stub};
+	uint64_t stub_bits{op->ic_code};
 	JET_MUSTTAIL return std::bit_cast<VmOp>(stub_bits)(VM_OP_ARGS);
 }
 
@@ -2594,32 +2592,32 @@ JET_NOINLINE JET_PRESERVE_NONE static void op_call_self_impl(VM_OP_PARAMS)
 }
 
 #define X(name, disp, n)																																										 \
-	static constexpr auto& op_##name = op_call_slot_impl<n, CallTail::No>;
+	static constexpr auto& op_##name = op_call_slot_impl<n, CallTail::No, CalleeKind::Stub, OP_##name>;
 JET_REPLICATE(X, call_upval_slot, "cus")
 #undef X
 
 #define X(name, disp, n)																																										 \
-	static constexpr auto& op_##name = op_call_slot_impl<n, CallTail::Yes>;
+	static constexpr auto& op_##name = op_call_slot_impl<n, CallTail::Yes, CalleeKind::Stub, OP_##name>;
 JET_REPLICATE(X, call_upval_slot_tail, "cust")
 #undef X
 
 #define X(name, disp, n)																																										 \
-	static constexpr auto& op_##name = op_call_atom_impl<n, CallTail::No, CalleeSource::Local>;
+	static constexpr auto& op_##name = op_call_atom_impl<n, CallTail::No, CalleeSource::Local, CalleeKind::Stub, OP_##name>;
 JET_REPLICATE(X, call_local, "cl")
 #undef X
 
 #define X(name, disp, n)																																										 \
-	static constexpr auto& op_##name = op_call_atom_impl<n, CallTail::Yes, CalleeSource::Local>;
+	static constexpr auto& op_##name = op_call_atom_impl<n, CallTail::Yes, CalleeSource::Local, CalleeKind::Stub, OP_##name>;
 JET_REPLICATE(X, call_local_tail, "clt")
 #undef X
 
 #define X(name, disp, n)																																										 \
-	static constexpr auto& op_##name = op_call_atom_impl<n, CallTail::No, CalleeSource::Upval>;
+	static constexpr auto& op_##name = op_call_atom_impl<n, CallTail::No, CalleeSource::Upval, CalleeKind::Stub, OP_##name>;
 JET_REPLICATE(X, call_upval, "cu")
 #undef X
 
 #define X(name, disp, n)																																										 \
-	static constexpr auto& op_##name = op_call_atom_impl<n, CallTail::Yes, CalleeSource::Upval>;
+	static constexpr auto& op_##name = op_call_atom_impl<n, CallTail::Yes, CalleeSource::Upval, CalleeKind::Stub, OP_##name>;
 JET_REPLICATE(X, call_upval_tail, "cut")
 #undef X
 

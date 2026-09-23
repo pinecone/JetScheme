@@ -357,7 +357,7 @@ static void print_durations(const char* name, const ProfileDurations& durations)
 static void print_fields()
 {
 	constexpr Opcode field_ops[] = {Opcode::ldf, Opcode::stf, Opcode::ldfk, Opcode::stfk,
-		                            Opcode::ldfh, Opcode::ldfkh, Opcode::ldfo, Opcode::ldfko};
+		                            Opcode::ldfh, Opcode::ldfkh, Opcode::ldfo, Opcode::ldfok};
 	constexpr const char* field_receivers[] = {
 		"vector", "string", "bytevector", "scheme", "tuple", "hashset", "hashmap", "cursor", "other",
 	};
@@ -606,284 +606,46 @@ bool is_call_self_op(uint8_t op)
 	return false;
 }
 
-void decode_args(FILE* out, uint8_t op, Code* p)
+void decode_args(FILE* out, uint8_t tag, Code* operands)
 {
-	if (is_call_slot_op(op))
+	auto&& decode = [&]<typename Instr>()
 	{
-		OP_call_slot* o = reinterpret_cast<OP_call_slot*>(p);
-		print(out, " w={} upvalue={} nargs={}", o->w, o->upvalue_idx, o->nargs);
-		return;
-	}
-	if (is_call_atom_op(op))
+		const Instr* op{reinterpret_cast<const Instr*>(operands)};
+#define FIELD(name) if constexpr (requires { op->name; }) { print(out, " " #name "={}", op->name); }
+		FIELD(dst)
+		FIELD(dst0)
+		FIELD(dst1)
+		FIELD(src)
+		FIELD(src0)
+		FIELD(src1)
+		FIELD(reg)
+		FIELD(a)
+		FIELD(b)
+		FIELD(w)
+		FIELD(callee)
+		FIELD(idx)
+		FIELD(upvalue_idx)
+		FIELD(nargs)
+		FIELD(pool_idx)
+		FIELD(n_captures)
+		FIELD(cursor)
+		FIELD(obj)
+		FIELD(key)
+		FIELD(val)
+		FIELD(dfl)
+		FIELD(size)
+		if constexpr (requires { op->mode; })
+		{
+			print(out, " mode={}", static_cast<uint8_t>(op->mode));
+		}
+#undef FIELD
+	};
+	switch (static_cast<Opcode>(tag))
 	{
-		OP_call_atom* o = reinterpret_cast<OP_call_atom*>(p);
-		print(out, " w={} idx={} nargs={}", o->w, o->idx, o->nargs);
-		return;
-	}
-	if (is_call_self_op(op))
-	{
-		OP_call_self* o = reinterpret_cast<OP_call_self*>(p);
-		print(out, " w={} nargs={}", o->w, o->nargs);
-		return;
-	}
-	switch (static_cast<Opcode>(op))
-	{
-		case Opcode::skip:
-			print(out, " size={}", reinterpret_cast<OP_skip*>(p)->size);
-			break;
-		case Opcode::mov:
-		case Opcode::trunc:
-		case Opcode::sqrt:
-		case Opcode::floor:
-		case Opcode::round:
-		case Opcode::ceil:
-		{
-			OP_mov* o = reinterpret_cast<OP_mov*>(p);
-			print(out, " dst={} src={}", o->dst, o->src);
-			break;
-		}
-		case Opcode::mov2:
-		{
-			OP_mov2* o = reinterpret_cast<OP_mov2*>(p);
-			print(out, " dst0={} src0={} dst1={} src1={}", o->first.dst, o->first.src,
-			      o->second.dst, o->second.src);
-			break;
-		}
-		case Opcode::ldk:
-		{
-			OP_ldk* o = reinterpret_cast<OP_ldk*>(p);
-			print(out, " dst={} k={}", o->dst, o->idx);
-			break;
-		}
-		case Opcode::ldu:
-		case Opcode::ldus:
-		case Opcode::ldd:
-		{
-			OP_ldu* o = reinterpret_cast<OP_ldu*>(p);
-			print(out, " dst={} idx={}", o->dst, o->idx);
-			break;
-		}
-		case Opcode::stu:
-		case Opcode::std:
-		{
-			OP_stu* o = reinterpret_cast<OP_stu*>(p);
-			print(out, " idx={} src={}", o->idx, o->src);
-			break;
-		}
-		case Opcode::box:
-			print(out, " reg={}", reinterpret_cast<OP_box*>(p)->reg);
-			break;
-		case Opcode::clos:
-		{
-			OP_clos* o = reinterpret_cast<OP_clos*>(p);
-			print(out, " dst={} idx={} n_captures={}", o->dst, o->pool_idx, o->n_captures);
-			break;
-		}
-		case Opcode::add:
-		case Opcode::sub:
-		case Opcode::mul:
-		case Opcode::div:
-		case Opcode::min:
-		case Opcode::max:
-		case Opcode::numeq:
-		case Opcode::eq:
-		case Opcode::lt:
-		case Opcode::le:
-		case Opcode::gt:
-		case Opcode::ge:
-		{
-			OP_binop_rr* o = reinterpret_cast<OP_binop_rr*>(p);
-			print(out, " dst={} a={} b={}", o->dst, o->a, o->b);
-			break;
-		}
-		case Opcode::addk:
-		case Opcode::subk:
-		case Opcode::mulk:
-		case Opcode::divk:
-		case Opcode::mink:
-		case Opcode::maxk:
-		case Opcode::numeqk:
-		case Opcode::eqk:
-		case Opcode::ltk:
-		{
-			OP_binop_rk* o = reinterpret_cast<OP_binop_rk*>(p);
-			print(out, " dst={} a={} k={}", o->dst, o->a, o->b);
-			break;
-		}
-		case Opcode::fadd:
-		case Opcode::fsub:
-		case Opcode::fmul:
-		case Opcode::fdiv:
-		case Opcode::fmin:
-		case Opcode::fmax:
-		case Opcode::ftrunc:
-		case Opcode::fsqrt:
-		case Opcode::ffloor:
-		case Opcode::fround:
-		case Opcode::fceil:
-		case Opcode::fnumeq:
-		case Opcode::flt:
-		case Opcode::fle:
-		case Opcode::fgt:
-		case Opcode::fge:
-		{
-			OP_unboxed_float* operands{reinterpret_cast<OP_unboxed_float*>(p)};
-			Opcode opcode{static_cast<Opcode>(op)};
-			JET_DIE_UNLESS(nullptr, unboxed_float_valid(opcode, operands->mode),
-			               "invalid unboxed float mode {} for {}",
-			               static_cast<uint8_t>(operands->mode), opcode);
-
-			switch (operands->mode)
-			{
-				case UnboxedFloatMode::Start:
-					print(out, " start dst=unboxed_float a={}", operands->a);
-					if (!unboxed_float_unary(opcode))
-					{
-						print(out, " b={}", operands->b);
-					}
-					break;
-				case UnboxedFloatMode::StartConstant:
-					print(out, " start-constant dst=unboxed_float a={} k={}", operands->a, operands->b);
-					break;
-				case UnboxedFloatMode::Left:
-					print(out, " left dst=unboxed_float a=unboxed_float");
-					if (!unboxed_float_unary(opcode))
-					{
-						print(out, " b={}", operands->b);
-					}
-					break;
-				case UnboxedFloatMode::Right:
-					print(out, " right dst=unboxed_float a={} b=unboxed_float", operands->a);
-					break;
-				case UnboxedFloatMode::Constant:
-					print(out, " constant dst=unboxed_float a=unboxed_float k={}", operands->b);
-					break;
-				case UnboxedFloatMode::StoreLeft:
-					print(out, " store-left dst={} a=unboxed_float", operands->dst);
-					if (!unboxed_float_unary(opcode))
-					{
-						print(out, " b={}", operands->b);
-					}
-					break;
-				case UnboxedFloatMode::StoreRight:
-					print(out, " store-right dst={} a={} b=unboxed_float", operands->dst, operands->a);
-					break;
-				case UnboxedFloatMode::StoreConstant:
-					print(out, " store-constant dst={} a=unboxed_float k={}", operands->dst, operands->b);
-					break;
-			}
-			break;
-		}
-		case Opcode::if_false:
-		{
-			OP_if_false* o = reinterpret_cast<OP_if_false*>(p);
-			print(out, " src={} size={}", o->src, o->size);
-			break;
-		}
-		case Opcode::if_numeq:
-		case Opcode::if_eq:
-		case Opcode::if_lt:
-		case Opcode::if_le:
-		case Opcode::if_gt:
-		case Opcode::if_ge:
-		{
-			OP_if_cmp* o = reinterpret_cast<OP_if_cmp*>(p);
-			print(out, " a={} b={} size={}", o->a, o->b, o->size);
-			break;
-		}
-		case Opcode::if_numeqk:
-		case Opcode::if_eqk:
-		case Opcode::if_ltk:
-		{
-			OP_if_cmp* o = reinterpret_cast<OP_if_cmp*>(p);
-			print(out, " a={} k={} size={}", o->a, o->b, o->size);
-			break;
-		}
-		case Opcode::retv:
-			print(out, " src={}", reinterpret_cast<OP_retv*>(p)->src);
-			break;
-		case Opcode::call:
-		case Opcode::tcall:
-		{
-			OP_call* o = reinterpret_cast<OP_call*>(p);
-			print(out, " w={} callee={} nargs={}", o->w, o->callee, o->nargs);
-			break;
-		}
-		case Opcode::call_self_tail:
-		{
-			OP_call_self_tail* o = reinterpret_cast<OP_call_self_tail*>(p);
-			print(out, " w={} nargs={}", o->w, o->nargs);
-			break;
-		}
-		case Opcode::apply:
-			print(out, " w={}", reinterpret_cast<OP_apply*>(p)->w);
-			break;
-		case Opcode::reset:
-		case Opcode::coro:
-			print(out, " w={}", reinterpret_cast<OP_reset*>(p)->w);
-			break;
-		case Opcode::iter_next1:
-		{
-			OP_iter_next1* o = reinterpret_cast<OP_iter_next1*>(p);
-			print(out, " cursor={} dst={} size={}", o->cursor, o->dst, o->size);
-			break;
-		}
-		case Opcode::iter_next2:
-		{
-			OP_iter_next2* o = reinterpret_cast<OP_iter_next2*>(p);
-			print(out, " cursor={} dst0={} dst1={} size={}", o->cursor, o->dst0, o->dst1, o->size);
-			break;
-		}
-		case Opcode::ldf:
-		{
-			OP_ldf* o = reinterpret_cast<OP_ldf*>(p);
-			print(out, " dst={} obj={} key={}", o->dst, o->obj, o->key);
-			break;
-		}
-		case Opcode::stf:
-		{
-			OP_stf* o = reinterpret_cast<OP_stf*>(p);
-			print(out, " obj={} key={} val={}", o->obj, o->key, o->val);
-			break;
-		}
-		case Opcode::ldfk:
-		{
-			OP_ldfk* o = reinterpret_cast<OP_ldfk*>(p);
-			print(out, " dst={} obj={} k={}", o->dst, o->obj, o->key_idx);
-			break;
-		}
-		case Opcode::stfk:
-		{
-			OP_stfk* o = reinterpret_cast<OP_stfk*>(p);
-			print(out, " obj={} k={} val={}", o->obj, o->key_idx, o->val);
-			break;
-		}
-		case Opcode::ldfh:
-		{
-			OP_ldfh* o = reinterpret_cast<OP_ldfh*>(p);
-			print(out, " dst={} obj={} key={}", o->dst, o->obj, o->key);
-			break;
-		}
-		case Opcode::ldfkh:
-		{
-			OP_ldfkh* o = reinterpret_cast<OP_ldfkh*>(p);
-			print(out, " dst={} obj={} k={}", o->dst, o->obj, o->key_idx);
-			break;
-		}
-		case Opcode::ldfo:
-		{
-			OP_ldfo* o = reinterpret_cast<OP_ldfo*>(p);
-			print(out, " dst={} obj={} key={} dfl={}", o->dst, o->obj, o->key, o->dfl);
-			break;
-		}
-		case Opcode::ldfko:
-		{
-			OP_ldfko* o = reinterpret_cast<OP_ldfko*>(p);
-			print(out, " dst={} obj={} k={} dfl={}", o->dst, o->obj, o->key_idx, o->dfl);
-			break;
-		}
-		default:
-			break;
+#define X(name, disp) case Opcode::name: decode.template operator()<OP_##name>(); break;
+		JET_OPCODES(X)
+#undef X
+		default: JET_DIE(nullptr, "unknown opcode {}", tag);
 	}
 }
 
@@ -927,10 +689,6 @@ void trace_step(VmState& s, Frame*, Code* pc, Atom* stack_top)
 }
 
 #endif
-
-// The static disassembler doesn't require link_opcode_handlers to have run:
-// it reads only the 1-byte opcode tag at +VM_OP_SLOT_SIZE and the operand
-// bytes; handler slots are ignored.
 
 namespace
 {

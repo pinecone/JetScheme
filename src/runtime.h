@@ -948,12 +948,6 @@ enum class FieldKeySource : uint8_t
 	Constant,
 };
 
-template <FieldAccess access, FieldKeySource key_source>
-using FieldOp =
-	std::conditional_t<access == FieldAccess::Store,
-	                   std::conditional_t<key_source == FieldKeySource::Constant, OP_stfk, OP_stf>,
-	                   std::conditional_t<key_source == FieldKeySource::Constant, OP_ldfk, OP_ldf>>;
-
 enum class FieldMiss
 {
 	Die,
@@ -966,17 +960,11 @@ constexpr Opcode field_opcode =
 	access == FieldAccess::Store
 	? (key_source == FieldKeySource::Constant ? Opcode::stfk : Opcode::stf)
 	: miss == FieldMiss::Hole ? (key_source == FieldKeySource::Constant ? Opcode::ldfkh : Opcode::ldfh)
-	: miss == FieldMiss::Default ? (key_source == FieldKeySource::Constant ? Opcode::ldfko : Opcode::ldfo)
+	: miss == FieldMiss::Default ? (key_source == FieldKeySource::Constant ? Opcode::ldfok : Opcode::ldfo)
 	: (key_source == FieldKeySource::Constant ? Opcode::ldfk : Opcode::ldf);
 
-template <FieldMiss miss, FieldKeySource key_source>
-using FieldLoadOp =
-	std::conditional_t<miss == FieldMiss::Default,
-	                   std::conditional_t<key_source == FieldKeySource::Constant, OP_ldfko, OP_ldfo>,
-	                   std::conditional_t<key_source == FieldKeySource::Constant, OP_ldfk, OP_ldf>>;
-
-template <FieldMiss miss, FieldKeySource key_source>
-JET_ALWAYS_INLINE Atom field_miss_value(FieldLoadOp<miss, key_source>* op, Atom* frame_regs)
+template <FieldMiss miss, typename Instr>
+JET_ALWAYS_INLINE Atom field_miss_value(Instr* op, Atom* frame_regs)
 {
 	if constexpr (miss == FieldMiss::Default)
 	{
@@ -993,7 +981,7 @@ JET_ALWAYS_INLINE Atom field_key(VmState& s, const Op* op, Atom* frame_regs)
 {
 	if constexpr (key_source == FieldKeySource::Constant)
 	{
-		return s.constants[op->key_idx];
+		return s.constants[op->key];
 	}
 	else
 	{
@@ -1017,14 +1005,14 @@ template <FieldAccess access>
 	JET_DIE(&s, "{}: index out of bounds", op);
 }
 
-template <FieldKeySource key_source>
-JET_ALWAYS_INLINE bool index_of_key(size_t size, Atom key, FieldIc& ic, size_t& index)
+template <FieldKeySource key_source, typename Instr>
+JET_ALWAYS_INLINE bool index_of_key(size_t size, Atom key, Instr& op, size_t& index)
 {
 	if constexpr (key_source == FieldKeySource::Constant)
 	{
-		if (ic.cached_index < size) [[likely]]
+		if (op.cached_index < size) [[likely]]
 		{
-			index = ic.cached_index;
+			index = op.cached_index;
 			return true;
 		}
 		JET_PROFILE_FIELD_KEY_MISS();
@@ -1041,7 +1029,7 @@ JET_ALWAYS_INLINE bool index_of_key(size_t size, Atom key, FieldIc& ic, size_t& 
 	index = value;
 	if constexpr (key_source == FieldKeySource::Constant)
 	{
-		ic.cached_index = index;
+		op.cached_index = index;
 	}
 	return true;
 }
@@ -1095,7 +1083,7 @@ struct ContainerAccess
 		T& container = *unbox<T>(frame_regs[op->obj]);
 		size_t index;
 		Atom key = field_key<key_source>(s, op, frame_regs);
-		if (!index_of_key<key_source>(container.size(), key, op->ic, index)) [[unlikely]]
+		if (!index_of_key<key_source>(container.size(), key, *op, index)) [[unlikely]]
 		{
 			return false;
 		}
@@ -1123,37 +1111,34 @@ struct ContainerAccess
 		return container_load(container, index);
 	}
 
-	template <FieldKeySource key_source>
+	template <FieldKeySource key_source, typename Instr>
 	JET_NOINLINE JET_PRESERVE_NONE static void op_load_slow(VM_OP_PARAMS)
 	{
-		FieldOp<FieldAccess::Load,
-		        key_source>* op = reinterpret_cast<FieldOp<FieldAccess::Load, key_source>*>(pc);
+		Instr* op{reinterpret_cast<Instr*>(pc)};
 		die_field_index<FieldAccess::Load>(s, field_key<key_source>(s, op, frame_regs));
 	}
 
-	template <FieldKeySource key_source>
-	JET_ALWAYS_INLINE static bool store_fast(VmState& s, FieldOp<FieldAccess::Store, key_source>* op,
-	                                         Atom* frame_regs)
+	template <FieldKeySource key_source, typename Instr>
+	JET_ALWAYS_INLINE static bool store_fast(VmState& s, Instr* op, Atom* frame_regs)
 	{
 		T& container = *unbox<T>(frame_regs[op->obj]);
 		size_t index;
 		Atom key = field_key<key_source>(s, op, frame_regs);
-		if (!index_of_key<key_source>(container.size(), key, op->ic, index)) [[unlikely]]
+		if (!index_of_key<key_source>(container.size(), key, *op, index)) [[unlikely]]
 		{
 			return false;
 		}
 		return container_store(container, index, frame_regs[op->val]);
 	}
 
-	template <FieldKeySource key_source>
+	template <FieldKeySource key_source, typename Instr>
 	JET_NOINLINE JET_PRESERVE_NONE static void op_store_slow(VM_OP_PARAMS)
 	{
-		FieldOp<FieldAccess::Store,
-		        key_source>* op = reinterpret_cast<FieldOp<FieldAccess::Store, key_source>*>(pc);
+		Instr* op{reinterpret_cast<Instr*>(pc)};
 		T& container = *unbox<T>(frame_regs[op->obj]);
 		size_t index;
 		Atom key = field_key<key_source>(s, op, frame_regs);
-		if (!index_of_key<key_source>(container.size(), key, op->ic, index))
+		if (!index_of_key<key_source>(container.size(), key, *op, index))
 		{
 			die_field_index<FieldAccess::Store>(s, key);
 		}
@@ -1163,13 +1148,13 @@ struct ContainerAccess
 
 struct StringAccess : ContainerAccess<String>
 {
-	template <FieldKeySource key_source>
-	JET_ALWAYS_INLINE static bool store_fast(VmState&, FieldOp<FieldAccess::Store, key_source>*, Atom*)
+	template <FieldKeySource key_source, typename Instr>
+	JET_ALWAYS_INLINE static bool store_fast(VmState&, Instr*, Atom*)
 	{
 		return false;
 	}
 
-	template <FieldKeySource key_source>
+	template <FieldKeySource key_source, typename Instr>
 	JET_NOINLINE JET_PRESERVE_NONE static void op_store_slow(VM_OP_PARAMS)
 	{
 		JET_DIE(&s, "setf!: strings are immutable");
@@ -1196,37 +1181,35 @@ JET_NOINLINE JET_PRESERVE_NONE void die_field_receiver(VM_OP_PARAMS)
 	JET_DIE(&s, "{}: unsupported receiver type", access == FieldAccess::Store ? "setf!" : "ref");
 }
 
-template <typename Access, FieldMiss miss, FieldKeySource key_source>
+template <typename Access, FieldMiss miss, FieldKeySource key_source, typename Instr>
 JET_NOINLINE JET_PRESERVE_NONE void op_field_load_miss(VM_OP_PARAMS)
 {
-	FieldLoadOp<miss, key_source>* op = reinterpret_cast<FieldLoadOp<miss, key_source>*>(pc);
+	Instr* op{reinterpret_cast<Instr*>(pc)};
 	Atom value = Access::load_or_hole(s, frame_regs[op->obj], field_key<key_source>(s, op, frame_regs));
-	frame_regs[op->dst] = is_hole(value) ? field_miss_value<miss, key_source>(op, frame_regs) : value;
+	frame_regs[op->dst] = is_hole(value) ? field_miss_value<miss>(op, frame_regs) : value;
 	pc += sizeof(*op);
 	DISPATCH();
 }
 
-template <FieldMiss miss, FieldKeySource key_source>
+template <FieldMiss miss, FieldKeySource key_source, typename Instr>
 JET_NOINLINE JET_PRESERVE_NONE void op_field_hole_receiver(VM_OP_PARAMS)
 {
-	FieldLoadOp<miss, key_source>* op = reinterpret_cast<FieldLoadOp<miss, key_source>*>(pc);
-	frame_regs[op->dst] = field_miss_value<miss, key_source>(op, frame_regs);
+	Instr* op{reinterpret_cast<Instr*>(pc)};
+	frame_regs[op->dst] = field_miss_value<miss>(op, frame_regs);
 	pc += sizeof(*op);
 	DISPATCH();
 }
 
-template <FieldAccess access, FieldKeySource key_source, FieldMiss miss = FieldMiss::Die>
+template <FieldAccess access, FieldKeySource key_source, FieldMiss miss, typename Instr>
 JET_PRESERVE_NONE void op_field_impl(VM_OP_PARAMS)
 {
-	using Op = std::conditional_t<access == FieldAccess::Store, FieldOp<access, key_source>,
-	                              FieldLoadOp<miss, key_source>>;
-	Op* op = reinterpret_cast<Op*>(pc);
+	Instr* op{reinterpret_cast<Instr*>(pc)};
 	Atom object = frame_regs[op->obj];
 	if constexpr (access == FieldAccess::Load && miss != FieldMiss::Die)
 	{
 		if (is_hole(object)) [[unlikely]]
 		{
-			JET_MUSTTAIL return op_field_hole_receiver<miss, key_source>(VM_OP_ARGS);
+			JET_MUSTTAIL return op_field_hole_receiver<miss, key_source, Instr>(VM_OP_ARGS);
 		}
 	}
 	const ObjShape* shape = shape_of(object);
@@ -1255,23 +1238,23 @@ JET_PRESERVE_NONE void op_field_impl(VM_OP_PARAMS)
 		JET_MUSTTAIL return die_field_receiver<access>(VM_OP_ARGS);
 	}
 	JET_PROFILE_FIELD_DISPATCH((field_opcode<access, key_source>), profile_field_receiver(object), false);
-	op->ic.dispatch_key = object.tag_is<jet_tag::struct_>()
+	op->dispatch_key = object.tag_is<jet_tag::struct_>()
 	                      ? std::bit_cast<uint64_t>(unbox<Struct>(object)->type)
 	                      : type_bits(object);
-	op->ic.cached_index = FIELD_IC_NONE;
-	op->ic.cached_key = FIELD_IC_NONE;
+	op->cached_index = FIELD_IC_NONE;
+	op->cached_key = FIELD_IC_NONE;
 	std::memcpy(pc - OPCODE_SIZE, &handler, sizeof(handler));
 	JET_MUSTTAIL return handler(VM_OP_ARGS);
 }
 
-template <typename Access, FieldKeySource key_source, FieldMiss miss = FieldMiss::Die>
+template <typename Access, FieldKeySource key_source, FieldMiss miss, typename Instr>
 JET_PRESERVE_NONE void op_field_load_fast(VM_OP_PARAMS)
 {
-	FieldLoadOp<miss, key_source>* op = reinterpret_cast<FieldLoadOp<miss, key_source>*>(pc);
+	Instr* op{reinterpret_cast<Instr*>(pc)};
 	Atom object = frame_regs[op->obj];
-	if (!field_receiver_matches<Access>(object, op->ic.dispatch_key)) [[unlikely]]
+	if (!field_receiver_matches<Access>(object, op->dispatch_key)) [[unlikely]]
 	{
-		JET_MUSTTAIL return op_field_impl<FieldAccess::Load, key_source, miss>(VM_OP_ARGS);
+		JET_MUSTTAIL return op_field_impl<FieldAccess::Load, key_source, miss, Instr>(VM_OP_ARGS);
 	}
 	JET_PROFILE_FIELD_DISPATCH((field_opcode<FieldAccess::Load, key_source, miss>),
 	                           profile_field_receiver(object), true);
@@ -1279,36 +1262,35 @@ JET_PRESERVE_NONE void op_field_load_fast(VM_OP_PARAMS)
 	{
 		if constexpr (miss == FieldMiss::Die)
 		{
-			JET_MUSTTAIL return Access::template op_load_slow<key_source>(VM_OP_ARGS);
+			JET_MUSTTAIL return Access::template op_load_slow<key_source, Instr>(VM_OP_ARGS);
 		}
 		else if constexpr (Access::caches_keys)
 		{
-			JET_MUSTTAIL return Access::template op_load_miss<key_source, miss>(VM_OP_ARGS);
+			JET_MUSTTAIL return Access::template op_load_miss<key_source, miss, Instr>(VM_OP_ARGS);
 		}
 		else
 		{
-			JET_MUSTTAIL return op_field_load_miss<Access, miss, key_source>(VM_OP_ARGS);
+			JET_MUSTTAIL return op_field_load_miss<Access, miss, key_source, Instr>(VM_OP_ARGS);
 		}
 	}
 	pc += sizeof(*op);
 	DISPATCH();
 }
 
-template <typename Access, FieldKeySource key_source>
+template <typename Access, FieldKeySource key_source, typename Instr>
 JET_PRESERVE_NONE void op_field_store_fast(VM_OP_PARAMS)
 {
-	FieldOp<FieldAccess::Store,
-	        key_source>* op = reinterpret_cast<FieldOp<FieldAccess::Store, key_source>*>(pc);
+	Instr* op{reinterpret_cast<Instr*>(pc)};
 	Atom object = frame_regs[op->obj];
-	if (!field_receiver_matches<Access>(object, op->ic.dispatch_key)) [[unlikely]]
+	if (!field_receiver_matches<Access>(object, op->dispatch_key)) [[unlikely]]
 	{
-		JET_MUSTTAIL return op_field_impl<FieldAccess::Store, key_source>(VM_OP_ARGS);
+		JET_MUSTTAIL return op_field_impl<FieldAccess::Store, key_source, FieldMiss::Die, Instr>(VM_OP_ARGS);
 	}
 	JET_PROFILE_FIELD_DISPATCH((field_opcode<FieldAccess::Store, key_source>), profile_field_receiver(object),
 	                           true);
 	if (!Access::template store_fast<key_source>(s, op, frame_regs)) [[unlikely]]
 	{
-		JET_MUSTTAIL return Access::template op_store_slow<key_source>(VM_OP_ARGS);
+		JET_MUSTTAIL return Access::template op_store_slow<key_source, Instr>(VM_OP_ARGS);
 	}
 	pc += sizeof(*op);
 	DISPATCH();
@@ -1318,14 +1300,14 @@ template <typename Access>
 constexpr ObjShape make_field_shape(Atom (*ref_or_die)(VmState&, Atom, Atom),
                                     Cursor* (*iter)(VmState&, Atom))
 {
-	return {op_field_load_fast<Access, FieldKeySource::Register>,
-	        op_field_store_fast<Access, FieldKeySource::Register>,
-	        op_field_load_fast<Access, FieldKeySource::Constant>,
-	        op_field_store_fast<Access, FieldKeySource::Constant>,
-	        op_field_load_fast<Access, FieldKeySource::Register, FieldMiss::Hole>,
-	        op_field_load_fast<Access, FieldKeySource::Constant, FieldMiss::Hole>,
-	        op_field_load_fast<Access, FieldKeySource::Register, FieldMiss::Default>,
-	        op_field_load_fast<Access, FieldKeySource::Constant, FieldMiss::Default>,
+	return {op_field_load_fast<Access, FieldKeySource::Register, FieldMiss::Die, OP_ldf>,
+	        op_field_store_fast<Access, FieldKeySource::Register, OP_stf>,
+	        op_field_load_fast<Access, FieldKeySource::Constant, FieldMiss::Die, OP_ldfk>,
+	        op_field_store_fast<Access, FieldKeySource::Constant, OP_stfk>,
+	        op_field_load_fast<Access, FieldKeySource::Register, FieldMiss::Hole, OP_ldfh>,
+	        op_field_load_fast<Access, FieldKeySource::Constant, FieldMiss::Hole, OP_ldfkh>,
+	        op_field_load_fast<Access, FieldKeySource::Register, FieldMiss::Default, OP_ldfo>,
+	        op_field_load_fast<Access, FieldKeySource::Constant, FieldMiss::Default, OP_ldfok>,
 	        ref_or_die, Access::load_or_hole, iter};
 }
 

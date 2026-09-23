@@ -3925,7 +3925,7 @@ Compiler::PrimLowering Compiler::prim_call_lowering(Expr* call)
 		}
 		if (proc->prim_ref.name == REF_DEFAULT_PRIM && call->call.args.size() == 3)
 		{
-			return {PrimLowering::Kind::Ref, Opcode::ldfo, Opcode::ldfko};
+			return {PrimLowering::Kind::Ref, Opcode::ldfo, Opcode::ldfok};
 		}
 		return {};
 	}
@@ -6347,7 +6347,7 @@ namespace
 				case Opcode::if_ltk:
 				case Opcode::ldfk:
 				case Opcode::ldfkh:
-				case Opcode::ldfko:
+				case Opcode::ldfok:
 				case Opcode::stfk:
 					return true;
 				default:
@@ -6546,7 +6546,7 @@ namespace
 							emit_field_get(expr, sel, expr->call.args[0], expr->call.args[1], dst);
 							break;
 						case Opcode::ldfo:
-						case Opcode::ldfko:
+						case Opcode::ldfok:
 							emit_field_get(expr, sel, expr->call.args[0], expr->call.args[1], dst,
 							               expr->call.args[2]);
 							break;
@@ -6856,22 +6856,77 @@ namespace
 		void emit_inst(Bytecode& bc, LirLambda& L, LirInst& i,
 		               std::unordered_map<uint32_t, size_t>& label_pos)
 		{
+			auto&& emit_load = [&]<typename Instr>()
+			{
+				emit_opcode(bc, i.op);
+				Instr op{i.u.load.dst, i.u.load.idx};
+				emit_operand(bc, op);
+			};
+			auto&& emit_store = [&]<typename Instr>()
+			{
+				emit_opcode(bc, i.op);
+				Instr op{i.u.store.idx, i.u.store.src};
+				emit_operand(bc, op);
+			};
+			auto&& emit_direct_call = [&]<typename Instr>()
+			{
+				emit_opcode(bc, i.op);
+				Instr op{i.u.call.width, i.u.call.callee, i.u.call.nargs};
+				emit_operand(bc, op);
+			};
+			auto&& emit_control = [&]<typename Instr>()
+			{
+				emit_opcode(bc, i.op);
+				Instr op{i.u.call.width};
+				emit_operand(bc, op);
+			};
+			auto&& emit_unary = [&]<typename Instr>()
+			{
+				emit_opcode(bc, i.op);
+				Instr op{i.u.arith.dst, i.u.arith.lhs};
+				emit_operand(bc, op);
+			};
+			auto&& emit_binary = [&]<typename Instr>()
+			{
+				emit_opcode(bc, i.op);
+				Instr op{i.u.arith.dst, i.u.arith.lhs, i.u.arith.rhs};
+				emit_operand(bc, op);
+			};
+			auto&& emit_comparison = [&]<typename Instr>()
+			{
+				emit_opcode(bc, i.op);
+				Instr op{i.u.if_cmp.lhs, i.u.if_cmp.rhs, static_cast<uint32_t>(
+					label_target(i.loc, label_pos, i.u.if_cmp.id) - (bc.size() + sizeof(Instr)))};
+				emit_operand(bc, op);
+			};
+			auto&& emit_call_slot = [&]<typename Instr>(size_t& counter)
+			{
+				emit_replicated(bc, i.op, counter);
+				Instr op{};
+				op.w = i.u.call.width;
+				op.upvalue_idx = i.u.call.upvalue_idx;
+				op.nargs = i.u.call.nargs;
+				emit_operand(bc, op);
+			};
+			auto&& emit_call_atom = [&]<typename Instr>(size_t& counter)
+			{
+				emit_replicated(bc, i.op, counter);
+				Instr op{};
+				op.w = i.u.call.width;
+				op.idx = i.u.call.idx;
+				op.nargs = i.u.call.nargs;
+				emit_operand(bc, op);
+			};
 			switch (i.op)
 			{
 				case Opcode::label:
 					break;
 
-				case Opcode::trunc:
-				case Opcode::sqrt:
-				case Opcode::floor:
-				case Opcode::round:
-				case Opcode::ceil:
-				{
-					emit_opcode(bc, i.op);
-					OP_unary operands{i.u.arith.dst, i.u.arith.lhs};
-					emit_operand(bc, operands);
-					break;
-				}
+				case Opcode::trunc: emit_unary.template operator()<OP_trunc>(); break;
+				case Opcode::sqrt: emit_unary.template operator()<OP_sqrt>(); break;
+				case Opcode::floor: emit_unary.template operator()<OP_floor>(); break;
+				case Opcode::round: emit_unary.template operator()<OP_round>(); break;
+				case Opcode::ceil: emit_unary.template operator()<OP_ceil>(); break;
 
 				case Opcode::mov:
 				{
@@ -6887,37 +6942,20 @@ namespace
 				{
 					emit_opcode(bc, Opcode::mov2);
 					OP_mov2 op{};
-					op.first.dst = i.u.mov2.dst0;
-					op.first.src = i.u.mov2.src0;
-					op.second.dst = i.u.mov2.dst1;
-					op.second.src = i.u.mov2.src1;
+					op.dst0 = i.u.mov2.dst0;
+					op.src0 = i.u.mov2.src0;
+					op.dst1 = i.u.mov2.dst1;
+					op.src1 = i.u.mov2.src1;
 					emit_operand(bc, op);
 					break;
 				}
 
-				case Opcode::ldk:
-				case Opcode::ldu:
-				case Opcode::ldus:
-				case Opcode::ldd:
-				{
-					emit_opcode(bc, i.op);
-					OP_ldk op{};
-					op.dst = i.u.load.dst;
-					op.idx = i.u.load.idx;
-					emit_operand(bc, op);
-					break;
-				}
-
-				case Opcode::stu:
-				case Opcode::std:
-				{
-					emit_opcode(bc, i.op);
-					OP_stu op{};
-					op.idx = i.u.store.idx;
-					op.src = i.u.store.src;
-					emit_operand(bc, op);
-					break;
-				}
+				case Opcode::ldk: emit_load.template operator()<OP_ldk>(); break;
+				case Opcode::ldu: emit_load.template operator()<OP_ldu>(); break;
+				case Opcode::ldus: emit_load.template operator()<OP_ldus>(); break;
+				case Opcode::ldd: emit_load.template operator()<OP_ldd>(); break;
+				case Opcode::stu: emit_store.template operator()<OP_stu>(); break;
+				case Opcode::std: emit_store.template operator()<OP_std>(); break;
 
 				case Opcode::box:
 				{
@@ -6943,36 +6981,27 @@ namespace
 					break;
 				}
 
-				case Opcode::add:
-				case Opcode::sub:
-				case Opcode::mul:
-				case Opcode::div:
-				case Opcode::min:
-				case Opcode::max:
-				case Opcode::numeq:
-				case Opcode::eq:
-				case Opcode::lt:
-				case Opcode::le:
-				case Opcode::gt:
-				case Opcode::ge:
-				case Opcode::addk:
-				case Opcode::subk:
-				case Opcode::mulk:
-				case Opcode::divk:
-				case Opcode::mink:
-				case Opcode::maxk:
-				case Opcode::numeqk:
-				case Opcode::eqk:
-				case Opcode::ltk:
-				{
-					emit_opcode(bc, i.op);
-					OP_binop_rr op{};
-					op.dst = i.u.arith.dst;
-					op.a = i.u.arith.lhs;
-					op.b = i.u.arith.rhs;
-					emit_operand(bc, op);
-					break;
-				}
+				case Opcode::add: emit_binary.template operator()<OP_add>(); break;
+				case Opcode::sub: emit_binary.template operator()<OP_sub>(); break;
+				case Opcode::mul: emit_binary.template operator()<OP_mul>(); break;
+				case Opcode::div: emit_binary.template operator()<OP_div>(); break;
+				case Opcode::min: emit_binary.template operator()<OP_min>(); break;
+				case Opcode::max: emit_binary.template operator()<OP_max>(); break;
+				case Opcode::numeq: emit_binary.template operator()<OP_numeq>(); break;
+				case Opcode::eq: emit_binary.template operator()<OP_eq>(); break;
+				case Opcode::lt: emit_binary.template operator()<OP_lt>(); break;
+				case Opcode::le: emit_binary.template operator()<OP_le>(); break;
+				case Opcode::gt: emit_binary.template operator()<OP_gt>(); break;
+				case Opcode::ge: emit_binary.template operator()<OP_ge>(); break;
+				case Opcode::addk: emit_binary.template operator()<OP_addk>(); break;
+				case Opcode::subk: emit_binary.template operator()<OP_subk>(); break;
+				case Opcode::mulk: emit_binary.template operator()<OP_mulk>(); break;
+				case Opcode::divk: emit_binary.template operator()<OP_divk>(); break;
+				case Opcode::mink: emit_binary.template operator()<OP_mink>(); break;
+				case Opcode::maxk: emit_binary.template operator()<OP_maxk>(); break;
+				case Opcode::numeqk: emit_binary.template operator()<OP_numeqk>(); break;
+				case Opcode::eqk: emit_binary.template operator()<OP_eqk>(); break;
+				case Opcode::ltk: emit_binary.template operator()<OP_ltk>(); break;
 
 				case Opcode::fadd:
 				case Opcode::fsub:
@@ -7010,25 +7039,15 @@ namespace
 					break;
 				}
 
-				case Opcode::if_numeq:
-				case Opcode::if_eq:
-				case Opcode::if_lt:
-				case Opcode::if_le:
-				case Opcode::if_gt:
-				case Opcode::if_ge:
-				case Opcode::if_numeqk:
-				case Opcode::if_eqk:
-				case Opcode::if_ltk:
-				{
-					emit_opcode(bc, i.op);
-					OP_if_cmp op{};
-					op.a = i.u.if_cmp.lhs;
-					op.b = i.u.if_cmp.rhs;
-					op.size = static_cast<uint32_t>(
-						label_target(i.loc, label_pos, i.u.if_cmp.id) - (bc.size() + sizeof(OP_if_cmp)));
-					emit_operand(bc, op);
-					break;
-				}
+				case Opcode::if_numeq: emit_comparison.template operator()<OP_if_numeq>(); break;
+				case Opcode::if_eq: emit_comparison.template operator()<OP_if_eq>(); break;
+				case Opcode::if_lt: emit_comparison.template operator()<OP_if_lt>(); break;
+				case Opcode::if_le: emit_comparison.template operator()<OP_if_le>(); break;
+				case Opcode::if_gt: emit_comparison.template operator()<OP_if_gt>(); break;
+				case Opcode::if_ge: emit_comparison.template operator()<OP_if_ge>(); break;
+				case Opcode::if_numeqk: emit_comparison.template operator()<OP_if_numeqk>(); break;
+				case Opcode::if_eqk: emit_comparison.template operator()<OP_if_eqk>(); break;
+				case Opcode::if_ltk: emit_comparison.template operator()<OP_if_ltk>(); break;
 
 				case Opcode::skip:
 				{
@@ -7048,17 +7067,8 @@ namespace
 					break;
 				}
 
-				case Opcode::call:
-				case Opcode::tcall:
-				{
-					emit_opcode(bc, i.op);
-					OP_call op{};
-					op.w = i.u.call.width;
-					op.callee = i.u.call.callee;
-					op.nargs = i.u.call.nargs;
-					emit_operand(bc, op);
-					break;
-				}
+				case Opcode::call: emit_direct_call.template operator()<OP_call>(); break;
+				case Opcode::tcall: emit_direct_call.template operator()<OP_tcall>(); break;
 
 				case Opcode::call_self_tail:
 				{
@@ -7079,15 +7089,8 @@ namespace
 					break;
 				}
 
-				case Opcode::reset:
-				case Opcode::coro:
-				{
-					emit_opcode(bc, i.op);
-					OP_reset op{};
-					op.w = i.u.call.width;
-					emit_operand(bc, op);
-					break;
-				}
+				case Opcode::reset: emit_control.template operator()<OP_reset>(); break;
+				case Opcode::coro: emit_control.template operator()<OP_coro>(); break;
 
 				case Opcode::iter_next1:
 				{
@@ -7115,37 +7118,23 @@ namespace
 				}
 
 				case Opcode::call_upval_slot_0:
+					emit_call_slot.template operator()<OP_call_upval_slot>(v_cus);
+					break;
 				case Opcode::call_upval_slot_tail_0:
-				{
-					emit_replicated(bc, i.op, i.op == Opcode::call_upval_slot_tail_0 ? v_cust : v_cus);
-					OP_call_slot op{};
-					op.w = i.u.call.width;
-					op.upvalue_idx = i.u.call.upvalue_idx;
-					op.nargs = i.u.call.nargs;
-					emit_operand(bc, op);
+					emit_call_slot.template operator()<OP_call_upval_slot_tail>(v_cust);
 					break;
-				}
-
 				case Opcode::call_local_0:
-				case Opcode::call_local_tail_0:
-				case Opcode::call_upval_0:
-				case Opcode::call_upval_tail_0:
-				{
-					size_t& counter = i.op == Opcode::call_local_0
-					                  ? v_cl
-					                  : i.op == Opcode::call_local_tail_0
-					                  ? v_clt
-					                  : i.op == Opcode::call_upval_0
-					                  ? v_cu
-					                  : v_cut;
-					emit_replicated(bc, i.op, counter);
-					OP_call_atom op{};
-					op.w = i.u.call.width;
-					op.idx = i.u.call.idx;
-					op.nargs = i.u.call.nargs;
-					emit_operand(bc, op);
+					emit_call_atom.template operator()<OP_call_local>(v_cl);
 					break;
-				}
+				case Opcode::call_local_tail_0:
+					emit_call_atom.template operator()<OP_call_local_tail>(v_clt);
+					break;
+				case Opcode::call_upval_0:
+					emit_call_atom.template operator()<OP_call_upval>(v_cu);
+					break;
+				case Opcode::call_upval_tail_0:
+					emit_call_atom.template operator()<OP_call_upval_tail>(v_cut);
+					break;
 
 				case Opcode::call_self_0:
 				{
@@ -7185,7 +7174,7 @@ namespace
 					OP_ldfk op{};
 					op.dst = i.u.field.dst;
 					op.obj = i.u.field.obj;
-					op.key_idx = i.u.field.key;
+					op.key = i.u.field.key;
 					emit_operand(bc, op);
 					break;
 				}
@@ -7195,7 +7184,7 @@ namespace
 					emit_opcode(bc, Opcode::stfk);
 					OP_stfk op{};
 					op.obj = i.u.field.obj;
-					op.key_idx = i.u.field.key;
+					op.key = i.u.field.key;
 					op.val = i.u.field.val;
 					emit_operand(bc, op);
 					break;
@@ -7218,7 +7207,7 @@ namespace
 					OP_ldfkh op{};
 					op.dst = i.u.field.dst;
 					op.obj = i.u.field.obj;
-					op.key_idx = i.u.field.key;
+					op.key = i.u.field.key;
 					emit_operand(bc, op);
 					break;
 				}
@@ -7235,13 +7224,13 @@ namespace
 					break;
 				}
 
-				case Opcode::ldfko:
+				case Opcode::ldfok:
 				{
-					emit_opcode(bc, Opcode::ldfko);
-					OP_ldfko op{};
+					emit_opcode(bc, Opcode::ldfok);
+					OP_ldfok op{};
 					op.dst = i.u.field.dst;
 					op.obj = i.u.field.obj;
-					op.key_idx = i.u.field.key;
+					op.key = i.u.field.key;
 					op.dfl = i.u.field.val;
 					emit_operand(bc, op);
 					break;

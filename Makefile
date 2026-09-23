@@ -60,6 +60,10 @@ OBJDIR := $(BUILD)/$(VARIANT)
 
 JET_BIN := $(BUILD)/jet$(SUFFIX)
 
+# Opcode-table generator and the header it emits (included by src/opcodes.h).
+GENOPCODES := $(OBJDIR)/generate-opcodes
+OPCODES_GEN_H := $(BUILD)/opcodes_gen.h
+
 # --- Flags ---------------------------------------------------------------
 
 CXXFLAGS := -stdlib=libc++ -std=c++20 -fno-exceptions -fno-rtti \
@@ -107,7 +111,7 @@ SOKOL_CXXFLAGS := $(VENDOR_CXXFLAGS) $(SOKOL_LANG)
 
 # --- Sources -------------------------------------------------------------
 
-CORE_CC := $(wildcard $(SRC)/*.cc)
+CORE_CC := $(filter-out $(SRC)/generate-opcodes.cc,$(wildcard $(SRC)/*.cc))
 ALL_CC := $(CORE_CC) $(MODULE_CC)
 SOKOL_OBJ := $(patsubst %.cc,$(OBJDIR)/%.o,$(MODULE_SOKOL_CC))
 VENDOR_OBJ := $(patsubst %.cpp,$(OBJDIR)/%.o,$(MODULE_VENDOR_CC))
@@ -150,7 +154,7 @@ all-variants:
 
 # Order-only prerequisites keep checks ahead of parallel compilation without forcing rebuilds.
 $(ALL_OBJ) $(OBJDIR)/tests/profile.o $(JET_BIN) $(OBJDIR)/profile-test \
-$(PRELUDE_H) $(MODULES_H): | check-deps
+$(PRELUDE_H) $(MODULES_H) $(GENOPCODES) $(OPCODES_GEN_H): | check-deps
 
 define dependency_diagnostics
 	failed=0; apt_packages=; brew_packages=; apple_tools=0; \
@@ -354,6 +358,19 @@ $(OBJDIR)/profile-test: $(OBJDIR)/tests/profile.o \
 	$(Q)$(CXX) $(LDOPT) -o $@ $^
 
 $(OBJDIR)/src/main.o: $(PRELUDE_H) $(MODULES_H)
+
+# opcodes.h includes opcodes_gen.h, so no object can compile before it exists.
+$(ALL_OBJ) $(OBJDIR)/tests/profile.o: $(OPCODES_GEN_H)
+
+$(GENOPCODES): $(SRC)/generate-opcodes.cc Makefile | $(OBJDIR)
+	@printf '  CXX   %s\n' '$@'
+	$(Q)mkdir -p $(dir $@)
+	$(Q)$(CXX) $(CXXFLAGS) $(LDOPT) -o $@ $<
+
+$(OPCODES_GEN_H): $(GENOPCODES) | $(BUILD)
+	@printf '  GEN   %s\n' '$@'
+	$(Q)$< > $@.tmp
+	@if cmp -s $@.tmp $@; then rm $@.tmp; else mv $@.tmp $@; fi
 
 $(OBJDIR)/vendor/sokol/%.o: vendor/sokol/%.cc Makefile | $(OBJDIR)
 	@printf '  CXX   %s\n' '$<'
