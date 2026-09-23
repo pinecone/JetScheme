@@ -63,6 +63,8 @@ JET_BIN := $(BUILD)/jet$(SUFFIX)
 # Opcode-table generator and the header it emits (included by src/opcodes.h).
 GENOPCODES := $(OBJDIR)/generate-opcodes
 OPCODES_GEN_H := $(BUILD)/opcodes_gen.h
+OPCODE_HANDLERS_INC := $(BUILD)/opcode_handlers_gen.inc
+OPCODE_DISASM_INC := $(BUILD)/opcode_disasm_gen.inc
 
 # --- Flags ---------------------------------------------------------------
 
@@ -361,6 +363,8 @@ $(OBJDIR)/src/main.o: $(PRELUDE_H) $(MODULES_H)
 
 # opcodes.h includes opcodes_gen.h, so no object can compile before it exists.
 $(ALL_OBJ) $(OBJDIR)/tests/profile.o: $(OPCODES_GEN_H)
+$(OBJDIR)/src/vm.o: $(OPCODE_HANDLERS_INC)
+$(OBJDIR)/src/debug.o: $(OPCODE_DISASM_INC)
 
 $(GENOPCODES): $(SRC)/generate-opcodes.cc Makefile | $(OBJDIR)
 	@printf '  CXX   %s\n' '$@'
@@ -370,6 +374,16 @@ $(GENOPCODES): $(SRC)/generate-opcodes.cc Makefile | $(OBJDIR)
 $(OPCODES_GEN_H): $(GENOPCODES) | $(BUILD)
 	@printf '  GEN   %s\n' '$@'
 	$(Q)$< > $@.tmp
+	@if cmp -s $@.tmp $@; then rm $@.tmp; else mv $@.tmp $@; fi
+
+$(OPCODE_HANDLERS_INC): $(GENOPCODES) | $(BUILD)
+	@printf '  GEN   %s\n' '$@'
+	$(Q)$< handlers > $@.tmp
+	@if cmp -s $@.tmp $@; then rm $@.tmp; else mv $@.tmp $@; fi
+
+$(OPCODE_DISASM_INC): $(GENOPCODES) | $(BUILD)
+	@printf '  GEN   %s\n' '$@'
+	$(Q)$< disasm > $@.tmp
 	@if cmp -s $@.tmp $@; then rm $@.tmp; else mv $@.tmp $@; fi
 
 $(OBJDIR)/vendor/sokol/%.o: vendor/sokol/%.cc Makefile | $(OBJDIR)

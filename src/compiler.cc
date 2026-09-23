@@ -4055,19 +4055,7 @@ void Compiler::select_call_op(Expr* expr, Expr* current)
 		if (expr->call.args[1]->kind == ExprKind::NumberLit
 		    || (op == Opcode::eq && is_literal_key(expr->call.args[1])))
 		{
-			switch (op)
-			{
-				case Opcode::sub: op = Opcode::subk; break;
-				case Opcode::add: op = Opcode::addk; break;
-				case Opcode::mul: op = Opcode::mulk; break;
-				case Opcode::div: op = Opcode::divk; break;
-				case Opcode::min: op = Opcode::mink; break;
-				case Opcode::max: op = Opcode::maxk; break;
-				case Opcode::numeq:  op = Opcode::numeqk;  break;
-				case Opcode::eq:     op = Opcode::eqk;     break;
-				case Opcode::lt:  op = Opcode::ltk;  break;
-				default:          break;   // no rk form for le/gt/ge
-			}
+			op = OPCODE_INFO[static_cast<size_t>(op)].k_variant;
 		}
 		sel.op = op;
 		return;
@@ -4211,23 +4199,14 @@ void Compiler::select_branch_fusions()
 	for (auto it = branch_fusions_.begin(); it != branch_fusions_.end();)
 	{
 		Expr* comparison = it->second;
-		Opcode fused;
-		switch (selected_ops_[comparison->id]->op)
+		Opcode op{selected_ops_[comparison->id]->op};
+		std::optional<Opcode> fused{OPCODE_INFO[static_cast<size_t>(op)].branch_fusion};
+		if (!fused)
 		{
-			case Opcode::numeq:  fused = Opcode::if_numeq;  break;
-			case Opcode::eq:     fused = Opcode::if_eq;      break;
-			case Opcode::lt:     fused = Opcode::if_lt;      break;
-			case Opcode::le:     fused = Opcode::if_le;      break;
-			case Opcode::gt:     fused = Opcode::if_gt;      break;
-			case Opcode::ge:     fused = Opcode::if_ge;      break;
-			case Opcode::numeqk: fused = Opcode::if_numeqk; break;
-			case Opcode::eqk:    fused = Opcode::if_eqk;     break;
-			case Opcode::ltk:    fused = Opcode::if_ltk;     break;
-			default:
-				it = branch_fusions_.erase(it);
-				continue;
+			it = branch_fusions_.erase(it);
+			continue;
 		}
-		selected_ops_[comparison->id]->op = fused;
+		selected_ops_[comparison->id]->op = *fused;
 		++it;
 	}
 }
@@ -5308,62 +5287,9 @@ namespace
 
 		static std::optional<Opcode> unboxed_float_opcode(Opcode opcode)
 		{
-			switch (opcode)
-			{
-				case Opcode::add:
-				case Opcode::addk:
-				case Opcode::fadd:
-					return Opcode::fadd;
-				case Opcode::sub:
-				case Opcode::subk:
-				case Opcode::fsub:
-					return Opcode::fsub;
-				case Opcode::mul:
-				case Opcode::mulk:
-				case Opcode::fmul:
-					return Opcode::fmul;
-				case Opcode::div:
-				case Opcode::divk:
-				case Opcode::fdiv:
-					return Opcode::fdiv;
-				case Opcode::min:
-				case Opcode::mink:
-				case Opcode::fmin:
-					return Opcode::fmin;
-				case Opcode::max:
-				case Opcode::maxk:
-				case Opcode::fmax:
-					return Opcode::fmax;
-				case Opcode::trunc:
-				case Opcode::ftrunc:
-					return Opcode::ftrunc;
-				case Opcode::sqrt:
-				case Opcode::fsqrt:
-					return Opcode::fsqrt;
-				case Opcode::floor:
-				case Opcode::ffloor:
-					return Opcode::ffloor;
-				case Opcode::round:
-				case Opcode::fround:
-					return Opcode::fround;
-				case Opcode::ceil:
-				case Opcode::fceil:
-					return Opcode::fceil;
-				case Opcode::numeq:
-				case Opcode::numeqk:
-					return Opcode::fnumeq;
-				case Opcode::lt:
-				case Opcode::ltk:
-					return Opcode::flt;
-				case Opcode::le:
-					return Opcode::fle;
-				case Opcode::gt:
-					return Opcode::fgt;
-				case Opcode::ge:
-					return Opcode::fge;
-				default:
-					return std::nullopt;
-			}
+			size_t idx{static_cast<size_t>(opcode)};
+			JET_DIE_UNLESS(nullptr, idx < OPCODE_COUNT, "unknown opcode {}", idx);
+			return OPCODE_INFO[idx].unboxed_float_opcode;
 		}
 
 		void unboxed_float_mark_binding(Expr* owner, uint16_t breadth, uint16_t home)
@@ -5399,7 +5325,7 @@ namespace
 					       || (lambda.chain.binding && argument->kind == ExprKind::VarRef
 					           && binding_key(db.binding(argument)) == *lambda.chain.binding);
 				};
-				bool constant{takes_literal_key(inst.op)};
+				bool constant{is_kform(inst.op)};
 				bool lhs{matches(0) && inst.u.arith.lhs == previous.u.arith.dst};
 				bool rhs{expression->call.args.size() == 2 && !constant && matches(1)
 				         && inst.u.arith.rhs == previous.u.arith.dst};
@@ -5409,7 +5335,7 @@ namespace
 					switch (previous.unboxed_float_mode)
 					{
 						case UnboxedFloatMode::Start:
-							mode = takes_literal_key(previous.op)
+							mode = is_kform(previous.op)
 							       ? UnboxedFloatMode::StartConstant : UnboxedFloatMode::Start;
 							break;
 						case UnboxedFloatMode::StoreLeft:
@@ -5869,7 +5795,7 @@ namespace
 			Compiler::OpSelection sel = selection(expr, "SetRef");
 			LirInst i = inst(sel.op);
 			i.u.field.obj = emit_to_any_reg(expr->set_ref.obj);
-			bool literal_key = takes_literal_key(sel.op);
+			bool literal_key = is_kform(sel.op);
 			i.u.field.key = literal_key ? intern_literal_key(expr->set_ref.key)
 			                : emit_to_any_reg(expr->set_ref.key);
 			uint16_t v = emit_to_any_reg(expr->set_ref.value);
@@ -5889,7 +5815,7 @@ namespace
 			LirInst i = inst(sel.op);
 			i.u.field.dst = dst;
 			i.u.field.obj = emit_to_any_reg(receiver);
-			bool literal_key = takes_literal_key(sel.op);
+			bool literal_key = is_kform(sel.op);
 			i.u.field.key = literal_key ? intern_literal_key(key) : emit_to_any_reg(key);
 			if (fallback)
 			{
@@ -6313,65 +6239,17 @@ namespace
 
 		bool is_call_shaped(Opcode op)
 		{
-			switch (op)
-			{
-				case Opcode::call:
-				case Opcode::call_upval_slot_0:
-				case Opcode::call_local_0:
-				case Opcode::call_upval_0:
-				case Opcode::call_self_0:
-				case Opcode::call_self_tail:
-				case Opcode::reset:
-				case Opcode::coro:
-					return true;
-				default:
-					return false;
-			}
+			return OPCODE_INFO[static_cast<size_t>(op)].is_call_shaped;
 		}
 
-		bool takes_literal_key(Opcode op)
+		bool is_kform(Opcode op)
 		{
-			switch (op)
-			{
-				case Opcode::addk:
-				case Opcode::subk:
-				case Opcode::mulk:
-				case Opcode::divk:
-				case Opcode::mink:
-				case Opcode::maxk:
-				case Opcode::numeqk:
-				case Opcode::eqk:
-				case Opcode::ltk:
-				case Opcode::if_numeqk:
-				case Opcode::if_eqk:
-				case Opcode::if_ltk:
-				case Opcode::ldfk:
-				case Opcode::ldfkh:
-				case Opcode::ldfok:
-				case Opcode::stfk:
-					return true;
-				default:
-					return false;
-			}
+			return OPCODE_INFO[static_cast<size_t>(op)].is_kform;
 		}
 
 		bool is_if_cmp(Opcode op)
 		{
-			switch (op)
-			{
-				case Opcode::if_numeq:
-				case Opcode::if_eq:
-				case Opcode::if_lt:
-				case Opcode::if_le:
-				case Opcode::if_gt:
-				case Opcode::if_ge:
-				case Opcode::if_numeqk:
-				case Opcode::if_eqk:
-				case Opcode::if_ltk:
-					return true;
-				default:
-					return false;
-			}
+			return OPCODE_INFO[static_cast<size_t>(op)].is_if_cmp;
 		}
 
 		uint16_t emit_to_any_reg(Expr* expr)
@@ -6523,7 +6401,7 @@ namespace
 						case Opcode::eqk:
 						case Opcode::ltk:
 						{
-							bool takes_key = takes_literal_key(sel.op);
+							bool takes_key = is_kform(sel.op);
 							LirInst i = inst(sel.op);
 							i.u.arith.dst = dst;
 							i.u.arith.lhs = emit_to_any_reg(expr->call.args[0]);
@@ -6613,7 +6491,7 @@ namespace
 						LirInst i = inst(sel.op);
 						i.u.if_cmp.id = l_alt;
 						i.u.if_cmp.lhs = emit_to_any_reg(cmp->call.args[0]);
-						bool cmp_k = takes_literal_key(sel.op);
+						bool cmp_k = is_kform(sel.op);
 						i.u.if_cmp.rhs = cmp_k ? intern_literal_key(cmp->call.args[1])
 						               : emit_to_any_reg(cmp->call.args[1]);
 						emit(expr->loc, i);

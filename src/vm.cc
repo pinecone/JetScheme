@@ -2709,11 +2709,10 @@ namespace
 		DispatchInit()
 		{
 			VmOp init[] = {
-#define X(name, disp, ...) op_##name,
-				JET_OPCODES(X)
-#undef X
+#include "opcode_handlers_gen.inc"
 			};
 			constexpr size_t n_init{sizeof(init) / sizeof(init[0])};
+			static_assert(n_init == OPCODE_COUNT);
 			for (size_t i{0}; i < n_init; ++i)
 			{
 				dispatch_table[i] = init[i];

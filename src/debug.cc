@@ -554,16 +554,7 @@ static void profile_print(const VmState& state)
 
 const char* opcode_name(uint8_t op)
 {
-	switch (op)
-	{
-#define X(name, disp, ...)                                                                                   \
-	case static_cast<uint8_t>(Opcode::name):                                                                 \
-		return disp;
-	JET_OPCODES(X)
-#undef X
-		default:
-			return "?unknown";
-	}
+	return op < OPCODE_COUNT ? OPCODE_INFO[op].name : "?unknown";
 }
 
 bool is_call_slot_op(uint8_t op)
@@ -606,47 +597,49 @@ bool is_call_self_op(uint8_t op)
 	return false;
 }
 
-void decode_args(FILE* out, uint8_t tag, Code* operands)
+template <typename Instr>
+void disasm_fields(FILE* out, Code* operands)
 {
-	auto&& decode = [&]<typename Instr>()
-	{
-		const Instr* op{reinterpret_cast<const Instr*>(operands)};
+	const Instr* op{reinterpret_cast<const Instr*>(operands)};
 #define FIELD(name) if constexpr (requires { op->name; }) { print(out, " " #name "={}", op->name); }
-		FIELD(dst)
-		FIELD(dst0)
-		FIELD(dst1)
-		FIELD(src)
-		FIELD(src0)
-		FIELD(src1)
-		FIELD(reg)
-		FIELD(a)
-		FIELD(b)
-		FIELD(w)
-		FIELD(callee)
-		FIELD(idx)
-		FIELD(upvalue_idx)
-		FIELD(nargs)
-		FIELD(pool_idx)
-		FIELD(n_captures)
-		FIELD(cursor)
-		FIELD(obj)
-		FIELD(key)
-		FIELD(val)
-		FIELD(dfl)
-		FIELD(size)
-		if constexpr (requires { op->mode; })
-		{
-			print(out, " mode={}", static_cast<uint8_t>(op->mode));
-		}
-#undef FIELD
-	};
-	switch (static_cast<Opcode>(tag))
+	FIELD(dst)
+	FIELD(dst0)
+	FIELD(dst1)
+	FIELD(src)
+	FIELD(src0)
+	FIELD(src1)
+	FIELD(reg)
+	FIELD(a)
+	FIELD(b)
+	FIELD(w)
+	FIELD(callee)
+	FIELD(idx)
+	FIELD(upvalue_idx)
+	FIELD(nargs)
+	FIELD(pool_idx)
+	FIELD(n_captures)
+	FIELD(cursor)
+	FIELD(obj)
+	FIELD(key)
+	FIELD(val)
+	FIELD(dfl)
+	FIELD(size)
+	if constexpr (requires { op->mode; })
 	{
-#define X(name, disp) case Opcode::name: decode.template operator()<OP_##name>(); break;
-		JET_OPCODES(X)
-#undef X
-		default: JET_DIE(nullptr, "unknown opcode {}", tag);
+		print(out, " mode={}", static_cast<uint8_t>(op->mode));
 	}
+#undef FIELD
+}
+
+void disasm_args(FILE* out, uint8_t tag, Code* operands)
+{
+	using Disasm = void (*)(FILE*, Code*);
+	static constexpr Disasm disasm[]{
+#include "opcode_disasm_gen.inc"
+	};
+	static_assert(sizeof(disasm) / sizeof(disasm[0]) == OPCODE_COUNT);
+	JET_DIE_UNLESS(nullptr, tag < OPCODE_COUNT, "unknown opcode {}", tag);
+	disasm[tag](out, operands);
 }
 
 #ifdef JET_TRACE
@@ -676,7 +669,7 @@ void trace_step(VmState& s, Frame*, Code* pc, Atom* stack_top)
 	};
 	uint8_t op = pc[-1];
 	print(stderr, "[d={} sp={}] {}", s.frames.size(), stack_top - s.stack_base, opcode_name(op));
-	decode_args(stderr, op, pc);
+	disasm_args(stderr, op, pc);
 
 	print(stderr, "  | top:");
 	long depth = stack_top - s.stack_base;
@@ -732,7 +725,7 @@ namespace
 			uint8_t tag = p[VM_OP_SLOT_SIZE];
 			Code* operand = p + OPCODE_SIZE;
 			print(out, "  {:04}  {}", off, opcode_name(tag));
-			decode_args(out, tag, operand);
+			disasm_args(out, tag, operand);
 			print_source_loc(out, dbg, files, off, size);
 			std::fputc('\n', out);
 			p += opcode_step(tag, operand);

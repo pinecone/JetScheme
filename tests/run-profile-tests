@@ -33,7 +33,7 @@ def check(report):
     assert sum(int(row[0]) for row in functions) == total - 1
     assert any("loop@" in row[-1] for row in functions)
     section = report.split("IC misses by instruction", 1)[1].split("\n\n", 1)[0]
-    sites = [line.split() for line in section.splitlines() if re.match(r"\s+(?:cl|cu)\w*\s", line)]
+    sites = [line.split() for line in section.splitlines() if re.match(r"\s+call_(?:local|upval)\w*\s", line)]
     assert sites, "missing cache-miss rows"
     assert len({row[-1] for row in sites}) == len(sites)
     for row in sites:
