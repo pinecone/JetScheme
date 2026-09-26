@@ -93,4 +93,7 @@
                       hits)))))
 
 (do-inserts 1)
-(displayn (do-finds 1 0))
+(let ((hits (do-finds 1 0)))
+  (if (= hits N)
+      (displayn hits)
+      (begin (display "bad splay result: ") (displayn hits) (exit 1))))

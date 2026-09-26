@@ -388,5 +388,7 @@
 (define N 60)
 (let loop ((i 0) (result 0))
   (if (>= i N)
-      (displayn result)
+      (if (= result 2321)
+          (displayn result)
+          (begin (display "bad raytrace result: ") (displayn result) (exit 1)))
       (loop (+ i 1) (run-once))))
