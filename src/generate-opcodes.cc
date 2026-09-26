@@ -24,17 +24,6 @@ struct Metadata
   std::string value;
 };
 
-static std::string expand_name(std::string text, const std::string& name)
-{
-  size_t pos = 0;
-  while ((pos = text.find("{name}", pos)) != std::string::npos)
-  {
-    text.replace(pos, 6, name);
-    pos += name.size();
-  }
-  return text;
-}
-
 struct VariantMetadata
 {
   std::string variant;
@@ -69,9 +58,19 @@ struct Opcode
     {
       op_variants[static_cast<unsigned char>(*v)] = true;
     }
+    apply([&](const std::string& variant, const std::string& variant_name, const std::string&)
+          {
+            if (!variant.empty())
+            {
+              variant_metadata(variant.c_str(), "Opcode", "k_variant", ("Opcode::" + variant_name).c_str());
+              variant_metadata(variant.c_str(), "const char*", "name", ("\"" + variant_name + "\"").c_str());
+              variant_metadata(variant.c_str(), "size_t", "operand_size",
+                               ("sizeof(OP_" + variant_name + ") - std::is_empty_v<OP_" + variant_name + ">").c_str());
+            }
+          });
     if (op_variants['k'])
     {
-      base_metadata("Opcode", "k_variant", "Opcode::{name}k");
+      base_metadata("Opcode", "k_variant", ("Opcode::" + name + "k").c_str());
       variant_metadata("k", "bool", "is_kform", "true");
       if (op_variants['h'])
       {
@@ -80,9 +79,7 @@ struct Opcode
     }
     if (op_variants['f'])
     {
-      std::string value{"Opcode::f"};
-      value += name;
-      metadata("std::optional<Opcode>", "unboxed_float_opcode", value.c_str());
+      metadata("std::optional<Opcode>", "unboxed_float_opcode", ("Opcode::f" + name).c_str());
     }
     return *this;
   }
@@ -90,6 +87,14 @@ struct Opcode
   Opcode& replicated()
   {
     is_replicated = true;
+    foreach_variant([&](const std::string&, const std::string&, const std::string&) {},
+                    [&](const std::string&, const std::string& replica, const std::string&)
+                    {
+                      variant_metadata(replica.c_str(), "Opcode", "k_variant", ("Opcode::" + replica).c_str());
+                      variant_metadata(replica.c_str(), "const char*", "name", ("\"" + replica + "\"").c_str());
+                      variant_metadata(replica.c_str(), "size_t", "operand_size",
+                                       ("sizeof(OP_" + replica + ") - std::is_empty_v<OP_" + replica + ">").c_str());
+                    });
     return *this;
   }
 
@@ -122,10 +127,10 @@ struct Opcode
 
   Opcode& branch_fusion()
   {
-    base_metadata("std::optional<Opcode>", "branch_fusion", "Opcode::if_{name}");
+    base_metadata("std::optional<Opcode>", "branch_fusion", ("Opcode::if_" + name).c_str());
     if (op_variants['k'])
     {
-      variant_metadata("k", "std::optional<Opcode>", "branch_fusion", "Opcode::if_{name}");
+      variant_metadata("k", "std::optional<Opcode>", "branch_fusion", ("Opcode::if_" + name + "k").c_str());
     }
     return *this;
   }
@@ -193,8 +198,13 @@ struct Gen
   Opcode& opcode(const char* name)
   {
     opcodes.emplace_back();
-    opcodes.back().name = name;
-    return opcodes.back();
+    Opcode& op = opcodes.back();
+    op.name = name;
+    op.metadata("const char*", "name", ("\"" + op.name + "\"").c_str());
+    op.metadata("size_t", "operand_size",
+                ("sizeof(OP_" + op.name + ") - std::is_empty_v<OP_" + op.name + ">").c_str());
+    op.base_metadata("Opcode", "k_variant", ("Opcode::" + op.name).c_str());
+    return op;
   }
 
   void print_struct(Opcode& op)
@@ -279,12 +289,13 @@ struct Gen
           }
           for (const VariantMetadata& override : op.variant_metadata_values)
           {
-            if (override.variant == variant && override.field.type == field.type && override.field.name == field.name)
+            if ((override.variant == variant || override.variant == name)
+                && override.field.type == field.type && override.field.name == field.name)
             {
               value = override.field.value;
             }
           }
-          printf("%s%s", i ? ", " : "", expand_name(value, name).c_str());
+          printf("%s%s", i ? ", " : "", value.c_str());
         }
         printf("},\n");
       };
@@ -342,14 +353,14 @@ struct Gen
 int main(int argc, char* argv[])
 {
   Gen g;
-  g.metadata("const char*", "name", "\"{name}\"")
+  g.metadata("const char*", "name", "nullptr")
     .metadata("bool", "is_if_cmp", "false")
     .metadata("bool", "is_call_shaped", "false")
     .metadata("bool", "is_kform", "false")
-    .metadata("Opcode", "k_variant", "Opcode::{name}")
+    .metadata("Opcode", "k_variant", "Opcode::halt")
     .metadata("std::optional<Opcode>", "unboxed_float_opcode", "std::nullopt")
     .metadata("std::optional<Opcode>", "branch_fusion", "std::nullopt")
-    .metadata("size_t", "operand_size", "sizeof(OP_{name}) - std::is_empty_v<OP_{name}>")
+    .metadata("size_t", "operand_size", "0")
     .metadata("UnboxedFloatKind", "unboxed_float_kind", "UnboxedFloatKind::None");
 
   g.opcode("halt");
