@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Head-to-head benchmark of two git refs.
 
-Builds both refs in temp worktrees, runs each bench N times interleaved
-(alternating order to neutralize drift), reports per-bench median, sign
-test, one-sided binomial p-value, and a verdict (REAL / weak / noise).
+Builds both refs in temp worktrees and times paired subprocess runs with
+randomized balanced order. Reports the measured speed change and whether a
+paired t-test on log time ratios finds a difference (5% level, adjusted across
+benchmarks).
 
 Usage:
     ./ab-compare <ref-old> <ref-new> [-n RUNS] [-b BENCH ...] [--keep]
@@ -15,13 +16,15 @@ Examples:
 """
 import argparse
 import os
+import random
 import statistics
 import subprocess
 import sys
 import tempfile
 import time
-from math import comb
 from pathlib import Path
+
+from ab_stats import collect, holm_p, percent_result, show_progress
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
@@ -79,31 +82,6 @@ def compile_bench(bin, src, bc):
         run([str(bin), "compile", str(src)], stdout=f)
 
 
-def sign_p(wins, n_decisive):
-    if n_decisive == 0:
-        return 1.0
-    one_sided = sum(comb(n_decisive, k) for k in range(wins, n_decisive + 1)) / 2 ** n_decisive
-    losses = n_decisive - wins
-    other_tail = sum(comb(n_decisive, k) for k in range(losses, n_decisive + 1)) / 2 ** n_decisive
-    return min(1.0, 2 * min(one_sided, other_tail))
-
-
-def fmt_p(p):
-    if p < 1e-6:
-        return f"{p:.0e}"
-    if p < 0.01:
-        return f"{p:.4f}"
-    return f"{p:.3f}"
-
-
-def verdict(p, delta_pct):
-    if p < 0.01 and abs(delta_pct) > 0.2:
-        return "REAL"
-    if p < 0.05:
-        return "weak"
-    return "noise"
-
-
 def main():
     ap = argparse.ArgumentParser(
         description="Head-to-head A/B benchmark of two git refs.",
@@ -112,12 +90,20 @@ def main():
     ap.add_argument("ref_old", help="old git ref (e.g. HEAD~1, main)")
     ap.add_argument("ref_new", help="new git ref (e.g. HEAD, perf-branch)")
     ap.add_argument("-n", "--runs", type=int, default=20,
-                    help="trials per binary per bench (default 20)")
+                    help="paired trials per bench (default 20)")
+    ap.add_argument("-w", "--warmups", type=int, default=3,
+                    help="untimed runs per binary per bench (default 3)")
+    ap.add_argument("--seed", type=int, help="random seed for run order (printed if omitted)")
     ap.add_argument("-b", "--bench", action="append",
                     help="restrict to specific bench (repeatable)")
     ap.add_argument("--keep", action="store_true",
                     help="keep temp worktrees after run")
     args = ap.parse_args()
+    if args.runs < 2 or args.warmups < 0:
+        ap.error("--runs must be at least two and --warmups must be nonnegative")
+    if args.seed is None:
+        args.seed = random.SystemRandom().getrandbits(64)
+    rng = random.Random(args.seed)
 
     benches = args.bench or DEFAULT_BENCHES
 
@@ -137,7 +123,8 @@ def main():
     print()
     print(f"  old:  {args.ref_old} ({short(args.ref_old)})  →  {bin_old}")
     print(f"  new:  {args.ref_new} ({short(args.ref_new)})  →  {bin_new}")
-    print(f"  runs: {args.runs} per binary per bench, interleaved (alternating order)")
+    print(f"  {args.runs} pairs, {args.warmups} warmups; seed {args.seed}; "
+          "whole-process time, compilation excluded")
     print()
 
     bcs = {}
@@ -167,48 +154,28 @@ def main():
     if skipped:
         print()
 
+    results = []
+    show_progress(0, len(bcs))
+    for i, (b, (bc_old, bc_new)) in enumerate(bcs.items(), 1):
+        result = collect([str(bin_new), "exec", str(bc_new)],
+                         [str(bin_old), "exec", str(bc_old)], args.runs, time_run,
+                         warmups=args.warmups, rng=rng)
+        results.append((b, result))
+        show_progress(i, len(bcs))
+
+    adjusted = holm_p([result.p for _, result in results])
+    print()
     name_w = max(len(b) for b in bcs)
-    header = f"  {'bench':<{name_w}}  {'old(ms)':>9} {'new(ms)':>9}  {'delta':>7}  {'wins/ties/loss':>15}  {'p':>10}  verdict"
-    print(header)
-    print("  " + "-" * (len(header) - 2))
+    print(f"  {'bench':<{name_w}}  new vs old")
+    for (b, result), p in zip(results, adjusted):
+        print(f"  {b:<{name_w}}  {percent_result(result.ratio, p < 0.05)}")
 
-    ratios = []
-    for b in bcs:
-        bc_old, bc_new = bcs[b]
-        time_run([str(bin_old), "exec", str(bc_old)])
-        time_run([str(bin_new), "exec", str(bc_new)])
-        new_t, old_t = [], []
-        wins = ties = losses = 0
-        for i in range(args.runs):
-            if i % 2 == 0:
-                a = time_run([str(bin_new), "exec", str(bc_new)])
-                o = time_run([str(bin_old), "exec", str(bc_old)])
-            else:
-                o = time_run([str(bin_old), "exec", str(bc_old)])
-                a = time_run([str(bin_new), "exec", str(bc_new)])
-            new_t.append(a)
-            old_t.append(o)
-            if a < o:
-                wins += 1
-            elif a > o:
-                losses += 1
-            else:
-                ties += 1
-        med_n = statistics.median(new_t)
-        med_o = statistics.median(old_t)
-        delta = (med_n / med_o - 1) * 100 if med_o > 0 else 0.0
-        ratios.append(med_n / med_o if med_o > 0 else 1.0)
-        p = sign_p(wins, wins + losses)
-        v = verdict(p, delta)
-        print(f"  {b:<{name_w}}  {med_o*1000:>9.2f} {med_n*1000:>9.2f}  {delta:>+6.2f}%  "
-              f"{wins:>3}/{ties:>3}/{losses:>3}    {fmt_p(p):>10}  {v}")
-
-    if len(ratios) >= 2:
-        gm = statistics.geometric_mean(ratios)
-        print()
-        print(f"  geomean ratio (new/old): {gm:.4f}  ({(gm - 1) * 100:+.2f}%)")
-        print()
-        print("  verdict legend: REAL = p<0.01 and |delta|>0.2%;  weak = p<0.05;  noise = otherwise.")
+    if len(results) > 1:
+        gm = statistics.geometric_mean(result.ratio for _, result in results)
+        print(f"  overall ({len(results)} benches, geomean): "
+              f"{percent_result(gm, True)}")
+    print("  Benchmark results labelled faster/slower meet the 5% significance "
+          "cutoff after adjustment.")
 
     if not args.keep:
         remove_worktree(wt_old)

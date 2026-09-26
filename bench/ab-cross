@@ -3,9 +3,9 @@
 
 Builds the jet ref in a temp worktree, then for each bench runs jet against
 every available comparand (lua, python, jsc, jscjit), interleaving the
-runs per iteration. Reports per-bench median time, ratio, and jet's
-wins/ties/losses with a one-sided binomial p-value, plus an overall geomean
-ratio per comparand. A bench whose comparand source is missing is skipped for
+runs per iteration. Reports each rival's measured speed relative to jet and
+whether a paired t-test on log time ratios finds a difference (5% level,
+adjusted across all benchmarks and comparands). A missing source skips a bench for
 that comparand only; missing .ss is fatal.
 
 Usage:
@@ -27,14 +27,16 @@ Examples:
 import argparse
 import os
 import plistlib
+import random
 import shutil
 import statistics
 import subprocess
 import sys
 import tempfile
 import time
-from math import comb
 from pathlib import Path
+
+from ab_stats import collect, holm_p, rival_percent, show_progress
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
@@ -119,21 +121,14 @@ def jsc_version(jsc):
     return str(release or build or "version unavailable")
 
 
-def sign_p(wins, n_decisive):
-    if n_decisive == 0:
-        return 1.0
-    one_sided = sum(comb(n_decisive, k) for k in range(wins, n_decisive + 1)) / 2 ** n_decisive
-    losses = n_decisive - wins
-    other_tail = sum(comb(n_decisive, k) for k in range(losses, n_decisive + 1)) / 2 ** n_decisive
-    return min(1.0, 2 * min(one_sided, other_tail))
+def decimal_width(values):
+    parts = [value.partition(".") for value in values]
+    return max(len(whole) for whole, _, _ in parts), max(len(frac) for _, _, frac in parts)
 
 
-def fmt_p(p):
-    if p < 1e-6:
-        return f"{p:.0e}"
-    if p < 0.01:
-        return f"{p:.4f}"
-    return f"{p:.3f}"
+def align_decimal(value, widths):
+    whole, _, frac = value.partition(".")
+    return f"{whole:>{widths[0]}}.{frac:<{widths[1]}}"
 
 
 def main():
@@ -144,12 +139,20 @@ def main():
     ap.add_argument("ref", nargs="?", default="HEAD",
                     help="git ref to build (default HEAD)")
     ap.add_argument("-n", "--runs", type=int, default=20,
-                    help="trials per interpreter per bench (default 20)")
+                    help="paired trials per comparand per bench (default 20)")
+    ap.add_argument("-w", "--warmups", type=int, default=3,
+                    help="untimed runs per interpreter per bench (default 3)")
+    ap.add_argument("--seed", type=int, help="random seed for run order (printed if omitted)")
     ap.add_argument("-b", "--bench", action="append",
                     help="restrict to specific bench (repeatable)")
     ap.add_argument("--keep", action="store_true",
                     help="keep temp worktree after run")
     args = ap.parse_args()
+    if args.runs < 2 or args.warmups < 0:
+        ap.error("--runs must be at least two and --warmups must be nonnegative")
+    if args.seed is None:
+        args.seed = random.SystemRandom().getrandbits(64)
+    rng = random.Random(args.seed)
 
     benches = args.bench or DEFAULT_BENCHES
 
@@ -190,7 +193,8 @@ def main():
         print(f"  jsc:    {jsc}  ({jsc_version(jsc)})")
     if jscjit:
         print(f"  jscjit: {jscjit}  ({jsc_version(jscjit)})")
-    print(f"  runs:   {args.runs} per interpreter per bench, interleaved")
+    print(f"  {args.runs} pairs, {args.warmups} warmups; seed {args.seed}; "
+          "whole-process time")
     print()
 
     sources_by_bench = {}
@@ -209,13 +213,6 @@ def main():
             sources["jscjit"] = HERE / f"{b}.js"
         sources_by_bench[b] = (ss_src, sources)
 
-    name_w = max(len(b) for b in benches)
-    header = (f"  {'bench':<{name_w}}  {'vs':<6} {'jet(ms)':>9} {'rival(ms)':>10}  "
-              f"{'ratio':>6}  {'wins/ties/losses':>17}  {'p':>10}")
-    print(header)
-    print("  " + "-" * (len(header) - 2))
-
-    ratios_by_lang = {"lua": [], "python": [], "jsc": [], "jscjit": []}
     cmd_for = {
         "lua": lambda src: [lua, str(src)],
         "python": lambda src: [py, str(src)],
@@ -225,49 +222,95 @@ def main():
                                "--", str(HERE / "js"), str(src), src.stem],
     }
 
+    rows = []
+    results_by_lang = {"lua": [], "python": [], "jsc": [], "jscjit": []}
+    total = sum(len(sources) for _, sources in sources_by_bench.values())
+    completed = 0
+    show_progress(0, total)
     for b in benches:
         ss_src, sources = sources_by_bench[b]
         if not sources:
-            print(f"  {b:<{name_w}}  (no comparand source)")
+            rows.append((b, None, None))
             continue
         for lang, src in sources.items():
             cmd_jet = [str(bin_jet), "run", str(ss_src)]
             cmd_rival = cmd_for[lang](src)
-            # warmup
-            time_run(cmd_jet)
-            time_run(cmd_rival)
-            jet_t, rival_t = [], []
-            wins = ties = losses = 0
-            for i in range(args.runs):
-                if i % 2 == 0:
-                    c = time_run(cmd_jet)
-                    r_t = time_run(cmd_rival)
-                else:
-                    r_t = time_run(cmd_rival)
-                    c = time_run(cmd_jet)
-                jet_t.append(c)
-                rival_t.append(r_t)
-                if c < r_t:
-                    wins += 1
-                elif c > r_t:
-                    losses += 1
-                else:
-                    ties += 1
-            med_c = statistics.median(jet_t)
-            med_r = statistics.median(rival_t)
-            ratio = med_c / med_r if med_r > 0 else 1.0
-            ratios_by_lang[lang].append(ratio)
-            p = sign_p(wins, wins + losses)
-            print(f"  {b:<{name_w}}  {lang:<6} {med_c*1000:>9.2f} {med_r*1000:>10.2f}  "
-                  f"{ratio:>5.2f}×  {wins:>3}/{ties:>3}/{losses:>3}    {fmt_p(p):>10}")
+            result = collect(cmd_jet, cmd_rival, args.runs, time_run,
+                             warmups=args.warmups, rng=rng)
+            rows.append((b, lang, result))
+            results_by_lang[lang].append(result)
+            completed += 1
+            show_progress(completed, total)
+
+    tested = [result for _, _, result in rows if result is not None]
+    adjusted = iter(holm_p([result.p for result in tested]))
+    assessed = {b: {} for b in benches}
+    for b, lang, result in rows:
+        if result is not None:
+            assessed[b][lang] = (result, next(adjusted) < 0.05)
+
+    langs = [lang for lang, results in results_by_lang.items() if results]
+    jet_times = {}
+    for b in benches:
+        samples = [t for result, _ in assessed[b].values() for t in result.primary_times]
+        if samples:
+            jet_times[b] = f"{statistics.median(samples)*1000:.1f}"
+
+    jet_widths = decimal_width(list(jet_times.values())) if jet_times else (1, 1)
+    jet_w = max(len("Jet"), sum(jet_widths) + 3)
+    cells = {b: {} for b in benches}
+    col_w = {}
+    for lang in langs:
+        times, percents = [], []
+        for b in benches:
+            if lang in assessed[b]:
+                result, significant = assessed[b][lang]
+                times.append(f"{result.baseline_median*1000:.1f}")
+                if significant:
+                    percents.append(rival_percent(result.ratio)[:-1])
+        time_widths = decimal_width(times)
+        percent_widths = decimal_width(percents) if percents else (1, 1)
+        for b in benches:
+            if lang not in assessed[b]:
+                cells[b][lang] = "—"
+                continue
+            result, significant = assessed[b][lang]
+            time = align_decimal(f"{result.baseline_median*1000:.1f}", time_widths)
+            if significant:
+                percent = align_decimal(rival_percent(result.ratio)[:-1], percent_widths)
+                direction = "slower" if result.ratio < 1 else "faster"
+                change = f"{percent}% {direction}"
+            else:
+                change = "unclear"
+            cells[b][lang] = f"{time}ms ({change})"
+        col_w[lang] = max(len(lang), *(len(cells[b][lang]) for b in benches))
+
+    name_w = max(len("bench"), *(len(b) for b in benches))
+    print()
+    header = (f"  {'bench':<{name_w}} | {'Jet':^{jet_w}}" +
+              "".join(f" | {lang:^{col_w[lang]}}" for lang in langs))
+    print(header.rstrip())
+    print("  " + "─" * (len(header) - 2))
+    for b in benches:
+        jet = f"{align_decimal(jet_times[b], jet_widths)}ms" if b in jet_times else "—"
+        print(f"  {b:<{name_w}} | {jet:>{jet_w}}" +
+              "".join(f" | {cells[b][lang]:<{col_w[lang]}}" for lang in langs))
 
     print()
-    for lang, ratios in ratios_by_lang.items():
-        if len(ratios) >= 2:
-            gm = statistics.geometric_mean(ratios)
-            print(f"  geomean ratio (jet/{lang}): {gm:.3f}×  ({len(ratios)} benches)")
-        elif len(ratios) == 1:
-            print(f"  ratio (jet/{lang}): {ratios[0]:.3f}×  (1 bench)")
+    summaries = [(lang, results, statistics.geometric_mean(result.ratio for result in results))
+                 for lang, results in results_by_lang.items() if len(results) > 1]
+    if summaries:
+        print("  overall (geomean)")
+        lang_w = max(len(lang) for lang, _, _ in summaries)
+        percent_w = max(len(rival_percent(gm)) for _, _, gm in summaries)
+        for lang, results, gm in summaries:
+            change = ("0% change" if abs(gm - 1) < 1e-12 else
+                      f"{rival_percent(gm):>{percent_w}} {'slower' if gm < 1 else 'faster'}")
+            print(f"    {lang:<{lang_w}} is  {change} ({len(results)} benches)")
+        print()
+    if tested:
+        print("  Benchmark results marked faster/slower meet the 5% significance "
+              "cutoff after adjustment.")
 
     if not args.keep:
         remove_worktree(wt)
