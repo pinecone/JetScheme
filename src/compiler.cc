@@ -5736,8 +5736,8 @@ namespace
 			LirInst i = inst(Opcode::clos);
 			i.u.closure.dst = dst;
 			i.u.closure.pool_idx = pool_index;
-			i.u.closure.first_capture = static_cast<uint16_t>(current_lambda().captures.size());
-			i.u.closure.n_captures = static_cast<uint16_t>(expr->lambda.upvalues.size());
+			i.u.closure.first_capture = narrow_or_die<uint16_t>(db, expr->loc, current_lambda().captures.size());
+			i.u.closure.n_captures = narrow_or_die<uint16_t>(db, expr->loc, expr->lambda.upvalues.size());
 			emit_capture_recipe(expr);
 			emit(expr->loc, i);
 		}
@@ -6027,7 +6027,7 @@ namespace
 		std::optional<uint16_t> emit_call(Expr* expr, Compiler::OpSelection sel)
 		{
 			bool tail = db.is_tail(expr);
-			uint16_t nargs = static_cast<uint16_t>(expr->call.args.size());
+			uint16_t nargs = narrow_or_die<uint16_t>(db, expr->loc, expr->call.args.size());
 
 			LirInst i = inst(sel.op);
 			std::optional<uint16_t> callee_temp;
@@ -6658,12 +6658,12 @@ namespace
 			entry.append(reinterpret_cast<char*>(&is_n_ary), sizeof(is_n_ary));
 			if (!is_n_ary)
 			{
-				size_t parameter_count = static_cast<size_t>(L.n_params);
+				uint32_t parameter_count = narrow_or_die<uint32_t>(db, L.loc, L.n_params);
 				entry.append(reinterpret_cast<char*>(&parameter_count), sizeof(parameter_count));
 			}
 			uint16_t n_regs = narrow_or_die<uint16_t>(db, L.loc, L.frame_regs());
 			entry.append(reinterpret_cast<char*>(&n_regs), sizeof(n_regs));
-			size_t code_size = body.size();
+			uint32_t code_size = narrow_or_die<uint32_t>(db, L.loc, body.size());
 			entry.append(reinterpret_cast<char*>(&code_size), sizeof(code_size));
 			entry.append(reinterpret_cast<char*>(body.data()), code_size);
 			if (!L.lambda_name.empty())
@@ -6773,7 +6773,7 @@ namespace
 			auto&& emit_comparison = [&]<typename Instr>()
 			{
 				emit_opcode(bc, i.op);
-				Instr op{i.u.if_cmp.lhs, i.u.if_cmp.rhs, static_cast<uint32_t>(
+				Instr op{i.u.if_cmp.lhs, i.u.if_cmp.rhs, narrow_or_die<uint32_t>(db, i.loc,
 					label_target(i.loc, label_pos, i.u.if_cmp.id) - (bc.size() + sizeof(Instr)))};
 				emit_operand(bc, op);
 			};
@@ -6911,7 +6911,7 @@ namespace
 					emit_opcode(bc, Opcode::if_false);
 					OP_if_false op{};
 					op.src = i.u.label.src;
-					op.size = static_cast<uint32_t>(
+					op.size = narrow_or_die<uint32_t>(db, i.loc,
 						label_target(i.loc, label_pos, i.u.label.id) - (bc.size() + sizeof(OP_if_false)));
 					emit_operand(bc, op);
 					break;
@@ -6931,7 +6931,8 @@ namespace
 				{
 					emit_opcode(bc, Opcode::skip);
 					OP_skip op{};
-					op.size = label_target(i.loc, label_pos, i.u.label.id) - (bc.size() + sizeof(OP_skip));
+					op.size = narrow_or_die<uint32_t>(db, i.loc,
+						label_target(i.loc, label_pos, i.u.label.id) - (bc.size() + sizeof(OP_skip)));
 					emit_operand(bc, op);
 					break;
 				}
@@ -6976,7 +6977,7 @@ namespace
 					OP_iter_next1 op{};
 					op.cursor = i.u.iter.cursor;
 					op.dst = i.u.iter.dst0;
-					op.size = static_cast<uint32_t>(
+					op.size = narrow_or_die<uint32_t>(db, i.loc,
 						label_target(i.loc, label_pos, i.u.iter.id) - (bc.size() + sizeof(OP_iter_next1)));
 					emit_operand(bc, op);
 					break;
@@ -6989,7 +6990,7 @@ namespace
 					op.cursor = i.u.iter.cursor;
 					op.dst0 = i.u.iter.dst0;
 					op.dst1 = i.u.iter.dst1;
-					op.size = static_cast<uint32_t>(
+					op.size = narrow_or_die<uint32_t>(db, i.loc,
 						label_target(i.loc, label_pos, i.u.iter.id) - (bc.size() + sizeof(OP_iter_next2)));
 					emit_operand(bc, op);
 					break;
@@ -7139,7 +7140,7 @@ namespace
 			uint32_t n_slots = narrow_or_die<uint32_t>(db, prog.lambdas[0].loc, prog.lambdas[0].frame_regs());
 			uint8_t* sp = reinterpret_cast<uint8_t*>(&n_slots);
 			out.insert(out.end(), sp, sp + sizeof(n_slots));
-			uint32_t pool_size = static_cast<uint32_t>(prog.pool.size());
+			uint32_t pool_size = narrow_or_die<uint32_t>(db, prog.lambdas[0].loc, prog.pool.size());
 			uint8_t* buf = reinterpret_cast<uint8_t*>(&pool_size);
 			out.insert(out.end(), buf, buf + sizeof(pool_size));
 			for (std::string& entry : prog.pool)

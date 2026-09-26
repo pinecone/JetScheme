@@ -654,7 +654,7 @@ LoadedProgram load_program(VmState& vm, Code* bytecode, size_t n_bytes)
 				Arity arity{n_ary()};
 				if (!is_n_ary)
 				{
-					size_t exact{0};
+					uint32_t exact{0};
 					std::memcpy(&exact, code, sizeof(exact));
 					code += sizeof(exact);
 					arity = exactly(exact);
@@ -662,7 +662,7 @@ LoadedProgram load_program(VmState& vm, Code* bytecode, size_t n_bytes)
 				uint16_t n_locals{0};
 				std::memcpy(&n_locals, code, sizeof(n_locals));
 				code += sizeof(n_locals);
-				size_t code_size{0};
+				uint32_t code_size{0};
 				std::memcpy(&code_size, code, sizeof(code_size));
 				code += sizeof(code_size);
 				Code* lambda_code{code};

@@ -366,7 +366,7 @@ int main(int argc, char* argv[])
   g.opcode("halt");
 
   g.opcode("skip")
-    .operand("size_t", "size");
+    .operand("uint32_t", "size");
 
   g.opcode("label");
 
