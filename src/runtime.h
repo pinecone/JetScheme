@@ -1411,9 +1411,9 @@ void init_display_primitives(VmState& s);
 void init_strings(VmState& s);
 void init_chars(VmState& s);
 
-inline bool is_true(Atom a)
+JET_ALWAYS_INLINE inline bool is_true(Atom atom)
 {
-	return is_type<jet::Type::Boolean>(a) ? unbox<bool>(a) : true;
+	return atom.bits != box(false).bits;
 }
 
 class Port

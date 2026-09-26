@@ -2078,59 +2078,41 @@ static constexpr auto& op_numeqk = op_binop_rk_impl<numeq_atoms, OP_numeqk>;
 static constexpr auto& op_eqk = op_binop_rk_impl<eq_atoms, OP_eqk>;
 static constexpr auto& op_ltk = op_binop_rk_impl<lt_atoms, OP_ltk>;
 
-JET_PRESERVE_NONE static void op_if_false(VM_OP_PARAMS)
+enum class IfMode
 {
-	OP_if_false* op{reinterpret_cast<OP_if_false*>(pc)};
-	if (!is_true(frame_regs[op->src]))
+	TestRegister,
+	CompareRegister,
+	CompareConstant
+};
+
+template <typename Instr, auto Op, IfMode Mode>
+JET_PRESERVE_NONE static void op_if_impl(VM_OP_PARAMS)
+{
+	Instr* op{reinterpret_cast<Instr*>(pc)};
+	bool branch_taken;
+	if constexpr (Mode == IfMode::TestRegister)
 	{
-		pc += sizeof(*op) + op->size;
+		branch_taken = !is_true(frame_regs[op->src]);
 	}
 	else
 	{
-		pc += sizeof(*op);
+		Atom rhs{Mode == IfMode::CompareConstant ? s.constants[op->b] : frame_regs[op->b]};
+		branch_taken = !is_true(Op(s, frame_regs[op->a], rhs));
 	}
+	pc += sizeof(*op) + (branch_taken ? op->size : 0);
 	DISPATCH();
 }
 
-template <auto Op, typename Instr>
-JET_PRESERVE_NONE static void op_if_cmp_rr_impl(VM_OP_PARAMS)
-{
-	auto* op{reinterpret_cast<Instr*>(pc)};
-	if (!is_true(Op(s, frame_regs[op->a], frame_regs[op->b])))
-	{
-		pc += sizeof(*op) + op->size;
-	}
-	else
-	{
-		pc += sizeof(*op);
-	}
-	DISPATCH();
-}
-
-template <auto Op, typename Instr>
-JET_PRESERVE_NONE static void op_if_cmp_rk_impl(VM_OP_PARAMS)
-{
-	auto* op{reinterpret_cast<Instr*>(pc)};
-	if (!is_true(Op(s, frame_regs[op->a], s.constants[op->b])))
-	{
-		pc += sizeof(*op) + op->size;
-	}
-	else
-	{
-		pc += sizeof(*op);
-	}
-	DISPATCH();
-}
-
-static constexpr auto& op_if_numeq = op_if_cmp_rr_impl<numeq_atoms, OP_if_numeq>;
-static constexpr auto& op_if_eq = op_if_cmp_rr_impl<eq_atoms, OP_if_eq>;
-static constexpr auto& op_if_lt = op_if_cmp_rr_impl<lt_atoms, OP_if_lt>;
-static constexpr auto& op_if_le = op_if_cmp_rr_impl<le_atoms, OP_if_le>;
-static constexpr auto& op_if_gt = op_if_cmp_rr_impl<gt_atoms, OP_if_gt>;
-static constexpr auto& op_if_ge = op_if_cmp_rr_impl<ge_atoms, OP_if_ge>;
-static constexpr auto& op_if_numeqk = op_if_cmp_rk_impl<numeq_atoms, OP_if_numeqk>;
-static constexpr auto& op_if_eqk = op_if_cmp_rk_impl<eq_atoms, OP_if_eqk>;
-static constexpr auto& op_if_ltk = op_if_cmp_rk_impl<lt_atoms, OP_if_ltk>;
+static constexpr auto& op_if_false = op_if_impl<OP_if_false, nullptr, IfMode::TestRegister>;
+static constexpr auto& op_if_numeq = op_if_impl<OP_if_numeq, numeq_atoms, IfMode::CompareRegister>;
+static constexpr auto& op_if_eq = op_if_impl<OP_if_eq, eq_atoms, IfMode::CompareRegister>;
+static constexpr auto& op_if_lt = op_if_impl<OP_if_lt, lt_atoms, IfMode::CompareRegister>;
+static constexpr auto& op_if_le = op_if_impl<OP_if_le, le_atoms, IfMode::CompareRegister>;
+static constexpr auto& op_if_gt = op_if_impl<OP_if_gt, gt_atoms, IfMode::CompareRegister>;
+static constexpr auto& op_if_ge = op_if_impl<OP_if_ge, ge_atoms, IfMode::CompareRegister>;
+static constexpr auto& op_if_numeqk = op_if_impl<OP_if_numeqk, numeq_atoms, IfMode::CompareConstant>;
+static constexpr auto& op_if_eqk = op_if_impl<OP_if_eqk, eq_atoms, IfMode::CompareConstant>;
+static constexpr auto& op_if_ltk = op_if_impl<OP_if_ltk, lt_atoms, IfMode::CompareConstant>;
 
 JET_PRESERVE_NONE static void op_retv(VM_OP_PARAMS)
 {
