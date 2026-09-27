@@ -411,9 +411,7 @@ pre code a.commit .ext {
   margin: var(--sp-4) 0 0;
 }
 
-/* Fewer engine groups on screen means tighter cells: the numerals step down one
-   notch so the figures keep clear space. The 0.8em machine glyph row and the
-   tfoot inherit the reduction. */
+/* Compact tables step the numerals down one notch. */
 table.compact {
   font-size: 0.72rem;
 }
@@ -540,7 +538,7 @@ thead th.hint {
 thead tr:first-child th:not(.hint) {
   text-align: center;
   font-family: var(--font-mono);
-  color: var(--cyan-pale);
+  color: var(--fg-dark);
 }
 
 thead tr:nth-child(2) th {
@@ -571,153 +569,47 @@ tbody td:nth-child(n+2) {
 
 thead tr:nth-child(2) th.m5, tbody td.m5, tfoot td.m5 { text-align: right; }
 
-/* Machine banding: one hue, two values. The 🍎 column of each pair keeps
-   the full --green; the 🎮 column is the same green stepped down toward
-   the background. Reading across, the bright figures form one band and
-   the dim ones another, so either machine can be followed through all
-   five engines. Value, not hue: a second colour would say "different
-   kind of number" when it is the same measurement on another box. */
+/* Machine banding: the 🍎 column of each pair keeps the full --green;
+   the 🎮 column is the same green stepped down toward the background. */
 tbody td:nth-child(n+2):not(.m5),
 tfoot td:not(.m5) {
   color: color-mix(in srgb, var(--green) 72%, var(--bg));
 }
 
-/* Relative-speed scale
-   ------------------------------------------------------------------
-   One hairline axis, jet pinned at the centre. Each engine groups its
-   name, dot, and ratio; narrow screens offset adjacent labels to prevent
-   collisions. Position is linear in the ratio, with the domain
-   running to 4.2x so the outermost labels keep clear of the end caps:
-     x = 50% ± 50% * (ratio - 1) / 3.2
-   The axis carries no tick scale of its own: every point states its own
-   number, so gridline labels would only be a second, competing set of
-   multipliers. */
-.scale {
-  margin: var(--sp-5) 0 var(--sp-6);
-  padding: 0;
-}
-
-.scale-track {
+/* Relative speed lives in the table headings. Every bar rises from the
+   same baseline; Jet's 1x height is the reference for the other engines. */
+.speed {
   position: relative;
-  width: 88%;
-  margin: 0 auto;
-  --names: var(--sp-6);
-  height: calc(var(--names) + var(--sp-6));
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  height: 4.7rem;
+  margin-bottom: var(--sp-2);
 }
 
-.scale-axis {
+.speed-value {
   position: absolute;
+  bottom: calc(var(--speed) * 1.5rem + var(--sp-1));
   left: 0;
   right: 0;
-  top: var(--names);
-  height: 1px;
-  background: repeating-linear-gradient(
-    to right,
-    var(--comment) 0 1px,
-    transparent 1px 5px);
-  -webkit-mask-image: linear-gradient(to right, transparent, black 4%, black 96%, transparent);
-  mask-image: linear-gradient(to right, transparent, black 4%, black 96%, transparent);
-}
-
-.scale-mark {
-  position: absolute;
-  top: 0;
-  left: var(--x);
-  transform: translateX(-50%);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
-
-/* names sit on a shared baseline just above the axis */
-.scale-name {
-  height: var(--names);
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
-  font-family: var(--font-mono);
-  font-size: var(--fs-micro);
-  line-height: var(--sp-4);
-  text-align: center;
-  white-space: nowrap;
-  color: var(--fg-dark);
-  padding-bottom: var(--sp-3);
-}
-
-/* zero-height box, so the dot centres on the axis without
-   shifting anything below it */
-.scale-dot {
-  width: 7px;
-  height: 7px;
-  margin: -3.5px 0;
-  border-radius: 50%;
-  background: var(--fg-muted);
-}
-
-.scale-mult {
-  margin-top: var(--sp-3);
-  font-family: var(--font-mono);
-  font-size: var(--fs-micro);
-  line-height: var(--sp-4);
   color: var(--fg-muted);
+  font-size: var(--fs-micro);
   font-variant-numeric: tabular-nums;
 }
 
-/* the reference: the only colour on the axis */
-.scale-mark.self .scale-name,
-.scale-mark.self .scale-mult {
-  color: var(--green);
+.speed-bar {
+  display: block;
+  width: 1rem;
+  height: calc(var(--speed) * 1.5rem);
+  --bar-color: var(--cyan);
+  border: 1px solid var(--bar-color);
+  border-bottom: 0;
+  background: repeating-linear-gradient(135deg,
+    transparent 0 2px, var(--bar-color) 2px 3px, transparent 3px 5px);
 }
 
-/* the python and lua labels sit close together on the axis: shift each
-   name and multiplier outward, away from the jet */
-.scale-mark-python .scale-name,
-.scale-mark-python .scale-mult {
-  transform: translateX(calc(0rem - var(--sp-4)));
-}
-
-.scale-mark-lua .scale-name,
-.scale-mark-lua .scale-mult {
-  transform: translateX(var(--sp-4));
-}
-
-.scale-mark.self .scale-dot {
-  width: 2px;
-  height: 15px;
-  margin: -7.5px 0;
-  border-radius: 1px;
-  background: var(--green);
-  box-shadow: 0 0 10px color-mix(in srgb, var(--green) 55%, transparent);
-}
-
-/* Direction cues as end caps: centred on the axis, in the empty span
-   beyond the outermost points, with the rule knocked out behind them so
-   the words terminate the line instead of floating under it. */
-.scale-ends {
-  display: contents;
-  font-family: var(--font-heading);
-  font-size: var(--fs-micro);
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--comment);
-}
-
-.scale-ends span {
-  position: absolute;
-  top: var(--names);
-  transform: translateY(-50%);
-  line-height: var(--sp-4);
-  background: var(--bg);
-}
-
-.scale-ends span:first-child { left: 0; padding-right: var(--sp-2); }
-
-/* trailing negative margin cancels the last letter-space, so the word
-   optically aligns with the right edge of the axis */
-.scale-ends span:last-child {
-  right: 0;
-  padding-left: var(--sp-2);
-  margin-right: -0.14em;
+thead th[aria-label^="Jet;"] .speed-bar {
+  --bar-color: var(--green);
 }
 
 tbody tr:hover td { background: rgba(122,162,247,0.04); }
@@ -791,21 +683,4 @@ footer {
   /* two engine groups must fit beside the 5rem label at 320px: cells drop one padding step */
   thead th, tbody th, tbody td, tfoot th, tfoot td { padding: var(--sp-1); }
 
-  /* every pixel of width buys separation between the two slow points */
-  .scale-track {
-    width: 100%;
-    --names: var(--sp-6);
-    height: calc(var(--names) + var(--sp-7));
-  }
-
-  /* too narrow for end caps on the axis -- the left one would reach the
-     python dot -- so they drop to their own row underneath */
-  .scale-ends { letter-spacing: 0.1em; }
-  .scale-ends span {
-    top: auto;
-    bottom: 0;
-    transform: none;
-    background: none;
-    padding: 0;
-  }
 }

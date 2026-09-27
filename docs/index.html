@@ -9,7 +9,7 @@
 <link rel="preload" href="fonts/Manrope.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="fonts/SourceSans3.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="fonts/SourceSans3-Italic.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="style.css?v=8">
+<link rel="stylesheet" href="style.css?v=20">
 <script src="vendor/justif/auto-classic.js" defer></script>
 </head>
 <body>
@@ -35,61 +35,32 @@
 
 <section id="benchmarks">
   <p>Run <code><span class="cmd">make</span> ab-cross-bench</code> to compare Jet with popular language
-  runtimes on your machine:</p>
-  <figure class="scale">
-    <div class="scale-track" role="img"
-         aria-label="Speed relative to jet across both platforms: python is 2.7 times slower, lua 2.4 times slower, and jsc is 2.4 times faster.">
-      <div class="scale-axis"></div>
-
-      <div class="scale-mark scale-mark-python" style="--x:23.4%" title="python is 2.7× slower than jet">
-        <span class="scale-name">python</span>
-        <span class="scale-dot"></span>
-        <span class="scale-mult">2.7×</span>
-      </div>
-      <div class="scale-mark scale-mark-lua" style="--x:28.1%" title="lua is 2.4× slower than jet">
-        <span class="scale-name">lua</span>
-        <span class="scale-dot"></span>
-        <span class="scale-mult">2.4×</span>
-      </div>
-      <div class="scale-mark self" style="--x:50%" title="jet — the reference">
-        <span class="scale-name">jet</span>
-        <span class="scale-dot"></span>
-        <span class="scale-mult">1×</span>
-      </div>
-      <div class="scale-mark" style="--x:71.9%" title="jsc (with JIT) is 2.4× faster than jet">
-        <span class="scale-name">jsc</span>
-        <span class="scale-dot"></span>
-        <span class="scale-mult">2.4×</span>
-      </div>
-
-      <div class="scale-ends"><span>&larr; slower</span><span>faster &rarr;</span></div>
-    </div>
-  </figure>
+  runtimes on your machine. (All runtimes except <code>jsc</code> run in interpreter-mode.)</p>
   <div class="table-wrap" role="region" aria-label="Benchmark results" tabindex="0">
     <table aria-describedby="perf-legend">
       <caption class="visually-hidden">Benchmark runtimes in milliseconds</caption>
       <colgroup>
         <col>
-        <col><col><col><col><col><col><col><col><col><col>
+        <col><col><col><col><col><col><col><col><col><col><col><col><col><col>
       </colgroup>
       <thead>
-        <tr><th scope="col" rowspan="2" class="hint">benchmark</th><th scope="colgroup" colspan="2" aria-label="JavaScriptCore interpreter, LLInt, no JIT">LLInt</th><th scope="colgroup" colspan="2" class="grp">python3.14</th><th scope="colgroup" colspan="2" class="grp">lua5.5</th><th scope="colgroup" colspan="2" class="grp">jet</th><th scope="colgroup" colspan="2" class="grp" aria-label="JavaScriptCore with JIT">jsc</th></tr>
-        <tr><th scope="col" class="m5" aria-label="MacBook Air, Apple M5">🍎</th><th scope="col" aria-label="Steam Deck, AMD Zen 2">🎮</th><th scope="col" class="grp m5" aria-label="MacBook Air, Apple M5">🍎</th><th scope="col" aria-label="Steam Deck, AMD Zen 2">🎮</th><th scope="col" class="grp m5" aria-label="MacBook Air, Apple M5">🍎</th><th scope="col" aria-label="Steam Deck, AMD Zen 2">🎮</th><th scope="col" class="grp m5" aria-label="MacBook Air, Apple M5">🍎</th><th scope="col" aria-label="Steam Deck, AMD Zen 2">🎮</th><th scope="col" class="grp m5" aria-label="MacBook Air, Apple M5">🍎</th><th scope="col" aria-label="Steam Deck, AMD Zen 2">🎮</th></tr>
+        <tr><th scope="col" rowspan="2" class="hint"><span class="visually-hidden">benchmark</span></th><th scope="colgroup" colspan="2" aria-label="JavaScriptCore interpreter, LLInt, no JIT; 0.34 times Jet's speed"><span class="speed" style="--speed:0.34" aria-hidden="true"><span class="speed-value">0.34×</span><span class="speed-bar"></span></span>LLInt</th><th scope="colgroup" colspan="2" class="grp" aria-label="Python 3.14; 0.37 times Jet's speed"><span class="speed" style="--speed:0.37" aria-hidden="true"><span class="speed-value">0.37×</span><span class="speed-bar"></span></span>python3.14</th><th scope="colgroup" colspan="2" class="grp" aria-label="Lua 5.5; 0.43 times Jet's speed"><span class="speed" style="--speed:0.43" aria-hidden="true"><span class="speed-value">0.43×</span><span class="speed-bar"></span></span>lua5.5</th><th scope="colgroup" colspan="2" class="grp" aria-label="LuaJIT, JIT off; 0.62 times Jet's speed"><span class="speed" style="--speed:0.62" aria-hidden="true"><span class="speed-value">0.62×</span><span class="speed-bar"></span></span>luajit</th><th scope="colgroup" colspan="2" class="grp" aria-label="Luau; 0.64 times Jet's speed"><span class="speed" style="--speed:0.64" aria-hidden="true"><span class="speed-value">0.64×</span><span class="speed-bar"></span></span>luau</th><th scope="colgroup" colspan="2" class="grp" aria-label="Jet; reference speed, 1 times"><span class="speed" style="--speed:1" aria-hidden="true"><span class="speed-value">1×</span><span class="speed-bar"></span></span>jet</th><th scope="colgroup" colspan="2" class="grp" aria-label="JavaScriptCore with JIT; 2.42 times Jet's speed"><span class="speed" style="--speed:2.42" aria-hidden="true"><span class="speed-value">2.42×</span><span class="speed-bar"></span></span>jsc(jit)</th></tr>
+        <tr><th scope="col" class="m5" aria-label="MacBook Air, Apple M5">🍎</th><th scope="col" aria-label="Steam Deck, AMD Zen 2">🎮</th><th scope="col" class="grp m5" aria-label="MacBook Air, Apple M5">🍎</th><th scope="col" aria-label="Steam Deck, AMD Zen 2">🎮</th><th scope="col" class="grp m5" aria-label="MacBook Air, Apple M5">🍎</th><th scope="col" aria-label="Steam Deck, AMD Zen 2">🎮</th><th scope="col" class="grp m5" aria-label="MacBook Air, Apple M5">🍎</th><th scope="col" aria-label="Steam Deck, AMD Zen 2">🎮</th><th scope="col" class="grp m5" aria-label="MacBook Air, Apple M5">🍎</th><th scope="col" aria-label="Steam Deck, AMD Zen 2">🎮</th><th scope="col" class="grp m5" aria-label="MacBook Air, Apple M5">🍎</th><th scope="col" aria-label="Steam Deck, AMD Zen 2">🎮</th><th scope="col" class="grp m5" aria-label="MacBook Air, Apple M5">🍎</th><th scope="col" aria-label="Steam Deck, AMD Zen 2">🎮</th></tr>
       </thead>
       <tbody>
-        <tr><th scope="row">astar</th><td class="m5">75</td><td>287</td><td class="grp m5">155</td><td>454</td><td class="grp m5">62</td><td>216</td><td class="grp m5">50</td><td>118</td><td class="grp m5">33</td><td>96</td></tr>
-        <tr><th scope="row">basic</th><td class="m5">597</td><td>2295</td><td class="grp m5">498</td><td>1126</td><td class="grp m5">410</td><td>1127</td><td class="grp m5">156</td><td>456</td><td class="grp m5">61</td><td>193</td></tr>
-        <tr><th scope="row">cdjs</th><td class="m5">99</td><td>336</td><td class="grp m5">161</td><td>357</td><td class="grp m5">110</td><td>341</td><td class="grp m5">48</td><td>119</td><td class="grp m5">22</td><td>51</td></tr>
-        <tr><th scope="row">deltablue</th><td class="m5">256</td><td>910</td><td class="grp m5">232</td><td>562</td><td class="grp m5">125</td><td>565</td><td class="grp m5">62</td><td>191</td><td class="grp m5">27</td><td>72</td></tr>
-        <tr><th scope="row">havlak</th><td class="m5">241</td><td>1245</td><td class="grp m5">279</td><td>812</td><td class="grp m5">321</td><td>1518</td><td class="grp m5">170</td><td>800</td><td class="grp m5">65</td><td>254</td></tr>
-        <tr><th scope="row">json</th><td class="m5">332</td><td>1216</td><td class="grp m5">148</td><td>314</td><td class="grp m5">136</td><td>400</td><td class="grp m5">64</td><td>185</td><td class="grp m5">35</td><td>109</td></tr>
-        <tr><th scope="row">nbody</th><td class="m5">397</td><td>1187</td><td class="grp m5">598</td><td>1296</td><td class="grp m5">331</td><td>898</td><td class="grp m5">135</td><td>298</td><td class="grp m5">23</td><td>60</td></tr>
-        <tr><th scope="row">raytrace</th><td class="m5">669</td><td>2545</td><td class="grp m5">512</td><td>1306</td><td class="grp m5">524</td><td>1505</td><td class="grp m5">115</td><td>423</td><td class="grp m5">42</td><td>111</td></tr>
-        <tr><th scope="row">richards</th><td class="m5">120</td><td>393</td><td class="grp m5">190</td><td>402</td><td class="grp m5">120</td><td>290</td><td class="grp m5">53</td><td>136</td><td class="grp m5">18</td><td>34</td></tr>
-        <tr><th scope="row">splay</th><td class="m5">25</td><td>97</td><td class="grp m5">39</td><td>68</td><td class="grp m5">45</td><td>141</td><td class="grp m5">19</td><td>47</td><td class="grp m5">15</td><td>33</td></tr>
+        <tr><th scope="row">astar</th><td class="m5">76</td><td>273</td><td class="grp m5">155</td><td>452</td><td class="grp m5">62</td><td>215</td><td class="grp m5">57</td><td>177</td><td class="grp m5">77</td><td>206</td><td class="grp m5">51</td><td>117</td><td class="grp m5">33</td><td>96</td></tr>
+        <tr><th scope="row">basic</th><td class="m5">596</td><td>2205</td><td class="grp m5">498</td><td>1126</td><td class="grp m5">411</td><td>1121</td><td class="grp m5">320</td><td>651</td><td class="grp m5">353</td><td>787</td><td class="grp m5">156</td><td>455</td><td class="grp m5">63</td><td>189</td></tr>
+        <tr><th scope="row">cdjs</th><td class="m5">97</td><td>306</td><td class="grp m5">164</td><td>355</td><td class="grp m5">110</td><td>337</td><td class="grp m5">106</td><td>213</td><td class="grp m5">105</td><td>222</td><td class="grp m5">48</td><td>119</td><td class="grp m5">23</td><td>51</td></tr>
+        <tr><th scope="row">deltablue</th><td class="m5">250</td><td>819</td><td class="grp m5">233</td><td>561</td><td class="grp m5">125</td><td>568</td><td class="grp m5">140</td><td>422</td><td class="grp m5">70</td><td>310</td><td class="grp m5">62</td><td>189</td><td class="grp m5">28</td><td>72</td></tr>
+        <tr><th scope="row">havlak</th><td class="m5">245</td><td>1199</td><td class="grp m5">279</td><td>792</td><td class="grp m5">324</td><td>1461</td><td class="grp m5">221</td><td>763</td><td class="grp m5">219</td><td>725</td><td class="grp m5">174</td><td>781</td><td class="grp m5">67</td><td>250</td></tr>
+        <tr><th scope="row">json</th><td class="m5">343</td><td>1144</td><td class="grp m5">148</td><td>312</td><td class="grp m5">136</td><td>395</td><td class="grp m5">111</td><td>250</td><td class="grp m5">113</td><td>345</td><td class="grp m5">64</td><td>183</td><td class="grp m5">37</td><td>108</td></tr>
+        <tr><th scope="row">nbody</th><td class="m5">404</td><td>1168</td><td class="grp m5">597</td><td>1294</td><td class="grp m5">330</td><td>900</td><td class="grp m5">190</td><td>465</td><td class="grp m5">147</td><td>382</td><td class="grp m5">136</td><td>298</td><td class="grp m5">23</td><td>61</td></tr>
+        <tr><th scope="row">raytrace</th><td class="m5">640</td><td>2443</td><td class="grp m5">514</td><td>1301</td><td class="grp m5">520</td><td>1482</td><td class="grp m5">354</td><td>844</td><td class="grp m5">275</td><td>679</td><td class="grp m5">115</td><td>424</td><td class="grp m5">42</td><td>113</td></tr>
+        <tr><th scope="row">richards</th><td class="m5">119</td><td>374</td><td class="grp m5">191</td><td>402</td><td class="grp m5">108</td><td>257</td><td class="grp m5">107</td><td>140</td><td class="grp m5">94</td><td>206</td><td class="grp m5">53</td><td>137</td><td class="grp m5">19</td><td>35</td></tr>
+        <tr><th scope="row">splay</th><td class="m5">25</td><td>93</td><td class="grp m5">42</td><td>67</td><td class="grp m5">44</td><td>132</td><td class="grp m5">27</td><td>57</td><td class="grp m5">25</td><td>66</td><td class="grp m5">20</td><td>47</td><td class="grp m5">15</td><td>32</td></tr>
       </tbody>
       <tfoot>
-        <tr><th scope="row">total</th><td class="m5"><span>2811</span></td><td><span>10511</span></td><td class="grp m5"><span>2812</span></td><td><span>6697</span></td><td class="grp m5"><span>2184</span></td><td><span>7001</span></td><td class="grp m5"><span>872</span></td><td><span>2773</span></td><td class="grp m5"><span>341</span></td><td><span>1013</span></td></tr>
+        <tr><th scope="row">total</th><td class="m5"><span>2795</span></td><td><span>10024</span></td><td class="grp m5"><span>2821</span></td><td><span>6662</span></td><td class="grp m5"><span>2170</span></td><td><span>6868</span></td><td class="grp m5"><span>1633</span></td><td><span>3982</span></td><td class="grp m5"><span>1478</span></td><td><span>3928</span></td><td class="grp m5"><span>879</span></td><td><span>2750</span></td><td class="grp m5"><span>350</span></td><td><span>1007</span></td></tr>
       </tfoot>
     </table>
   </div>
@@ -123,7 +94,12 @@
     const wrap = document.querySelector(".table-wrap");
     const table = wrap ? wrap.querySelector("table") : null;
     const cols = table ? table.querySelectorAll("colgroup col") : null;
-    if (!wrap || !table || !cols || cols.length !== 11) { return; }
+    const groups = table ? [...table.querySelectorAll("thead tr:first-child th[scope=colgroup]")] : [];
+    const group_count = groups.length;
+    const jet_index = groups.findIndex((th) => th.lastChild.textContent.trim() === "jet");
+    if (!wrap || !table || !cols || !group_count || jet_index < 0 ||
+        cols.length !== 1 + groups.reduce((sum, th) => sum + th.colSpan, 0) ||
+        groups.some((th) => th.colSpan !== 2)) { return; }
 
     let pinned = null;
     let narrow = false;
@@ -144,13 +120,13 @@
       const view = wrap.clientWidth;
 
       let count = Math.floor((view - bench_w) / group_min);
-      count = Math.max(2, Math.min(5, count));
+      count = Math.min(group_count, Math.max(1, count));
 
       /* the 2- and 3-column layouts are tight on phones; step the numerals down */
       table.classList.toggle("compact", count <= 3);
 
       group_w = (view - bench_w) / count;
-      const table_w = bench_w + 5 * group_w;
+      const table_w = bench_w + group_count * group_w;
 
       table.style.tableLayout = "fixed";
       table.style.minWidth = "0";
@@ -158,7 +134,7 @@
       cols[0].style.width = bench_w + "px";
       for (let i = 1; i < cols.length; i++) { cols[i].style.width = group_w / 2 + "px"; }
 
-      const target = Math.max(0, (4 - count) * group_w);
+      const target = Math.max(0, (jet_index + 1 - count) * group_w);
       if (!force && pinned !== null && Math.abs(wrap.scrollLeft - pinned) > 1) { return; }
 
       pinned = target;
