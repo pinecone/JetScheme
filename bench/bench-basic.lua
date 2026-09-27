@@ -11,7 +11,8 @@ local s_goto, s_gosub, s_def, s_let, s_if, s_return, s_stop, s_on, s_for, s_next
 local s_print, s_input, s_read, s_restore, s_dim, s_randomize, s_end
 local program_run, BLOCK_END
 
--- ---------------- RNG: Robert Jenkins' 32-bit integer hash (from Octane) ----------------
+-- ---------------- RNG: Robert Jenkins 32-bit integer hash (from Octane) ----------------
+#if defined(PUC_LUA)
 local function create_rng(seed)
   return function()
     seed = (seed + 0x7ed55d16 + (seed << 12)) & 0xffffffff
@@ -24,6 +25,25 @@ local function create_rng(seed)
   end
 end
 
+#else
+local bits = bit32
+#if defined(LUAJIT)
+bits = require("bit")
+#endif
+local band, bxor, lshift, rshift = bits.band, bits.bxor, bits.lshift, bits.rshift
+local function create_rng(seed)
+  return function()
+    seed = band(seed + 0x7ed55d16 + lshift(seed, 12), 0xffffffff)
+    seed = band(bxor(bxor(seed, 0xc761c23c), rshift(seed, 19)), 0xffffffff)
+    seed = band(seed + 0x165667b1 + lshift(seed, 5), 0xffffffff)
+    seed = band(bxor(seed + 0xd3a2646c, lshift(seed, 9)), 0xffffffff)
+    seed = band(seed + 0xfd7046c5 + lshift(seed, 3), 0xffffffff)
+    seed = band(bxor(bxor(seed, 0xb55a4f09), rshift(seed, 16)), 0xffffffff)
+    return band(seed, 0xfffffff) / 0x10000000
+  end
+end
+#endif
+
 local function create_rng_with_fixed_seed() return create_rng(49734321) end
 local function create_rng_with_random_seed() return create_rng(math.random(0, 0xffffffff)) end
 
@@ -33,7 +53,9 @@ end
 
 num_to_str = function(x)
   if x ~= x then return "NaN" end
+#if defined(PUC_LUA)
   if math.type(x) == "integer" then return tostring(x) end
+#endif
   if x == math.floor(x) and math.abs(x) < 1e21 then return string.format("%d", x) end
   return tostring(x)
 end
@@ -106,7 +128,11 @@ function NativeFunction:apply(state, parameters)
   if self.arity ~= #parameters then
     state:abort("Expected " .. self.arity .. " arguments but " .. #parameters .. " were passed")
   end
+#if defined(LUAJIT)
+  return self.callback(unpack(parameters))
+#else
   return self.callback(table.unpack(parameters))
+#endif
 end
 function NativeFunction:leftApply(state, parameters)
   state:abort("Cannot use a native function as an lvalue")

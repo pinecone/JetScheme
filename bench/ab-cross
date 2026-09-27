@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Head-to-head jet benchmark vs lua, python, jsc, and jsc+jit for a single git ref.
+"""Head-to-head jet benchmark vs Lua, Luau, LuaJIT, Python, and JSC for a git ref.
 
 Builds the jet ref in a temp worktree, then for each bench runs jet against
-every available comparand (lua, python, jsc, jscjit), interleaving the
+every available comparand (lua, luau, luajit, python, jsc, jscjit), interleaving the
 runs per iteration. Reports each rival's measured speed relative to jet and
 whether a paired t-test on log time ratios finds a difference (5% level,
 adjusted across all benchmarks and comparands). A missing source skips a bench for
@@ -11,10 +11,13 @@ that comparand only; missing .ss is fatal.
 Usage:
     ./ab-cross [<ref>] [-n RUNS] [-b BENCH ...] [--keep]
 
-Comparands resolve automatically: lua and python from PATH, jsc from the
+Comparands resolve automatically: lua, luau, luajit, and python from PATH, jsc from the
 macOS system JavaScriptCore helper. A comparand that cannot be found is a
-fatal error; set its env var (LUA, PYTHON, JSC, JSCJIT) to the binary's path,
-or to an empty string to skip that comparand. jsc runs with the JIT off
+fatal error; set its env var (LUA, LUAU, LUAJIT, PYTHON, JSC, JSCJIT) to a
+command line (for example, LUAU='luau -O1'), or to an empty string to skip it.
+By default Luau runs with -O2 and no native code generation. LuaJIT runs with -j off;
+Lua sources are preprocessed with cpp before timing.
+jsc runs with the JIT off
 (LLInt); jscjit is the same binary with the JIT on, and JSCJIT overrides
 which binary that is. Set JSC_VERSION when JSC or JSCJIT does not point into
 Apple's JavaScriptCore framework.
@@ -28,6 +31,7 @@ import argparse
 import os
 import plistlib
 import random
+import shlex
 import shutil
 import statistics
 import subprocess
@@ -91,19 +95,24 @@ def time_run(cmd):
 
 
 def lua_version(lua):
-    r = subprocess.run([lua, "-v"], capture_output=True, text=True)
+    r = subprocess.run([*lua, "-v"], capture_output=True, text=True)
     return (r.stderr.strip() or r.stdout.strip()).splitlines()[0]
 
 
+def preprocess_lua(src, dest, runtime):
+    with dest.open("w") as out:
+        run(["cpp", "-P", "-traditional-cpp", f"-D{runtime}=1", str(src)], stdout=out)
+
+
 def python_version(py):
-    r = subprocess.run([py, "-V"], capture_output=True, text=True)
+    r = subprocess.run([*py, "-V"], capture_output=True, text=True)
     return (r.stdout.strip() or r.stderr.strip()).splitlines()[0]
 
 
 def jsc_version(jsc):
     if "JSC_VERSION" in os.environ:
         return os.environ["JSC_VERSION"] or "version unavailable"
-    path = Path(jsc).resolve()
+    path = Path(jsc[0]).resolve()
     framework = next((p for p in (path, *path.parents)
                       if p.name == "JavaScriptCore.framework"), None)
     if framework is None:
@@ -133,7 +142,7 @@ def align_decimal(value, widths):
 
 def main():
     ap = argparse.ArgumentParser(
-        description="Head-to-head jet benchmark vs lua, python, jsc, and jsc+jit for a single git ref.",
+        description="Head-to-head jet benchmark vs Lua, Luau, LuaJIT, Python, and JSC for a git ref.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__)
     ap.add_argument("ref", nargs="?", default="HEAD",
@@ -156,23 +165,33 @@ def main():
 
     benches = args.bench or DEFAULT_BENCHES
 
+    def command(value, env_var):
+        try:
+            parts = shlex.split(value)
+        except ValueError as e:
+            die(f"invalid {env_var} command line: {e}")
+        return parts or None
+
     def resolve(env_var, found, looked_in):
         if env_var in os.environ:
-            return os.environ[env_var] or None
+            return command(os.environ[env_var], env_var)
         if found is None:
             die(f"{env_var.lower()} not found in {looked_in}; "
                 f"set {env_var}=/path/to/binary to point at it, or {env_var}= (empty) to skip it")
-        return found
+        return [found]
 
     lua = resolve("LUA", shutil.which("lua"), "PATH")
+    luau = resolve("LUAU", shutil.which("luau"), "PATH")
+    if luau and "LUAU" not in os.environ:
+        luau.append("-O2")
+    luajit = resolve("LUAJIT", shutil.which("luajit"), "PATH")
     py = resolve("PYTHON", shutil.which("python3") or shutil.which("python"), "PATH")
     # assumes macOS: jsc lives inside the system JavaScriptCore framework
     jsc = resolve("JSC", str(SYSTEM_JSC) if SYSTEM_JSC.exists() else None,
                   f"{SYSTEM_JSC} (a macOS path)")
-    jscjit = os.environ["JSCJIT"] if "JSCJIT" in os.environ else jsc
-    jscjit = jscjit or None
-    if lua is None and py is None and jsc is None and jscjit is None:
-        die("all comparands disabled (LUA/PYTHON/JSC/JSCJIT all empty)")
+    jscjit = command(os.environ["JSCJIT"], "JSCJIT") if "JSCJIT" in os.environ else jsc
+    if all(x is None for x in (lua, luau, luajit, py, jsc, jscjit)):
+        die("all comparands disabled (LUA/LUAU/LUAJIT/PYTHON/JSC/JSCJIT all empty)")
 
     r = subprocess.run(["git", "rev-parse", "--verify", f"{args.ref}^{{commit}}"],
                        cwd=REPO, capture_output=True)
@@ -186,13 +205,17 @@ def main():
     print()
     print(f"  ref:    {args.ref} ({short(args.ref)})  →  {bin_jet}")
     if lua:
-        print(f"  lua:    {lua}  ({lua_version(lua)})")
+        print(f"  lua:    {shlex.join(lua)}  ({lua_version(lua)})")
+    if luau:
+        print(f"  luau:   {shlex.join(luau)}  (interpreter)")
+    if luajit:
+        print(f"  luajit: {shlex.join(luajit)}  ({lua_version(luajit)}, -j off)")
     if py:
-        print(f"  python: {py}  ({python_version(py)})")
+        print(f"  python: {shlex.join(py)}  ({python_version(py)})")
     if jsc:
-        print(f"  jsc:    {jsc}  ({jsc_version(jsc)})")
+        print(f"  jsc:    {shlex.join(jsc)}  ({jsc_version(jsc)})")
     if jscjit:
-        print(f"  jscjit: {jscjit}  ({jsc_version(jscjit)})")
+        print(f"  jscjit: {shlex.join(jscjit)}  ({jsc_version(jscjit)})")
     print(f"  {args.runs} pairs, {args.warmups} warmups; seed {args.seed}; "
           "whole-process time")
     print()
@@ -205,6 +228,10 @@ def main():
         sources = {}
         if lua and (HERE / f"{b}.lua").exists():
             sources["lua"] = HERE / f"{b}.lua"
+        if luau and (HERE / f"{b}.lua").exists():
+            sources["luau"] = HERE / f"{b}.lua"
+        if luajit and (HERE / f"{b}.lua").exists():
+            sources["luajit"] = HERE / f"{b}.lua"
         if py and (HERE / f"{b}.py").exists():
             sources["python"] = HERE / f"{b}.py"
         if jsc and (HERE / f"{b}.js").exists():
@@ -214,16 +241,18 @@ def main():
         sources_by_bench[b] = (ss_src, sources)
 
     cmd_for = {
-        "lua": lambda src: [lua, str(src)],
-        "python": lambda src: [py, str(src)],
-        "jsc": lambda src: [jsc, "--useJIT=false", str(HERE / "run-jsc-benchmark.js"),
+        "lua": lambda src: [*lua, str(src)],
+        "luau": lambda src: [*luau, str(src)],
+        "luajit": lambda src: [*luajit, "-j", "off", str(src)],
+        "python": lambda src: [*py, str(src)],
+        "jsc": lambda src: [*jsc, "--useJIT=false", str(HERE / "run-jsc-benchmark.js"),
                             "--", str(HERE / "js"), str(src), src.stem],
-        "jscjit": lambda src: [jscjit, str(HERE / "run-jsc-benchmark.js"),
+        "jscjit": lambda src: [*jscjit, str(HERE / "run-jsc-benchmark.js"),
                                "--", str(HERE / "js"), str(src), src.stem],
     }
 
     rows = []
-    results_by_lang = {"lua": [], "python": [], "jsc": [], "jscjit": []}
+    results_by_lang = {"lua": [], "luau": [], "luajit": [], "python": [], "jsc": [], "jscjit": []}
     total = sum(len(sources) for _, sources in sources_by_bench.values())
     completed = 0
     show_progress(0, total)
@@ -234,6 +263,11 @@ def main():
             continue
         for lang, src in sources.items():
             cmd_jet = [str(bin_jet), "run", str(ss_src)]
+            if lang in ("lua", "luau", "luajit"):
+                variant = {"lua": "PUC_LUA", "luau": "LUAU", "luajit": "LUAJIT"}[lang]
+                processed = tmp / f"{b}-{lang}.lua"
+                preprocess_lua(src, processed, variant)
+                src = processed
             cmd_rival = cmd_for[lang](src)
             result = collect(cmd_jet, cmd_rival, args.runs, time_run,
                              warmups=args.warmups, rng=rng)

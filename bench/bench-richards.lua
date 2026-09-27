@@ -17,20 +17,20 @@ local KIND_WORK   = 1
 local DATA_SIZE = 4
 local COUNT     = 100000
 
-local band, bor, bnot, rshift, bxor
-do
-  local ok, bitlib = pcall(require, "bit")   -- LuaJIT / LuaBitOp
-  if ok then
-    band, bor, bnot, rshift, bxor =
-      bitlib.band, bitlib.bor, bitlib.bnot, bitlib.rshift, bitlib.bxor
-  else                                        -- Lua 5.3+: native operators
-    band   = load("return function(a, b) return a & b end")()
-    bor    = load("return function(a, b) return a | b end")()
-    bnot   = load("return function(a) return ~a end")()
-    rshift = load("return function(a, n) return a >> n end")()
-    bxor   = load("return function(a, b) return a ~ b end")()
-  end
-end
+#if defined(LUAU)
+local band, bor, bnot, rshift, bxor =
+  bit32.band, bit32.bor, bit32.bnot, bit32.rshift, bit32.bxor
+#elif defined(LUAJIT)
+local bits = require("bit")
+local band, bor, bnot, rshift, bxor =
+  bits.band, bits.bor, bits.bnot, bits.rshift, bits.bxor
+#else
+#define band(a, b) ((a) & (b))
+#define bor(a, b) ((a) | (b))
+#define bnot(a) (~(a))
+#define rshift(a, n) ((a) >> (n))
+#define bxor(a, b) ((a) ~ (b))
+#endif
 
 local STATE_RUNNING            = 0
 local STATE_RUNNABLE           = 1

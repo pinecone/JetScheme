@@ -182,13 +182,23 @@ local function neighbors(x, y)
 end
 
 local heap = {}
+#if defined(LUAU)
+local lshift, rshift = bit32.lshift, bit32.rshift
+#elif defined(LUAJIT)
+local bits = require("bit")
+local lshift, rshift = bits.lshift, bits.rshift
+#endif
 
 local function heap_push(node)
   local i = #heap + 1
   heap[i] = node
   local f = node[N_F]
   while i > 1 do
+#if defined(PUC_LUA)
     local p = i >> 1
+#else
+    local p = rshift(i, 1)
+#endif
     if f < heap[p][N_F] then
       heap[i] = heap[p]
       heap[p] = node
@@ -210,7 +220,11 @@ local function heap_pop()
     local i = 1
     local f = last[N_F]
     while true do
+#if defined(PUC_LUA)
       local c1 = i << 1
+#else
+      local c1 = lshift(i, 1)
+#endif
       local c2 = c1 + 1
       local swap = 0
       local swap_f = f
@@ -240,7 +254,11 @@ local function heap_rescore(node)
       local i = idx
       local f = node[N_F]
       while i > 1 do
+#if defined(PUC_LUA)
         local p = i >> 1
+#else
+        local p = rshift(i, 1)
+#endif
         if f < heap[p][N_F] then
           heap[i] = heap[p]
           heap[p] = node

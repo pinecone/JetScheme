@@ -96,7 +96,7 @@ parse_value = function(i)
   local c = corpus:byte(i)
   if c == 123 then return parse_object(i + 1) end       -- {
   if c == 91 then return parse_array(i + 1) end         -- [
-  if c == 34 then return parse_string(i + 1) end        -- "
+  if c == 34 then return parse_string(i + 1) end        -- quotation mark
   if c == 116 then return true, i + 4 end               -- t
   if c == 102 then return false, i + 5 end              -- f
   if c == 110 then return JSON_NULL, i + 4 end          -- n
@@ -124,7 +124,7 @@ parse_object = function(i)
   local obj = {}
   while true do
     i = skip_ws(i)
-    local key, ki = parse_string(i + 1)               -- skip leading "
+    local key, ki = parse_string(i + 1)               -- skip leading quotation mark
     ki = skip_ws(ki)
     ki = ki + 1                                       -- skip :
     local v, ni = parse_value(ki)

@@ -460,4 +460,8 @@ for _ = 1, N do
     run_once()
 end
 
+#if defined(LUAU)
+print(check_number)
+#else
 io.write(check_number, "\n")
+#endif
