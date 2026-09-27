@@ -2310,7 +2310,6 @@ JET_NOINLINE JET_PRESERVE_NONE static void op_call_self_tail_slow(VM_OP_PARAMS)
 	Atom* src{frame_regs + op->w};
 	size_t nargs{op->nargs};
 	copy_atoms<4, CopyVariadic::Yes>(dst, src, nargs);
-	frame->code = pc + sizeof(*op);
 	pc = lambda.code;
 	DISPATCH();
 }
@@ -2321,7 +2320,6 @@ JET_PRESERVE_NONE static void op_call_self_tail(VM_OP_PARAMS)
 	{
 		JET_MUSTTAIL return op_call_self_tail_slow(VM_OP_ARGS);
 	}
-	frame->code = pc + sizeof(OP_call_self_tail);
 	pc = frame->closure->code;
 	DISPATCH();
 }
@@ -2392,7 +2390,6 @@ JET_NOINLINE JET_PRESERVE_NONE static void op_call_slot_slow(VM_OP_PARAMS)
 	Slot* slot{unbox<Slot>(frame->closure->captures[op->upvalue_idx])};
 	callee = slot->value;
 	JET_PROFILE_CALL_MISS(op->ic_atom, callee);
-	frame->code = pc + sizeof(*op);
 	VmOp stub{resolve_callee(s, callee, op->nargs, tail)};
 	op->ic_slot = std::bit_cast<uint64_t>(slot);
 	op->ic_atom = callee.bits;
@@ -2479,7 +2476,6 @@ JET_NOINLINE JET_PRESERVE_NONE static void op_call_atom_slow(VM_OP_PARAMS)
 		callee = frame->closure->captures[op->idx];
 	}
 	JET_PROFILE_CALL_MISS(op->ic_atom, callee);
-	frame->code = pc + sizeof(*op);
 	VmOp stub{resolve_callee(s, callee, op->nargs, tail)};
 	op->ic_atom = callee.bits;
 	VmOp fast{op_call_atom_impl<N, tail, source, CalleeKind::Lambda, Instr>};
