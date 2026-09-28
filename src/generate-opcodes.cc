@@ -7,731 +7,753 @@ static constexpr int N_REPLICAS = 4;
 
 struct Operand
 {
-  const char* type;
-  const char* name;
+	const char* type;
+	const char* name;
 };
 
 struct IcField
 {
-  const char* type;
-  const char* name;
+	const char* type;
+	const char* name;
 };
 
 struct Metadata
 {
-  std::string type;
-  std::string name;
-  std::string value;
+	std::string type;
+	std::string name;
+	std::string value;
 };
 
 struct VariantMetadata
 {
-  std::string variant;
-  Metadata field;
+	std::string variant;
+	Metadata field;
 };
+
+static std::string operand_size_expr(const std::string& name)
+{
+	return "sizeof(OP_" + name + ") - std::is_empty_v<OP_" + name + ">";
+}
 
 struct Opcode
 {
-  std::string name;
-  std::vector<Operand> operands;
-  std::vector<IcField> icfields;
-  bool op_variants[256]{};
-  bool is_replicated{false};
-  std::vector<Metadata> metadata_values;
-  std::vector<VariantMetadata> variant_metadata_values;
+	std::string name;
+	std::vector<Operand> operands;
+	std::vector<IcField> icfields;
+	bool op_variants[256]{};
+	bool is_replicated{false};
+	std::vector<Metadata> metadata_values;
+	std::vector<VariantMetadata> variant_metadata_values;
 
-  Opcode& operand(const char* type, const char* name)
-  {
-    operands.push_back(Operand{type, name});
-    return *this;
-  }
+	Opcode& operand(const char* type, const char* name)
+	{
+		operands.push_back(Operand{type, name});
+		return *this;
+	}
 
-  Opcode& icfield(const char* type, const char* name)
-  {
-    icfields.push_back(IcField{type, name});
-    return *this;
-  }
+	Opcode& icfield(const char* type, const char* name)
+	{
+		icfields.push_back(IcField{type, name});
+		return *this;
+	}
 
-  Opcode& variants(const char* vs)
-  {
-    for (const char* v = vs; *v; ++v)
-    {
-      op_variants[static_cast<unsigned char>(*v)] = true;
-    }
-    apply([&](const std::string& variant, const std::string& variant_name, const std::string&)
-          {
-            if (!variant.empty())
-            {
-              variant_metadata(variant.c_str(), "Opcode", "k_variant", ("Opcode::" + variant_name).c_str());
-              variant_metadata(variant.c_str(), "const char*", "name", ("\"" + variant_name + "\"").c_str());
-              variant_metadata(variant.c_str(), "size_t", "operand_size",
-                               ("sizeof(OP_" + variant_name + ") - std::is_empty_v<OP_" + variant_name + ">").c_str());
-            }
-          });
-    if (op_variants['k'])
-    {
-      base_metadata("Opcode", "k_variant", ("Opcode::" + name + "i").c_str());
-      variant_metadata("k", "bool", "is_kform", "true");
-      if (op_variants['h'])
-      {
-        variant_metadata("kh", "bool", "is_kform", "true");
-      }
-    }
-    if (op_variants['f'])
-    {
-      metadata("std::optional<Opcode>", "unboxed_float_opcode", ("Opcode::" + name + "f").c_str());
-    }
-    return *this;
-  }
+	Opcode& variants(const char* vs)
+	{
+		for (const char* v = vs; *v; ++v)
+		{
+			op_variants[static_cast<unsigned char>(*v)] = true;
+		}
+		apply(
+			[&](const std::string& variant, const std::string& variant_name, const std::string&)
+			{
+				if (!variant.empty())
+				{
+					variant_metadata(variant.c_str(), "Opcode", "k_variant", ("Opcode::" + variant_name).c_str());
+					variant_metadata(variant.c_str(), "const char*", "name", ("\"" + variant_name + "\"").c_str());
+					variant_metadata(
+						variant.c_str(), "size_t", "operand_size", operand_size_expr(variant_name).c_str());
+				}
+			});
+		if (op_variants['k'])
+		{
+			base_metadata("Opcode", "k_variant", ("Opcode::" + name + "i").c_str());
+			variant_metadata("k", "bool", "is_kform", "true");
+			if (op_variants['h'])
+			{
+				variant_metadata("kh", "bool", "is_kform", "true");
+			}
+		}
+		if (op_variants['f'])
+		{
+			metadata("std::optional<Opcode>", "unboxed_float_opcode", ("Opcode::" + name + "f").c_str());
+		}
+		return *this;
+	}
 
-  Opcode& replicated()
-  {
-    is_replicated = true;
-    foreach_variant([&](const std::string&, const std::string&, const std::string&) {},
-                    [&](const std::string&, const std::string& replica, const std::string&)
-                    {
-                      variant_metadata(replica.c_str(), "Opcode", "k_variant", ("Opcode::" + replica).c_str());
-                      variant_metadata(replica.c_str(), "const char*", "name", ("\"" + replica + "\"").c_str());
-                      variant_metadata(replica.c_str(), "size_t", "operand_size",
-                                       ("sizeof(OP_" + replica + ") - std::is_empty_v<OP_" + replica + ">").c_str());
-                    });
-    return *this;
-  }
+	Opcode& replicated()
+	{
+		is_replicated = true;
+		foreach_variant(
+			[&](const std::string&, const std::string&, const std::string&) {},
+			[&](const std::string&, const std::string& replica, const std::string&)
+			{
+				variant_metadata(replica.c_str(), "Opcode", "k_variant", ("Opcode::" + replica).c_str());
+				variant_metadata(replica.c_str(), "const char*", "name", ("\"" + replica + "\"").c_str());
+				variant_metadata(replica.c_str(), "size_t", "operand_size", operand_size_expr(replica).c_str());
+			});
+		return *this;
+	}
 
-  Opcode& metadata(const char* type, const char* name, const char* value)
-  {
-    metadata_values.push_back(Metadata{type, name, value});
-    return *this;
-  }
+	Opcode& metadata(const char* type, const char* name, const char* value)
+	{
+		metadata_values.push_back(Metadata{type, name, value});
+		return *this;
+	}
 
-  Opcode& variant_metadata(const char* variant, const char* type, const char* name, const char* value)
-  {
-    variant_metadata_values.push_back(VariantMetadata{variant, Metadata{type, name, value}});
-    return *this;
-  }
+	Opcode& variant_metadata(const char* variant, const char* type, const char* name, const char* value)
+	{
+		variant_metadata_values.push_back(VariantMetadata{variant, Metadata{type, name, value}});
+		return *this;
+	}
 
-  Opcode& base_metadata(const char* type, const char* name, const char* value)
-  {
-    return variant_metadata("", type, name, value);
-  }
+	Opcode& base_metadata(const char* type, const char* name, const char* value)
+	{
+		return variant_metadata("", type, name, value);
+	}
 
-  Opcode& if_comparison()
-  {
-    return metadata("bool", "is_if_cmp", "true");
-  }
+	Opcode& if_comparison()
+	{
+		return metadata("bool", "is_if_cmp", "true");
+	}
 
-  Opcode& call_shaped()
-  {
-    return metadata("bool", "is_call_shaped", "true");
-  }
+	Opcode& call_shaped()
+	{
+		return metadata("bool", "is_call_shaped", "true");
+	}
 
-  Opcode& branch_fusion()
-  {
-    base_metadata("std::optional<Opcode>", "branch_fusion", ("Opcode::b" + name).c_str());
-    if (op_variants['k'])
-    {
-      variant_metadata("k", "std::optional<Opcode>", "branch_fusion", ("Opcode::b" + name + "i").c_str());
-    }
-    return *this;
-  }
+	Opcode& branch_fusion()
+	{
+		base_metadata("std::optional<Opcode>", "branch_fusion", ("Opcode::b" + name).c_str());
+		if (op_variants['k'])
+		{
+			variant_metadata("k", "std::optional<Opcode>", "branch_fusion", ("Opcode::b" + name + "i").c_str());
+		}
+		return *this;
+	}
 
-  Opcode& unboxed_float_kind(const char* kind)
-  {
-    std::string value{"UnboxedFloatKind::"};
-    value += kind;
-    return variant_metadata("f", "UnboxedFloatKind", "unboxed_float_kind", value.c_str());
-  }
+	Opcode& unboxed_float_kind(const char* kind)
+	{
+		std::string value{"UnboxedFloatKind::"};
+		value += kind;
+		return variant_metadata("f", "UnboxedFloatKind", "unboxed_float_kind", value.c_str());
+	}
 
-  template <typename Func>
-  void apply(Func&& f)
-  {
-    const std::string& shown = name;
-    f("", name, shown);
-    if (op_variants['h'])
-    {
-      f("h", name + "m", shown + "m");
-    }
-    if (op_variants['k'])
-    {
-      f("k", name + "i", shown + "i");
-      if (op_variants['h'])
-      {
-        f("kh", name + "mi", shown + "mi");
-      }
-    }
-    if (op_variants['f'])
-    {
-      f("f", name + "f", shown + "f");
-    }
-  }
+	template <typename Func>
+	void apply(Func&& f)
+	{
+		const std::string& shown = name;
+		f("", name, shown);
+		if (op_variants['h'])
+		{
+			f("h", name + "m", shown + "m");
+		}
+		if (op_variants['k'])
+		{
+			f("k", name + "i", shown + "i");
+			if (op_variants['h'])
+			{
+				f("kh", name + "mi", shown + "mi");
+			}
+		}
+		if (op_variants['f'])
+		{
+			f("f", name + "f", shown + "f");
+		}
+	}
 
-  template <typename Func, typename FuncRep>
-  void foreach_variant(Func&& f, FuncRep&& fr)
-  {
-    apply(f);
+	template <typename Func, typename FuncRep>
+	void foreach_variant(Func&& f, FuncRep&& fr)
+	{
+		apply(f);
 
-    if (is_replicated)
-    {
-      for (int i = 0; i < N_REPLICAS; ++i)
-      {
-        std::string suffix = std::to_string(i);
-        apply([&](const std::string& variant, const std::string& name, const std::string&)
-              {
-                fr(name, name + suffix, variant);
-              });
-      }
-    }
-  }
+		if (is_replicated)
+		{
+			for (int i = 0; i < N_REPLICAS; ++i)
+			{
+				std::string suffix = std::to_string(i);
+				apply(
+					[&](const std::string& variant, const std::string& name, const std::string&)
+					{
+						fr(name, name + suffix, variant);
+					});
+			}
+		}
+	}
 };
 
 struct Gen
 {
-  std::vector<Opcode> opcodes;
-  std::vector<Metadata> metadata_fields;
+	std::vector<Opcode> opcodes;
+	std::vector<Metadata> metadata_fields;
 
-  Gen& metadata(const char* type, const char* name, const char* default_value)
-  {
-    metadata_fields.push_back(Metadata{type, name, default_value});
-    return *this;
-  }
+	Gen& metadata(const char* type, const char* name, const char* default_value)
+	{
+		metadata_fields.push_back(Metadata{type, name, default_value});
+		return *this;
+	}
 
-  Opcode& opcode(const char* name)
-  {
-    opcodes.emplace_back();
-    Opcode& op = opcodes.back();
-    op.name = name;
-    op.metadata("const char*", "name", ("\"" + op.name + "\"").c_str());
-    op.metadata("size_t", "operand_size",
-                ("sizeof(OP_" + op.name + ") - std::is_empty_v<OP_" + op.name + ">").c_str());
-    op.base_metadata("Opcode", "k_variant", ("Opcode::" + op.name).c_str());
-    return op;
-  }
+	Opcode& opcode(const char* name)
+	{
+		opcodes.emplace_back();
+		Opcode& op = opcodes.back();
+		op.name = name;
+		op.metadata("const char*", "name", ("\"" + op.name + "\"").c_str());
+		op.metadata("size_t", "operand_size", operand_size_expr(op.name).c_str());
+		op.base_metadata("Opcode", "k_variant", ("Opcode::" + op.name).c_str());
+		return op;
+	}
 
-  void print_struct(Opcode& op)
-  {
-    auto&& p = [&](const std::string& variant, const std::string& name, const std::string&)
-    {
-      if (variant == "f")
-      {
-        printf("using OP_%s = OP_unboxed_float;\n", name.c_str());
-        return;
-      }
+	void print_struct(Opcode& op)
+	{
+		auto&& p = [&](const std::string& variant, const std::string& name, const std::string&)
+		{
+			if (variant == "f")
+			{
+				printf("using OP_%s = OP_unboxed_float;\n", name.c_str());
+				return;
+			}
 
-      printf("struct OP_%s {\n", name.c_str());
-      for (Operand& operand : op.operands)
-      {
-        printf("\t%s %s;\n", operand.type, operand.name);
-      }
-      for (IcField& field : op.icfields)
-      {
-        printf("\t%s %s;\n", field.type, field.name);
-      }
-      printf("};\n");
-    };
+			printf("struct OP_%s {\n", name.c_str());
+			for (Operand& operand : op.operands)
+			{
+				printf("\t%s %s;\n", operand.type, operand.name);
+			}
+			for (IcField& field : op.icfields)
+			{
+				printf("\t%s %s;\n", field.type, field.name);
+			}
+			printf("};\n");
+		};
 
-    auto&& pr = [&](const std::string& name, const std::string& rname, const std::string&)
-    {
-      printf("using OP_%s = OP_%s;\n", rname.c_str(), name.c_str());
-    };
+		auto&& pr = [&](const std::string& name, const std::string& rname, const std::string&)
+		{
+			printf("using OP_%s = OP_%s;\n", rname.c_str(), name.c_str());
+		};
 
-    op.foreach_variant(p, pr);
-  }
+		op.foreach_variant(p, pr);
+	}
 
-  void print()
-  {
-    printf("enum class Opcode : uint8_t\n{\n");
-    size_t count = 0;
-    for (Opcode& op : opcodes)
-    {
-      auto&& emit = [&](const std::string& name)
-      {
-        printf("\t%s,\n", name.c_str());
-        ++count;
-      };
-      op.foreach_variant([&](const std::string&, const std::string& name, const std::string&)
-                         {
-                           if (!op.is_replicated) { emit(name); }
-                         },
-                         [&](const std::string&, const std::string& name, const std::string&)
-                         {
-                           emit(name);
-                         });
-    }
-    printf("};\n\nconstexpr int OPCODE_COUNT = %zu;\n\n", count);
-    printf("#pragma pack(push, 1)\n");
-    for (Opcode& op : opcodes)
-    {
-      print_struct(op);
-    }
-    printf("#pragma pack(pop)\n\n");
+	void print()
+	{
+		printf("enum class Opcode : uint8_t\n{\n");
+		size_t count = 0;
+		for (Opcode& op : opcodes)
+		{
+			auto&& emit = [&](const std::string& name)
+			{
+				printf("\t%s,\n", name.c_str());
+				++count;
+			};
+			op.foreach_variant(
+				[&](const std::string&, const std::string& name, const std::string&)
+				{
+					if (!op.is_replicated)
+					{
+						emit(name);
+					}
+				},
+				[&](const std::string&, const std::string& name, const std::string&)
+				{
+					emit(name);
+				});
+		}
+		printf("};\n\nconstexpr int OPCODE_COUNT = %zu;\n\n", count);
+		printf("#pragma pack(push, 1)\n");
+		for (Opcode& op : opcodes)
+		{
+			print_struct(op);
+		}
+		printf("#pragma pack(pop)\n\n");
 
-    printf("struct OpcodeInfo\n{\n");
-    for (const Metadata& field : metadata_fields)
-    {
-      printf("\t%s %s;\n", field.type.c_str(), field.name.c_str());
-    }
-    printf("};\n\nconstexpr OpcodeInfo OPCODE_INFO[]{\n");
-    for (Opcode& op : opcodes)
-    {
-      auto&& emit = [&](const std::string& variant, const std::string& name)
-      {
-        printf("\t{");
-        for (size_t i = 0; i < metadata_fields.size(); ++i)
-        {
-          const Metadata& field = metadata_fields[i];
-          std::string value = field.value;
-          for (const Metadata& override : op.metadata_values)
-          {
-            if (override.type == field.type && override.name == field.name)
-            {
-              value = override.value;
-            }
-          }
-          for (const VariantMetadata& override : op.variant_metadata_values)
-          {
-            if ((override.variant == variant || override.variant == name)
-                && override.field.type == field.type && override.field.name == field.name)
-            {
-              value = override.field.value;
-            }
-          }
-          printf("%s%s", i ? ", " : "", value.c_str());
-        }
-        printf("},\n");
-      };
-      op.foreach_variant([&](const std::string& variant, const std::string& name, const std::string&)
-                         {
-                           if (!op.is_replicated) { emit(variant, name); }
-                         },
-                         [&](const std::string&, const std::string& name, const std::string& variant)
-                         {
-                           emit(variant, name);
-                         });
-    }
-    printf("};\n\n");
-  }
+		printf("struct OpcodeInfo\n{\n");
+		for (const Metadata& field : metadata_fields)
+		{
+			printf("\t%s %s;\n", field.type.c_str(), field.name.c_str());
+		}
+		printf("};\n\nconstexpr OpcodeInfo OPCODE_INFO[]{\n");
+		for (Opcode& op : opcodes)
+		{
+			auto&& emit = [&](const std::string& variant, const std::string& name)
+			{
+				printf("\t{");
+				for (size_t i = 0; i < metadata_fields.size(); ++i)
+				{
+					const Metadata& field = metadata_fields[i];
+					std::string value = field.value;
+					for (const Metadata& override : op.metadata_values)
+					{
+						if (override.type == field.type && override.name == field.name)
+						{
+							value = override.value;
+						}
+					}
+					for (const VariantMetadata& override : op.variant_metadata_values)
+					{
+						if ((override.variant == variant || override.variant == name)
+						    && override.field.type == field.type && override.field.name == field.name)
+						{
+							value = override.field.value;
+						}
+					}
+					printf("%s%s", i ? ", " : "", value.c_str());
+				}
+				printf("},\n");
+			};
+			op.foreach_variant(
+				[&](const std::string& variant, const std::string& name, const std::string&)
+				{
+					if (!op.is_replicated)
+					{
+						emit(variant, name);
+					}
+				},
+				[&](const std::string&, const std::string& name, const std::string& variant)
+				{
+					emit(variant, name);
+				});
+		}
+		printf("};\n\n");
+	}
 
-  void print_disasm()
-  {
-    for (Opcode& op : opcodes)
-    {
-      auto&& emit = [&](const std::string& name)
-      {
-        printf("\tdisasm_fields<OP_%s>,\n", name.c_str());
-      };
-      op.foreach_variant([&](const std::string&, const std::string& name, const std::string&)
-                         {
-                           if (!op.is_replicated) { emit(name); }
-                         },
-                         [&](const std::string&, const std::string& name, const std::string&)
-                         {
-                           emit(name);
-                         });
-    }
-  }
+	void print_disasm()
+	{
+		for (Opcode& op : opcodes)
+		{
+			auto&& emit = [&](const std::string& name)
+			{
+				printf("\tdisasm_fields<OP_%s>,\n", name.c_str());
+			};
+			op.foreach_variant(
+				[&](const std::string&, const std::string& name, const std::string&)
+				{
+					if (!op.is_replicated)
+					{
+						emit(name);
+					}
+				},
+				[&](const std::string&, const std::string& name, const std::string&)
+				{
+					emit(name);
+				});
+		}
+	}
 
-  void print_handlers()
-  {
-    for (Opcode& op : opcodes)
-    {
-      auto&& emit = [&](const std::string& name)
-      {
-        printf("\top_%s,\n", name.c_str());
-      };
-      op.foreach_variant([&](const std::string&, const std::string& name, const std::string&)
-                         {
-                           if (!op.is_replicated) { emit(name); }
-                         },
-                         [&](const std::string&, const std::string& name, const std::string&)
-                         {
-                           emit(name);
-                         });
-    }
-  }
+	void print_handlers()
+	{
+		for (Opcode& op : opcodes)
+		{
+			auto&& emit = [&](const std::string& name)
+			{
+				printf("\top_%s,\n", name.c_str());
+			};
+			op.foreach_variant(
+				[&](const std::string&, const std::string& name, const std::string&)
+				{
+					if (!op.is_replicated)
+					{
+						emit(name);
+					}
+				},
+				[&](const std::string&, const std::string& name, const std::string&)
+				{
+					emit(name);
+				});
+		}
+	}
 };
 
 int main(int argc, char* argv[])
 {
-  Gen g;
-  g.metadata("const char*", "name", "nullptr")
-    .metadata("bool", "is_if_cmp", "false")
-    .metadata("bool", "is_call_shaped", "false")
-    .metadata("bool", "is_kform", "false")
-    .metadata("Opcode", "k_variant", "Opcode::hlt")
-    .metadata("std::optional<Opcode>", "unboxed_float_opcode", "std::nullopt")
-    .metadata("std::optional<Opcode>", "branch_fusion", "std::nullopt")
-    .metadata("size_t", "operand_size", "0")
-    .metadata("UnboxedFloatKind", "unboxed_float_kind", "UnboxedFloatKind::None");
+	Gen g;
+	g.metadata("const char*", "name", "nullptr")
+		.metadata("bool", "is_if_cmp", "false")
+		.metadata("bool", "is_call_shaped", "false")
+		.metadata("bool", "is_kform", "false")
+		.metadata("Opcode", "k_variant", "Opcode::hlt")
+		.metadata("std::optional<Opcode>", "unboxed_float_opcode", "std::nullopt")
+		.metadata("std::optional<Opcode>", "branch_fusion", "std::nullopt")
+		.metadata("size_t", "operand_size", "0")
+		.metadata("UnboxedFloatKind", "unboxed_float_kind", "UnboxedFloatKind::None");
 
-  g.opcode("hlt");
+	g.opcode("hlt");
 
-  g.opcode("skp")
-    .operand("uint32_t", "size");
+	g.opcode("skp")
+		.operand("uint32_t", "size");
 
-  g.opcode("loc");
+	g.opcode("loc");
 
-  g.opcode("mov")
-    .operand("uint16_t", "dst")
-    .operand("uint16_t", "src");
-  g.opcode("mov2")
-    .operand("uint16_t", "dst0")
-    .operand("uint16_t", "src0")
-    .operand("uint16_t", "dst1")
-    .operand("uint16_t", "src1");
+	g.opcode("mov")
+		.operand("uint16_t", "dst")
+		.operand("uint16_t", "src");
+	g.opcode("mov2")
+		.operand("uint16_t", "dst0")
+		.operand("uint16_t", "src0")
+		.operand("uint16_t", "dst1")
+		.operand("uint16_t", "src1");
 
-  g.opcode("ldi")
-    .operand("uint16_t", "dst")
-    .operand("uint16_t", "idx");
-  g.opcode("ldc")
-    .operand("uint16_t", "dst")
-    .operand("uint16_t", "idx");
-  g.opcode("ldcb")
-    .operand("uint16_t", "dst")
-    .operand("uint16_t", "idx");
-  g.opcode("stcb")
-    .operand("uint16_t", "idx")
-    .operand("uint16_t", "src");
+	g.opcode("ldi")
+		.operand("uint16_t", "dst")
+		.operand("uint16_t", "idx");
+	g.opcode("ldc")
+		.operand("uint16_t", "dst")
+		.operand("uint16_t", "idx");
+	g.opcode("ldcb")
+		.operand("uint16_t", "dst")
+		.operand("uint16_t", "idx");
+	g.opcode("stcb")
+		.operand("uint16_t", "idx")
+		.operand("uint16_t", "src");
 
-  g.opcode("ldb")
-    .operand("uint16_t", "dst")
-    .operand("uint16_t", "idx");
-  g.opcode("stb")
-    .operand("uint16_t", "idx")
-    .operand("uint16_t", "src");
+	g.opcode("ldb")
+		.operand("uint16_t", "dst")
+		.operand("uint16_t", "idx");
+	g.opcode("stb")
+		.operand("uint16_t", "idx")
+		.operand("uint16_t", "src");
 
-  g.opcode("box")
-    .operand("uint16_t", "reg");
+	g.opcode("box")
+		.operand("uint16_t", "reg");
 
-  g.opcode("clo")
-	  .operand("uint16_t", "dst")
-    .operand("uint16_t", "pool_idx")
-    .operand("uint16_t", "n_captures");
+	g.opcode("clo")
+		.operand("uint16_t", "dst")
+		.operand("uint16_t", "pool_idx")
+		.operand("uint16_t", "n_captures");
 
-  g.opcode("add")
-    .variants("kf")
-    .unboxed_float_kind("Binary")
-	  .operand("uint16_t", "dst")
-	  .operand("uint16_t", "a")
-    .operand("uint16_t", "b");
+	g.opcode("add")
+		.variants("kf")
+		.unboxed_float_kind("Binary")
+		.operand("uint16_t", "dst")
+		.operand("uint16_t", "a")
+		.operand("uint16_t", "b");
 
-  g.opcode("sub")
-    .variants("kf")
-    .unboxed_float_kind("Binary")
-	  .operand("uint16_t", "dst")
-	  .operand("uint16_t", "a")
-    .operand("uint16_t", "b");
+	g.opcode("sub")
+		.variants("kf")
+		.unboxed_float_kind("Binary")
+		.operand("uint16_t", "dst")
+		.operand("uint16_t", "a")
+		.operand("uint16_t", "b");
 
-  g.opcode("mul")
-    .variants("kf")
-    .unboxed_float_kind("Binary")
-	  .operand("uint16_t", "dst")
-	  .operand("uint16_t", "a")
-    .operand("uint16_t", "b");
+	g.opcode("mul")
+		.variants("kf")
+		.unboxed_float_kind("Binary")
+		.operand("uint16_t", "dst")
+		.operand("uint16_t", "a")
+		.operand("uint16_t", "b");
 
-  g.opcode("div")
-    .variants("kf")
-    .unboxed_float_kind("Binary")
-	  .operand("uint16_t", "dst")
-	  .operand("uint16_t", "a")
-    .operand("uint16_t", "b");
+	g.opcode("div")
+		.variants("kf")
+		.unboxed_float_kind("Binary")
+		.operand("uint16_t", "dst")
+		.operand("uint16_t", "a")
+		.operand("uint16_t", "b");
 
-  g.opcode("cmp")
-    .variants("kf")
-    .branch_fusion()
-    .unboxed_float_kind("Comparison")
-	  .operand("uint16_t", "dst")
-	  .operand("uint16_t", "a")
-    .operand("uint16_t", "b");
+	g.opcode("cmp")
+		.variants("kf")
+		.branch_fusion()
+		.unboxed_float_kind("Comparison")
+		.operand("uint16_t", "dst")
+		.operand("uint16_t", "a")
+		.operand("uint16_t", "b");
 
-  g.opcode("eq")
-    .variants("k")
-    .branch_fusion()
-	  .operand("uint16_t", "dst")
-	  .operand("uint16_t", "a")
-    .operand("uint16_t", "b");
+	g.opcode("eq")
+		.variants("k")
+		.branch_fusion()
+		.operand("uint16_t", "dst")
+		.operand("uint16_t", "a")
+		.operand("uint16_t", "b");
 
-  g.opcode("lt")
-    .variants("kf")
-    .branch_fusion()
-    .unboxed_float_kind("Comparison")
-	  .operand("uint16_t", "dst")
-	  .operand("uint16_t", "a")
-    .operand("uint16_t", "b");
+	g.opcode("lt")
+		.variants("kf")
+		.branch_fusion()
+		.unboxed_float_kind("Comparison")
+		.operand("uint16_t", "dst")
+		.operand("uint16_t", "a")
+		.operand("uint16_t", "b");
 
-  g.opcode("le")
-    .variants("f")
-    .branch_fusion()
-    .unboxed_float_kind("Comparison")
-	  .operand("uint16_t", "dst")
-	  .operand("uint16_t", "a")
-    .operand("uint16_t", "b");
+	g.opcode("le")
+		.variants("f")
+		.branch_fusion()
+		.unboxed_float_kind("Comparison")
+		.operand("uint16_t", "dst")
+		.operand("uint16_t", "a")
+		.operand("uint16_t", "b");
 
-  g.opcode("gt")
-    .variants("f")
-    .branch_fusion()
-    .unboxed_float_kind("Comparison")
-	  .operand("uint16_t", "dst")
-	  .operand("uint16_t", "a")
-    .operand("uint16_t", "b");
+	g.opcode("gt")
+		.variants("f")
+		.branch_fusion()
+		.unboxed_float_kind("Comparison")
+		.operand("uint16_t", "dst")
+		.operand("uint16_t", "a")
+		.operand("uint16_t", "b");
 
-  g.opcode("ge")
-    .variants("f")
-    .branch_fusion()
-    .unboxed_float_kind("Comparison")
-	  .operand("uint16_t", "dst")
-	  .operand("uint16_t", "a")
-    .operand("uint16_t", "b");
+	g.opcode("ge")
+		.variants("f")
+		.branch_fusion()
+		.unboxed_float_kind("Comparison")
+		.operand("uint16_t", "dst")
+		.operand("uint16_t", "a")
+		.operand("uint16_t", "b");
 
-  g.opcode("bn")
-	  .operand("uint16_t", "src")
-    .operand("uint32_t", "size");
+	g.opcode("bn")
+		.operand("uint16_t", "src")
+		.operand("uint32_t", "size");
 
-  g.opcode("bcmp")
-    .if_comparison()
-    .variants("k")
-    .operand("uint16_t", "a")
-    .operand("uint16_t", "b")
-    .operand("uint32_t", "size");
+	g.opcode("bcmp")
+		.if_comparison()
+		.variants("k")
+		.operand("uint16_t", "a")
+		.operand("uint16_t", "b")
+		.operand("uint32_t", "size");
 
-  g.opcode("beq")
-    .if_comparison()
-    .variants("k")
-    .operand("uint16_t", "a")
-    .operand("uint16_t", "b")
-    .operand("uint32_t", "size");
+	g.opcode("beq")
+		.if_comparison()
+		.variants("k")
+		.operand("uint16_t", "a")
+		.operand("uint16_t", "b")
+		.operand("uint32_t", "size");
 
-  g.opcode("blt")
-    .if_comparison()
-    .variants("k")
-    .operand("uint16_t", "a")
-    .operand("uint16_t", "b")
-    .operand("uint32_t", "size");
+	g.opcode("blt")
+		.if_comparison()
+		.variants("k")
+		.operand("uint16_t", "a")
+		.operand("uint16_t", "b")
+		.operand("uint32_t", "size");
 
-  g.opcode("ble")
-    .if_comparison()
-    .operand("uint16_t", "a")
-    .operand("uint16_t", "b")
-    .operand("uint32_t", "size");
+	g.opcode("ble")
+		.if_comparison()
+		.operand("uint16_t", "a")
+		.operand("uint16_t", "b")
+		.operand("uint32_t", "size");
 
-  g.opcode("bgt")
-    .if_comparison()
-    .operand("uint16_t", "a")
-    .operand("uint16_t", "b")
-    .operand("uint32_t", "size");
+	g.opcode("bgt")
+		.if_comparison()
+		.operand("uint16_t", "a")
+		.operand("uint16_t", "b")
+		.operand("uint32_t", "size");
 
-  g.opcode("bge")
-    .if_comparison()
-    .operand("uint16_t", "a")
-    .operand("uint16_t", "b")
-    .operand("uint32_t", "size");
+	g.opcode("bge")
+		.if_comparison()
+		.operand("uint16_t", "a")
+		.operand("uint16_t", "b")
+		.operand("uint32_t", "size");
 
-  g.opcode("ret")
-    .operand("uint16_t", "src");
+	g.opcode("ret")
+		.operand("uint16_t", "src");
 
-  g.opcode("c")
-    .call_shaped()
-	  .operand("uint16_t", "w")
-    .operand("uint16_t", "callee")
-    .operand("uint16_t", "nargs");
+	g.opcode("c")
+		.call_shaped()
+		.operand("uint16_t", "w")
+		.operand("uint16_t", "callee")
+		.operand("uint16_t", "nargs");
 
-  g.opcode("ct")
-	  .operand("uint16_t", "w")
-    .operand("uint16_t", "callee")
-    .operand("uint16_t", "nargs");
+	g.opcode("ct")
+		.operand("uint16_t", "w")
+		.operand("uint16_t", "callee")
+		.operand("uint16_t", "nargs");
 
-  g.opcode("cst")
-    .call_shaped()
-	  .operand("uint16_t", "w")
-    .operand("uint16_t", "nargs");
+	g.opcode("cst")
+		.call_shaped()
+		.operand("uint16_t", "w")
+		.operand("uint16_t", "nargs");
 
-  g.opcode("cs")
-    .replicated()
-    .call_shaped()
-	  .operand("uint16_t", "w")
-    .operand("uint16_t", "nargs");
+	g.opcode("cs")
+		.replicated()
+		.call_shaped()
+		.operand("uint16_t", "w")
+		.operand("uint16_t", "nargs");
 
-  g.opcode("app")
-    .operand("uint16_t", "w");
+	g.opcode("app")
+		.operand("uint16_t", "w");
 
-  g.opcode("itn1")
-	  .operand("uint16_t", "cursor")
-    .operand("uint16_t", "dst")
-    .operand("uint32_t", "size")
-    .icfield("uint64_t", "dispatch_key");
+	g.opcode("itn1")
+		.operand("uint16_t", "cursor")
+		.operand("uint16_t", "dst")
+		.operand("uint32_t", "size")
+		.icfield("uint64_t", "dispatch_key");
 
-  g.opcode("itn2")
-	  .operand("uint16_t", "cursor")
-    .operand("uint16_t", "dst0")
-    .operand("uint16_t", "dst1")
-    .operand("uint32_t", "size")
-    .icfield("uint64_t", "dispatch_key");
+	g.opcode("itn2")
+		.operand("uint16_t", "cursor")
+		.operand("uint16_t", "dst0")
+		.operand("uint16_t", "dst1")
+		.operand("uint32_t", "size")
+		.icfield("uint64_t", "dispatch_key");
 
-  g.opcode("cl")
-    .replicated()
-    .call_shaped()
-	  .operand("uint16_t", "w")
-    .operand("uint16_t", "idx")
-    .operand("uint16_t", "nargs")
-    .icfield("uint16_t", "ic_n_locals")
-    .icfield("uint32_t", "ic_epoch")
-    .icfield("uint64_t", "ic_atom")
-    .icfield("uint64_t", "ic_code");
+	g.opcode("cl")
+		.replicated()
+		.call_shaped()
+		.operand("uint16_t", "w")
+		.operand("uint16_t", "idx")
+		.operand("uint16_t", "nargs")
+		.icfield("uint16_t", "ic_n_locals")
+		.icfield("uint32_t", "ic_epoch")
+		.icfield("uint64_t", "ic_atom")
+		.icfield("uint64_t", "ic_code");
 
-  g.opcode("clt")
-    .replicated()
-	  .operand("uint16_t", "w")
-    .operand("uint16_t", "idx")
-    .operand("uint16_t", "nargs")
-    .icfield("uint16_t", "ic_n_locals")
-    .icfield("uint32_t", "ic_epoch")
-    .icfield("uint64_t", "ic_atom")
-    .icfield("uint64_t", "ic_code");
+	g.opcode("clt")
+		.replicated()
+		.operand("uint16_t", "w")
+		.operand("uint16_t", "idx")
+		.operand("uint16_t", "nargs")
+		.icfield("uint16_t", "ic_n_locals")
+		.icfield("uint32_t", "ic_epoch")
+		.icfield("uint64_t", "ic_atom")
+		.icfield("uint64_t", "ic_code");
 
-  g.opcode("cc")
-    .replicated()
-    .call_shaped()
-	  .operand("uint16_t", "w")
-    .operand("uint16_t", "idx")
-    .operand("uint16_t", "nargs")
-    .icfield("uint16_t", "ic_n_locals")
-    .icfield("uint32_t", "ic_epoch")
-    .icfield("uint64_t", "ic_atom")
-    .icfield("uint64_t", "ic_code");
+	g.opcode("cc")
+		.replicated()
+		.call_shaped()
+		.operand("uint16_t", "w")
+		.operand("uint16_t", "idx")
+		.operand("uint16_t", "nargs")
+		.icfield("uint16_t", "ic_n_locals")
+		.icfield("uint32_t", "ic_epoch")
+		.icfield("uint64_t", "ic_atom")
+		.icfield("uint64_t", "ic_code");
 
-  g.opcode("cct")
-    .replicated()
-	  .operand("uint16_t", "w")
-    .operand("uint16_t", "idx")
-    .operand("uint16_t", "nargs")
-    .icfield("uint16_t", "ic_n_locals")
-    .icfield("uint32_t", "ic_epoch")
-    .icfield("uint64_t", "ic_atom")
-    .icfield("uint64_t", "ic_code");
+	g.opcode("cct")
+		.replicated()
+		.operand("uint16_t", "w")
+		.operand("uint16_t", "idx")
+		.operand("uint16_t", "nargs")
+		.icfield("uint16_t", "ic_n_locals")
+		.icfield("uint32_t", "ic_epoch")
+		.icfield("uint64_t", "ic_atom")
+		.icfield("uint64_t", "ic_code");
 
-  g.opcode("ccb")
-    .replicated()
-    .call_shaped()
-	  .operand("uint16_t", "w")
-    .operand("uint16_t", "upvalue_idx")
-    .operand("uint16_t", "nargs")
-    .icfield("uint16_t", "ic_n_locals")
-    .icfield("uint32_t", "ic_epoch")
-    .icfield("uint64_t", "ic_slot")
-    .icfield("uint64_t", "ic_atom")
-    .icfield("uint64_t", "ic_code")
-    .icfield("uint64_t", "ic_version");
+	g.opcode("ccb")
+		.replicated()
+		.call_shaped()
+		.operand("uint16_t", "w")
+		.operand("uint16_t", "upvalue_idx")
+		.operand("uint16_t", "nargs")
+		.icfield("uint16_t", "ic_n_locals")
+		.icfield("uint32_t", "ic_epoch")
+		.icfield("uint64_t", "ic_slot")
+		.icfield("uint64_t", "ic_atom")
+		.icfield("uint64_t", "ic_code")
+		.icfield("uint64_t", "ic_version");
 
-  g.opcode("ccbt")
-    .replicated()
-	  .operand("uint16_t", "w")
-    .operand("uint16_t", "upvalue_idx")
-    .operand("uint16_t", "nargs")
-    .icfield("uint16_t", "ic_n_locals")
-    .icfield("uint32_t", "ic_epoch")
-    .icfield("uint64_t", "ic_slot")
-    .icfield("uint64_t", "ic_atom")
-    .icfield("uint64_t", "ic_code")
-    .icfield("uint64_t", "ic_version");
+	g.opcode("ccbt")
+		.replicated()
+		.operand("uint16_t", "w")
+		.operand("uint16_t", "upvalue_idx")
+		.operand("uint16_t", "nargs")
+		.icfield("uint16_t", "ic_n_locals")
+		.icfield("uint32_t", "ic_epoch")
+		.icfield("uint64_t", "ic_slot")
+		.icfield("uint64_t", "ic_atom")
+		.icfield("uint64_t", "ic_code")
+		.icfield("uint64_t", "ic_version");
 
-  g.opcode("ldk")
-    .variants("kh")
-	  .operand("uint16_t", "dst")
-	  .operand("uint16_t", "obj")
-    .operand("uint16_t", "key")
-	  .icfield("uint64_t", "dispatch_key")
-    .icfield("uint64_t", "cached_index")
-    .icfield("uint64_t", "cached_key");
+	g.opcode("ldk")
+		.variants("kh")
+		.operand("uint16_t", "dst")
+		.operand("uint16_t", "obj")
+		.operand("uint16_t", "key")
+		.icfield("uint64_t", "dispatch_key")
+		.icfield("uint64_t", "cached_index")
+		.icfield("uint64_t", "cached_key");
 
-  g.opcode("stk")
-    .variants("k")
-	  .operand("uint16_t", "obj")
-	  .operand("uint16_t", "key")
-    .operand("uint16_t", "val")
-	  .icfield("uint64_t", "dispatch_key")
-    .icfield("uint64_t", "cached_index")
-    .icfield("uint64_t", "cached_key");
+	g.opcode("stk")
+		.variants("k")
+		.operand("uint16_t", "obj")
+		.operand("uint16_t", "key")
+		.operand("uint16_t", "val")
+		.icfield("uint64_t", "dispatch_key")
+		.icfield("uint64_t", "cached_index")
+		.icfield("uint64_t", "cached_key");
 
-  g.opcode("ldkd")
-    .variants("k")
-	  .operand("uint16_t", "dst")
-	  .operand("uint16_t", "obj")
-    .operand("uint16_t", "key")
-    .operand("uint16_t", "dfl")
-	  .icfield("uint64_t", "dispatch_key")
-    .icfield("uint64_t", "cached_index")
-    .icfield("uint64_t", "cached_key");
+	g.opcode("ldkd")
+		.variants("k")
+		.operand("uint16_t", "dst")
+		.operand("uint16_t", "obj")
+		.operand("uint16_t", "key")
+		.operand("uint16_t", "dfl")
+		.icfield("uint64_t", "dispatch_key")
+		.icfield("uint64_t", "cached_index")
+		.icfield("uint64_t", "cached_key");
 
-  g.opcode("rst")
-    .call_shaped()
-    .operand("uint16_t", "w");
+	g.opcode("rst")
+		.call_shaped()
+		.operand("uint16_t", "w");
 
-  g.opcode("retx")
-    .operand("Struct*", "escape");
+	g.opcode("retx")
+		.operand("Struct*", "escape");
 
-  g.opcode("coro")
-    .call_shaped()
-    .operand("uint16_t", "w");
+	g.opcode("coro")
+		.call_shaped()
+		.operand("uint16_t", "w");
 
-  g.opcode("retr");
-  g.opcode("retn");
-  g.opcode("reth");
+	g.opcode("retr");
+	g.opcode("retn");
+	g.opcode("reth");
 
-  g.opcode("trunc")
-    .variants("f")
-    .unboxed_float_kind("Unary")
-	  .operand("uint16_t", "dst")
-    .operand("uint16_t", "src");
+	g.opcode("trunc")
+		.variants("f")
+		.unboxed_float_kind("Unary")
+		.operand("uint16_t", "dst")
+		.operand("uint16_t", "src");
 
-  g.opcode("sqrt")
-    .variants("f")
-    .unboxed_float_kind("Unary")
-	  .operand("uint16_t", "dst")
-    .operand("uint16_t", "src");
+	g.opcode("sqrt")
+		.variants("f")
+		.unboxed_float_kind("Unary")
+		.operand("uint16_t", "dst")
+		.operand("uint16_t", "src");
 
-  g.opcode("floor")
-    .variants("f")
-    .unboxed_float_kind("Unary")
-	  .operand("uint16_t", "dst")
-    .operand("uint16_t", "src");
+	g.opcode("floor")
+		.variants("f")
+		.unboxed_float_kind("Unary")
+		.operand("uint16_t", "dst")
+		.operand("uint16_t", "src");
 
-  g.opcode("round")
-    .variants("f")
-    .unboxed_float_kind("Unary")
-	  .operand("uint16_t", "dst")
-    .operand("uint16_t", "src");
+	g.opcode("round")
+		.variants("f")
+		.unboxed_float_kind("Unary")
+		.operand("uint16_t", "dst")
+		.operand("uint16_t", "src");
 
-  g.opcode("ceil")
-    .variants("f")
-    .unboxed_float_kind("Unary")
-	  .operand("uint16_t", "dst")
-    .operand("uint16_t", "src");
+	g.opcode("ceil")
+		.variants("f")
+		.unboxed_float_kind("Unary")
+		.operand("uint16_t", "dst")
+		.operand("uint16_t", "src");
 
-  g.opcode("min")
-    .variants("kf")
-    .unboxed_float_kind("Binary")
-	  .operand("uint16_t", "dst")
-    .operand("uint16_t", "a")
-    .operand("uint16_t", "b");
+	g.opcode("min")
+		.variants("kf")
+		.unboxed_float_kind("Binary")
+		.operand("uint16_t", "dst")
+		.operand("uint16_t", "a")
+		.operand("uint16_t", "b");
 
-  g.opcode("max")
-    .variants("kf")
-    .unboxed_float_kind("Binary")
-	  .operand("uint16_t", "dst")
-    .operand("uint16_t", "a")
-    .operand("uint16_t", "b");
-  
-  if (argc == 2 && std::string_view{argv[1]} == "handlers")
-  {
-    g.print_handlers();
-  }
-  else if (argc == 2 && std::string_view{argv[1]} == "disasm")
-  {
-    g.print_disasm();
-  }
-  else
-  {
-    g.print();
-  }
+	g.opcode("max")
+		.variants("kf")
+		.unboxed_float_kind("Binary")
+		.operand("uint16_t", "dst")
+		.operand("uint16_t", "a")
+		.operand("uint16_t", "b");
 
-  return 0;
+	if (argc == 2 && std::string_view{argv[1]} == "handlers")
+	{
+		g.print_handlers();
+	}
+	else if (argc == 2 && std::string_view{argv[1]} == "disasm")
+	{
+		g.print_disasm();
+	}
+	else
+	{
+		g.print();
+	}
+
+	return 0;
 }

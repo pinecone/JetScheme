@@ -116,11 +116,11 @@ class StructType
 public:
 	StructType(VmState& s, Atom name, std::vector<Atom> field_names, Arity arity, const StructOps& ops)
 		: name_{name},
-		  field_names_{std::move(field_names)},
-		  arity_{arity},
-		  destructor_id_{s.gc.register_struct_destructor(s, ops.destroy)},
-		  kind_{ops.kind},
-		  ops_{&ops}
+			field_names_{std::move(field_names)},
+			arity_{arity},
+			destructor_id_{s.gc.register_struct_destructor(s, ops.destroy)},
+			kind_{ops.kind},
+			ops_{&ops}
 	{
 	}
 

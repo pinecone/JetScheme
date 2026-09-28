@@ -46,7 +46,7 @@ enum class UnboxedFloatKind : uint8_t
 #include "opcodes_gen.h"
 
 #define JET_REPLICATE_N 4
-#define JET_REPLICATE(X, name)                                                                             \
+#define JET_REPLICATE(X, name)									   \
 	X(name##0, 0) X(name##1, 1) X(name##2, 2) X(name##3, 3)
 
 template <>

@@ -3,6 +3,7 @@
 
 #include "compiler.h"
 #include "runtime.h"
+
 #include <cstdlib>
 
 static Atom enter(VmState& state, Atom callback)

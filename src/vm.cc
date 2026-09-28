@@ -1350,14 +1350,22 @@ namespace
 	} shape_table_init;
 } // namespace
 
-static constexpr auto& op_ldk = op_field_impl<FieldAccess::Load, FieldKeySource::Register, FieldMiss::Die, OP_ldk>;
-static constexpr auto& op_stk = op_field_impl<FieldAccess::Store, FieldKeySource::Register, FieldMiss::Die, OP_stk>;
-static constexpr auto& op_ldki = op_field_impl<FieldAccess::Load, FieldKeySource::Constant, FieldMiss::Die, OP_ldki>;
-static constexpr auto& op_stki = op_field_impl<FieldAccess::Store, FieldKeySource::Constant, FieldMiss::Die, OP_stki>;
-static constexpr auto& op_ldkm = op_field_impl<FieldAccess::Load, FieldKeySource::Register, FieldMiss::Hole, OP_ldkm>;
-static constexpr auto& op_ldkmi = op_field_impl<FieldAccess::Load, FieldKeySource::Constant, FieldMiss::Hole, OP_ldkmi>;
-static constexpr auto& op_ldkd = op_field_impl<FieldAccess::Load, FieldKeySource::Register, FieldMiss::Default, OP_ldkd>;
-static constexpr auto& op_ldkdi = op_field_impl<FieldAccess::Load, FieldKeySource::Constant, FieldMiss::Default, OP_ldkdi>;
+static constexpr auto& op_ldk =
+	op_field_impl<FieldAccess::Load, FieldKeySource::Register, FieldMiss::Die, OP_ldk>;
+static constexpr auto& op_stk =
+	op_field_impl<FieldAccess::Store, FieldKeySource::Register, FieldMiss::Die, OP_stk>;
+static constexpr auto& op_ldki =
+	op_field_impl<FieldAccess::Load, FieldKeySource::Constant, FieldMiss::Die, OP_ldki>;
+static constexpr auto& op_stki =
+	op_field_impl<FieldAccess::Store, FieldKeySource::Constant, FieldMiss::Die, OP_stki>;
+static constexpr auto& op_ldkm =
+	op_field_impl<FieldAccess::Load, FieldKeySource::Register, FieldMiss::Hole, OP_ldkm>;
+static constexpr auto& op_ldkmi =
+	op_field_impl<FieldAccess::Load, FieldKeySource::Constant, FieldMiss::Hole, OP_ldkmi>;
+static constexpr auto& op_ldkd =
+	op_field_impl<FieldAccess::Load, FieldKeySource::Register, FieldMiss::Default, OP_ldkd>;
+static constexpr auto& op_ldkdi =
+	op_field_impl<FieldAccess::Load, FieldKeySource::Constant, FieldMiss::Default, OP_ldkdi>;
 
 template <typename Op, int outputs>
 JET_NOINLINE JET_PRESERVE_NONE static void op_iter_coro_slow(VM_OP_PARAMS)
@@ -2557,32 +2565,38 @@ JET_NOINLINE JET_PRESERVE_NONE static void op_call_self_impl(VM_OP_PARAMS)
 }
 
 #define X(name, n) \
-	static constexpr auto& op_##name = op_call_slot_impl<n, CallTail::No, CalleeKind::Stub, OP_##name>;
+	static constexpr auto& op_##name = \
+		op_call_slot_impl<n, CallTail::No, CalleeKind::Stub, OP_##name>;
 JET_REPLICATE(X, ccb)
 #undef X
 
 #define X(name, n) \
-	static constexpr auto& op_##name = op_call_slot_impl<n, CallTail::Yes, CalleeKind::Stub, OP_##name>;
+	static constexpr auto& op_##name = \
+		op_call_slot_impl<n, CallTail::Yes, CalleeKind::Stub, OP_##name>;
 JET_REPLICATE(X, ccbt)
 #undef X
 
 #define X(name, n) \
-	static constexpr auto& op_##name = op_call_atom_impl<n, CallTail::No, CalleeSource::Local, CalleeKind::Stub, OP_##name>;
+	static constexpr auto& op_##name = \
+		op_call_atom_impl<n, CallTail::No, CalleeSource::Local, CalleeKind::Stub, OP_##name>;
 JET_REPLICATE(X, cl)
 #undef X
 
 #define X(name, n) \
-	static constexpr auto& op_##name = op_call_atom_impl<n, CallTail::Yes, CalleeSource::Local, CalleeKind::Stub, OP_##name>;
+	static constexpr auto& op_##name = \
+		op_call_atom_impl<n, CallTail::Yes, CalleeSource::Local, CalleeKind::Stub, OP_##name>;
 JET_REPLICATE(X, clt)
 #undef X
 
 #define X(name, n) \
-	static constexpr auto& op_##name = op_call_atom_impl<n, CallTail::No, CalleeSource::Upval, CalleeKind::Stub, OP_##name>;
+	static constexpr auto& op_##name = \
+		op_call_atom_impl<n, CallTail::No, CalleeSource::Upval, CalleeKind::Stub, OP_##name>;
 JET_REPLICATE(X, cc)
 #undef X
 
 #define X(name, n) \
-	static constexpr auto& op_##name = op_call_atom_impl<n, CallTail::Yes, CalleeSource::Upval, CalleeKind::Stub, OP_##name>;
+	static constexpr auto& op_##name = \
+		op_call_atom_impl<n, CallTail::Yes, CalleeSource::Upval, CalleeKind::Stub, OP_##name>;
 JET_REPLICATE(X, cct)
 #undef X
 

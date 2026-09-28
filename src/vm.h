@@ -559,9 +559,9 @@ struct Lambda
 
 	Lambda(Code* code, Arity arity, uint16_t n_locals, uint16_t n_captures)
 		: code{code},
-		  arity{arity},
-		  n_locals{n_locals},
-		  n_captures{n_captures}
+			arity{arity},
+			n_locals{n_locals},
+			n_captures{n_captures}
 	{
 	}
 

@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Kirill Zorin
 
-#ifndef debug_h
-#define debug_h
+#pragma once
+
+#include "opcodes.h"
+#include "platform.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -10,9 +12,6 @@
 #include <string>
 #include <string_view>
 #include <vector>
-
-#include "opcodes.h"
-#include "platform.h"
 
 #ifdef JET_DEBUG
 #  include <cstdio>
@@ -324,7 +323,5 @@ void profile_begin(VmState& vm);
 #define JET_PROFILE_HOST ((void)0)
 #define JET_PROFILE_BIND(name, atom) ((void)0)
 #define JET_PROFILE_PREPARE(state, code, size) ((void)0)
-
-#endif
 
 #endif

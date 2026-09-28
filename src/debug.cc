@@ -6,6 +6,7 @@
 #include "opcodes.h"
 #include "runtime.h"
 #include "vm.h"
+
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -13,14 +14,16 @@
 #include <string_view>
 #include <vector>
 
+#ifdef JET_PROFILE
+#  include <bit>
+#  include <chrono>
+#  include <cmath>
+#  include <cstdlib>
+#endif
+
 const char* opcode_name(uint8_t op);
 
 #ifdef JET_PROFILE
-
-#include <bit>
-#include <chrono>
-#include <cmath>
-#include <cstdlib>
 
 Profile g_profile;
 
@@ -559,10 +562,10 @@ const char* opcode_name(uint8_t op)
 
 bool is_call_slot_op(uint8_t op)
 {
-#define X(name, n) \
-	if (op == static_cast<uint8_t>(Opcode::name)) \
-	{ \
-		return true; \
+#define X(name, n)																 \
+	if (op == static_cast<uint8_t>(Opcode::name))	  \
+	{																							  \
+		return true;																	 \
 	}
 	JET_REPLICATE(X, ccb)
 	JET_REPLICATE(X, ccbt)
@@ -572,10 +575,10 @@ bool is_call_slot_op(uint8_t op)
 
 bool is_call_atom_op(uint8_t op)
 {
-#define X(name, n) \
-	if (op == static_cast<uint8_t>(Opcode::name)) \
-	{ \
-		return true; \
+#define X(name, n)																 \
+	if (op == static_cast<uint8_t>(Opcode::name))	  \
+	{																							  \
+		return true;																	 \
 	}
 	JET_REPLICATE(X, cl)
 	JET_REPLICATE(X, clt)
@@ -587,10 +590,10 @@ bool is_call_atom_op(uint8_t op)
 
 bool is_call_self_op(uint8_t op)
 {
-#define X(name, n) \
-	if (op == static_cast<uint8_t>(Opcode::name)) \
-	{ \
-		return true; \
+#define X(name, n)																 \
+	if (op == static_cast<uint8_t>(Opcode::name))	  \
+	{																							  \
+		return true;																	 \
 	}
 	JET_REPLICATE(X, cs)
 #undef X
