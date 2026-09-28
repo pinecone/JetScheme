@@ -394,10 +394,39 @@ enum class ConstTag : uint8_t
 	Unknown,
 	GlobalName,
 	// Pool entry encoding a lambda body. Decodes to a template Lambda atom
-	// (captures empty); clos clones it with a populated captures vec.
+	// (captures empty); clo clones it with a populated captures vec.
 	// A zero-upvalue lambda is reached via ldc -- the template is the closure.
 	Lambda
 };
+
+// Serialized constant-pool entry bodies (the tag byte is read separately).
+// Emitter (compiler.cc), loader (vm.cc), and disassembler (debug.cc) must all
+// use these; the pool format is defined by these structs alone.
+#pragma pack(push, 1)
+struct PoolNumber
+{
+	double value;
+};
+struct PoolBoolean
+{
+	uint8_t value;
+};
+struct PoolCharacter
+{
+	Character value;
+};
+struct PoolString
+{
+	uint32_t n_bytes; // string bytes follow
+};
+struct PoolLambda
+{
+	uint8_t is_n_ary;
+	uint32_t arity; // exact parameter count; 0 when is_n_ary
+	uint16_t n_locals;
+	uint32_t code_size; // code bytes, then NUL-terminated name, follow
+};
+#pragma pack(pop)
 
 struct Lambda;
 

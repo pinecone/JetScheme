@@ -68,7 +68,7 @@ static void test_samples()
 {
 	Profile profile;
 	Code instruction[OPCODE_SIZE]{};
-	instruction[OPCODE_SIZE - 1] = static_cast<uint8_t>(Opcode::ldk);
+	instruction[OPCODE_SIZE - 1] = static_cast<uint8_t>(Opcode::ldi);
 	profile.code_begin = reinterpret_cast<uintptr_t>(instruction);
 	profile.code_size = sizeof(instruction);
 	profile.site_index = {0};

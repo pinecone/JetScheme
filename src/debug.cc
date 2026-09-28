@@ -356,8 +356,8 @@ static void print_durations(const char* name, const ProfileDurations& durations)
 
 static void print_fields()
 {
-	constexpr Opcode field_ops[] = {Opcode::ldf, Opcode::stf, Opcode::ldfk, Opcode::stfk,
-		                            Opcode::ldfh, Opcode::ldfkh, Opcode::ldfo, Opcode::ldfok};
+	constexpr Opcode field_ops[] = {Opcode::ldk, Opcode::stk, Opcode::ldki, Opcode::stki,
+		                            Opcode::ldkm, Opcode::ldkmi, Opcode::ldkd, Opcode::ldkdi};
 	constexpr const char* field_receivers[] = {
 		"vector", "string", "bytevector", "scheme", "tuple", "hashset", "hashmap", "cursor", "other",
 	};
@@ -559,40 +559,40 @@ const char* opcode_name(uint8_t op)
 
 bool is_call_slot_op(uint8_t op)
 {
-#define X(name, disp, n)                                                                                     \
-	if (op == static_cast<uint8_t>(Opcode::name))                                                            \
-	{                                                                                                        \
-		return true;                                                                                         \
+#define X(name, n) \
+	if (op == static_cast<uint8_t>(Opcode::name)) \
+	{ \
+		return true; \
 	}
-	JET_REPLICATE(X, call_upval_slot, "cus")
-	JET_REPLICATE(X, call_upval_slot_tail, "cust")
+	JET_REPLICATE(X, ccb)
+	JET_REPLICATE(X, ccbt)
 #undef X
 	return false;
 }
 
 bool is_call_atom_op(uint8_t op)
 {
-#define X(name, disp, n)                                                                                     \
-	if (op == static_cast<uint8_t>(Opcode::name))                                                            \
-	{                                                                                                        \
-		return true;                                                                                         \
+#define X(name, n) \
+	if (op == static_cast<uint8_t>(Opcode::name)) \
+	{ \
+		return true; \
 	}
-	JET_REPLICATE(X, call_local, "cl")
-	JET_REPLICATE(X, call_local_tail, "clt")
-	JET_REPLICATE(X, call_upval, "cu")
-	JET_REPLICATE(X, call_upval_tail, "cut")
+	JET_REPLICATE(X, cl)
+	JET_REPLICATE(X, clt)
+	JET_REPLICATE(X, cc)
+	JET_REPLICATE(X, cct)
 #undef X
 	return false;
 }
 
 bool is_call_self_op(uint8_t op)
 {
-#define X(name, disp, n)                                                                                     \
-	if (op == static_cast<uint8_t>(Opcode::name))                                                            \
-	{                                                                                                        \
-		return true;                                                                                         \
+#define X(name, n) \
+	if (op == static_cast<uint8_t>(Opcode::name)) \
+	{ \
+		return true; \
 	}
-	JET_REPLICATE(X, call_self, "cself")
+	JET_REPLICATE(X, cs)
 #undef X
 	return false;
 }
@@ -757,33 +757,33 @@ namespace
 		{
 			case ConstTag::Number:
 			{
-				double n;
-				std::memcpy(&n, p, sizeof(n));
-				print(out, "{}\n", n);
-				return p + sizeof(n);
+				PoolNumber entry;
+				std::memcpy(&entry, p, sizeof(entry));
+				print(out, "{}\n", entry.value);
+				return p + sizeof(entry);
 			}
 			case ConstTag::Boolean:
 			{
-				bool b;
-				std::memcpy(&b, p, sizeof(b));
-				print(out, "{}\n", b ? "#t" : "#f");
-				return p + sizeof(b);
+				PoolBoolean entry;
+				std::memcpy(&entry, p, sizeof(entry));
+				print(out, "{}\n", entry.value ? "#t" : "#f");
+				return p + sizeof(entry);
 			}
 			case ConstTag::Character:
 			{
-				Character c;
-				std::memcpy(&c, p, sizeof(c));
-				print(out, "U+{:04x}\n", c);
-				return p + sizeof(c);
+				PoolCharacter entry;
+				std::memcpy(&entry, p, sizeof(entry));
+				print(out, "U+{:04x}\n", entry.value);
+				return p + sizeof(entry);
 			}
 			case ConstTag::String:
 			{
-				uint32_t n_string_bytes;
-				std::memcpy(&n_string_bytes, p, sizeof(n_string_bytes));
-				p += sizeof(n_string_bytes);
-				std::string_view text{reinterpret_cast<const char*>(p), n_string_bytes};
+				PoolString entry;
+				std::memcpy(&entry, p, sizeof(entry));
+				p += sizeof(entry);
+				std::string_view text{reinterpret_cast<const char*>(p), entry.n_bytes};
 				print(out, "\"{}\"\n", text);
-				return p + n_string_bytes;
+				return p + entry.n_bytes;
 			}
 			case ConstTag::Symbol:
 			case ConstTag::GlobalName:
@@ -798,32 +798,21 @@ namespace
 				return p;
 			case ConstTag::Lambda:
 			{
-				bool is_n_ary;
-				std::memcpy(&is_n_ary, p, sizeof(is_n_ary));
-				p += sizeof(is_n_ary);
-				size_t arity = 0;
-				if (!is_n_ary)
-				{
-					std::memcpy(&arity, p, sizeof(arity));
-					p += sizeof(arity);
-				}
-				uint16_t n_locals;
-				std::memcpy(&n_locals, p, sizeof(n_locals));
-				p += sizeof(n_locals);
-				size_t code_size;
-				std::memcpy(&code_size, p, sizeof(code_size));
-				p += sizeof(code_size);
+				PoolLambda entry;
+				std::memcpy(&entry, p, sizeof(entry));
+				p += sizeof(entry);
 				Code* code = p;
-				const char* name = reinterpret_cast<const char*>(code + code_size);
-				print(out, "arity={}{} n_locals={} code_size={}", is_n_ary ? "n-ary≥" : "", arity,
-				      n_locals, code_size);
+				const char* name = reinterpret_cast<const char*>(code + entry.code_size);
+				print(out, "arity={}{} n_locals={} code_size={}", entry.is_n_ary ? "n-ary≥" : "",
+				      entry.arity, entry.n_locals, entry.code_size);
 				if (*name)
 				{
 					print(out, " name=\"{}\"", name);
 				}
 				std::fputc('\n', out);
-				lambdas.push_back({idx, code, code_size, arity, is_n_ary, n_locals, name});
-				return code + code_size + std::strlen(name) + 1;
+				lambdas.push_back(
+					{idx, code, entry.code_size, entry.arity, entry.is_n_ary != 0, entry.n_locals, name});
+				return code + entry.code_size + std::strlen(name) + 1;
 			}
 		}
 		return p;

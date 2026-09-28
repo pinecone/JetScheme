@@ -958,10 +958,10 @@ enum class FieldMiss
 template <FieldAccess access, FieldKeySource key_source, FieldMiss miss = FieldMiss::Die>
 constexpr Opcode field_opcode =
 	access == FieldAccess::Store
-	? (key_source == FieldKeySource::Constant ? Opcode::stfk : Opcode::stf)
-	: miss == FieldMiss::Hole ? (key_source == FieldKeySource::Constant ? Opcode::ldfkh : Opcode::ldfh)
-	: miss == FieldMiss::Default ? (key_source == FieldKeySource::Constant ? Opcode::ldfok : Opcode::ldfo)
-	: (key_source == FieldKeySource::Constant ? Opcode::ldfk : Opcode::ldf);
+	? (key_source == FieldKeySource::Constant ? Opcode::stki : Opcode::stk)
+	: miss == FieldMiss::Hole ? (key_source == FieldKeySource::Constant ? Opcode::ldkmi : Opcode::ldkm)
+	: miss == FieldMiss::Default ? (key_source == FieldKeySource::Constant ? Opcode::ldkdi : Opcode::ldkd)
+	: (key_source == FieldKeySource::Constant ? Opcode::ldki : Opcode::ldk);
 
 template <FieldMiss miss, typename Instr>
 JET_ALWAYS_INLINE Atom field_miss_value(Instr* op, Atom* frame_regs)
@@ -1300,14 +1300,14 @@ template <typename Access>
 constexpr ObjShape make_field_shape(Atom (*ref_or_die)(VmState&, Atom, Atom),
                                     Cursor* (*iter)(VmState&, Atom))
 {
-	return {op_field_load_fast<Access, FieldKeySource::Register, FieldMiss::Die, OP_ldf>,
-	        op_field_store_fast<Access, FieldKeySource::Register, OP_stf>,
-	        op_field_load_fast<Access, FieldKeySource::Constant, FieldMiss::Die, OP_ldfk>,
-	        op_field_store_fast<Access, FieldKeySource::Constant, OP_stfk>,
-	        op_field_load_fast<Access, FieldKeySource::Register, FieldMiss::Hole, OP_ldfh>,
-	        op_field_load_fast<Access, FieldKeySource::Constant, FieldMiss::Hole, OP_ldfkh>,
-	        op_field_load_fast<Access, FieldKeySource::Register, FieldMiss::Default, OP_ldfo>,
-	        op_field_load_fast<Access, FieldKeySource::Constant, FieldMiss::Default, OP_ldfok>,
+	return {op_field_load_fast<Access, FieldKeySource::Register, FieldMiss::Die, OP_ldk>,
+	        op_field_store_fast<Access, FieldKeySource::Register, OP_stk>,
+	        op_field_load_fast<Access, FieldKeySource::Constant, FieldMiss::Die, OP_ldki>,
+	        op_field_store_fast<Access, FieldKeySource::Constant, OP_stki>,
+	        op_field_load_fast<Access, FieldKeySource::Register, FieldMiss::Hole, OP_ldkm>,
+	        op_field_load_fast<Access, FieldKeySource::Constant, FieldMiss::Hole, OP_ldkmi>,
+	        op_field_load_fast<Access, FieldKeySource::Register, FieldMiss::Default, OP_ldkd>,
+	        op_field_load_fast<Access, FieldKeySource::Constant, FieldMiss::Default, OP_ldkdi>,
 	        ref_or_die, Access::load_or_hole, iter};
 }
 

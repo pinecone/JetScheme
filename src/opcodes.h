@@ -46,9 +46,8 @@ enum class UnboxedFloatKind : uint8_t
 #include "opcodes_gen.h"
 
 #define JET_REPLICATE_N 4
-#define JET_REPLICATE(X, name, disp)                                                                       \
-	X(name##_0, disp "_0", 0) X(name##_1, disp "_1", 1)                                                      \
-	X(name##_2, disp "_2", 2) X(name##_3, disp "_3", 3)
+#define JET_REPLICATE(X, name)                                                                             \
+	X(name##0, 0) X(name##1, 1) X(name##2, 2) X(name##3, 3)
 
 template <>
 struct std::formatter<Opcode> : std::formatter<std::string_view>
@@ -120,10 +119,10 @@ constexpr size_t OPCODE_SIZE = VM_OP_SLOT_SIZE + 1;
 
 inline size_t opcode_step(uint8_t op, const uint8_t* operands)
 {
-	if (static_cast<Opcode>(op) == Opcode::clos)
+	if (static_cast<Opcode>(op) == Opcode::clo)
 	{
-		const OP_clos* closure{reinterpret_cast<const OP_clos*>(operands)};
-		return OPCODE_SIZE + sizeof(OP_clos) + closure->n_captures * sizeof(OP_make_closure_capture);
+		const OP_clo* closure{reinterpret_cast<const OP_clo*>(operands)};
+		return OPCODE_SIZE + sizeof(OP_clo) + closure->n_captures * sizeof(OP_make_closure_capture);
 	}
 
 	JET_DIE_UNLESS(nullptr, op < OPCODE_COUNT, "unknown opcode {}", op);

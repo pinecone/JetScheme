@@ -3217,7 +3217,7 @@ bool Compiler::prim_binding_lowerable(ResolvedBinding binding, std::string_view 
 
 void Compiler::record_ref(ResolvedBinding binding)
 {
-	// Codegen wires each transit lambda's clos to forward the Slot, so
+	// Codegen wires each transit lambda's clo to forward the Slot, so
 	// every lambda between owner and the current scope needs an upvalue entry.
 	if (lambdas_.back() == binding.lambda)
 	{
@@ -3762,7 +3762,7 @@ namespace
 		}
 		if (name == "=")
 		{
-			return Opcode::numeq;
+			return Opcode::cmp;
 		}
 		if (name == "eq?")
 		{
@@ -3858,7 +3858,7 @@ void Compiler::select_ops_in(Expr* expr, Expr* current)
 			{
 				select_ops_in(child, current);
 			});
-			select_field_op(expr, current, expr->set_ref.obj, expr->set_ref.key, Opcode::stf, Opcode::stfk);
+			select_field_op(expr, current, expr->set_ref.obj, expr->set_ref.key, Opcode::stk, Opcode::stki);
 			break;
 
 		case ExprKind::IterNext:
@@ -3868,7 +3868,7 @@ void Compiler::select_ops_in(Expr* expr, Expr* current)
 				select_ops_in(child, current);
 			});
 			OpSelection& sel = selected_ops_[expr->id].emplace();
-			sel.op = expr->iter_next.names.size() == 1 ? Opcode::iter_next1 : Opcode::iter_next2;
+			sel.op = expr->iter_next.names.size() == 1 ? Opcode::itn1 : Opcode::itn2;
 			break;
 		}
 
@@ -3921,11 +3921,11 @@ Compiler::PrimLowering Compiler::prim_call_lowering(Expr* call)
 	{
 		if (proc->prim_ref.name == REF_HOLE_PRIM && call->call.args.size() == 2)
 		{
-			return {PrimLowering::Kind::Ref, Opcode::ldfh, Opcode::ldfkh};
+			return {PrimLowering::Kind::Ref, Opcode::ldkm, Opcode::ldkmi};
 		}
 		if (proc->prim_ref.name == REF_DEFAULT_PRIM && call->call.args.size() == 3)
 		{
-			return {PrimLowering::Kind::Ref, Opcode::ldfo, Opcode::ldfok};
+			return {PrimLowering::Kind::Ref, Opcode::ldkd, Opcode::ldkdi};
 		}
 		return {};
 	}
@@ -3959,7 +3959,7 @@ Compiler::PrimLowering Compiler::prim_call_lowering(Expr* call)
 	{
 		return {PrimLowering::Kind::Arith, *arith};
 	}
-	return {PrimLowering::Kind::Ref, Opcode::ldf, Opcode::ldfk};
+	return {PrimLowering::Kind::Ref, Opcode::ldk, Opcode::ldki};
 }
 
 bool Compiler::is_intrinsic_callee(Expr* expr, Expr* current)
@@ -3995,7 +3995,7 @@ void Compiler::select_call_op(Expr* expr, Expr* current)
 {
 	Expr* proc = expr->call.proc;
 	OpSelection& sel = selected_ops_[expr->id].emplace();
-	sel.op = Opcode::call;
+	sel.op = Opcode::c;
 
 	if (proc->kind == ExprKind::PrimRef && proc->prim_ref.name == RESET_PRIM)
 	{
@@ -4006,7 +4006,7 @@ void Compiler::select_call_op(Expr* expr, Expr* current)
 			"{} expects exactly one argument",
 			RESET_PRIM
 			);
-		sel.op = Opcode::reset;
+		sel.op = Opcode::rst;
 		return;
 	}
 
@@ -4030,7 +4030,7 @@ void Compiler::select_call_op(Expr* expr, Expr* current)
 
 	if (is_self_tail_call(expr, current))
 	{
-		sel.op = Opcode::call_self_tail;
+		sel.op = Opcode::cst;
 		return;
 	}
 
@@ -4078,7 +4078,7 @@ void Compiler::select_call_op(Expr* expr, Expr* current)
 		    !get(lb.reassigned_after_init, proc_binding.breadth)
 		    && get(lb.bound_init, proc_binding.breadth) == current)
 		{
-			sel.op = Opcode::call_self_0;
+			sel.op = Opcode::cs0;
 			return;
 		}
 	}
@@ -4091,7 +4091,7 @@ void Compiler::select_call_op(Expr* expr, Expr* current)
 		std::optional<uint16_t> found = find_upvalue(current, proc_binding.lambda,
 		                                             static_cast<uint32_t>(proc_binding.breadth));
 		JETC_DIE_UNLESS(*this, expr->loc, found, "codegen: cacheable call missing upvalue entry");
-		sel.op = Opcode::call_upval_slot_0;
+		sel.op = Opcode::ccb0;
 		sel.u.call_ic_slot.upvalue_idx = *found;
 		return;
 	}
@@ -4101,7 +4101,7 @@ void Compiler::select_call_op(Expr* expr, Expr* current)
 	{
 		if (proc_binding.lambda == current)
 		{
-			sel.op = Opcode::call_local_0;
+			sel.op = Opcode::cl0;
 			sel.u.call_ic_atom.idx = static_cast<uint16_t>(proc_binding.breadth);
 		}
 		else
@@ -4109,7 +4109,7 @@ void Compiler::select_call_op(Expr* expr, Expr* current)
 			std::optional<uint16_t> found = find_upvalue(current, proc_binding.lambda,
 			                                             static_cast<uint32_t>(proc_binding.breadth));
 			JETC_DIE_UNLESS(*this, expr->loc, found, "codegen: cacheable call missing upvalue entry");
-			sel.op = Opcode::call_upval_0;
+			sel.op = Opcode::cc0;
 			sel.u.call_ic_atom.idx = *found;
 		}
 	}
@@ -4239,7 +4239,7 @@ void Compiler::select_var_op(Expr* expr, Expr* current, bool is_set)
 	{
 		// mov marks a plain register access: refs read the register directly
 		// (no code), sets write it.
-		sel.op = slot ? (is_set ? Opcode::std : Opcode::ldd) : Opcode::mov;
+		sel.op = slot ? (is_set ? Opcode::stb : Opcode::ldb) : Opcode::mov;
 		sel.u.var.addr = narrow_or_die<uint16_t>(*this, expr->loc, binding_result.breadth);
 		return;
 	}
@@ -4253,7 +4253,7 @@ void Compiler::select_var_op(Expr* expr, Expr* current, bool is_set)
 		"select-pass: ref to non-local without upvalue entry: '{}'",
 		name
 		);
-	sel.op = is_set ? Opcode::stu : (slot ? Opcode::ldus : Opcode::ldu);
+	sel.op = is_set ? Opcode::stcb : (slot ? Opcode::ldcb : Opcode::ldc);
 	sel.u.var.addr = *found;
 }
 
@@ -5168,24 +5168,24 @@ namespace
 		{
 			struct { uint16_t dst; uint16_t src; } mov;              // mov
 			struct { uint16_t dst0; uint16_t src0; uint16_t dst1; uint16_t src1; } mov2;
-			struct { uint16_t dst; uint16_t idx; } load;             // ldk ldu ldus ldd
-			struct { uint16_t idx; uint16_t src; } store;            // stu std
+			struct { uint16_t dst; uint16_t idx; } load;             // ldi ldc ldcb ldb
+			struct { uint16_t idx; uint16_t src; } store;            // stcb stb
 			struct { uint16_t reg; } box;                            // box
-			struct { uint16_t src; } ret;                            // retv
-			struct { uint32_t id; uint16_t src; } label;             // label; if_false/skip target
+			struct { uint16_t src; } ret;                            // ret
+			struct { uint32_t id; uint16_t src; } label;             // loc; bn/skp target
 			struct
 			{
 				uint32_t id;
 				uint16_t lhs;
 				uint16_t rhs;
-			} if_cmp; // if_eq..if_ltk; pool index in rhs
-			// One payload for every call op: call/tcall read callee, call_upval_slot
-			// reads upvalue_idx, call_local/call_upval read idx, the rest only w+nargs.
+			} if_cmp; // beq..blti; pool index in rhs
+			// One payload for every call op: c/ct read callee, ccb
+			// reads upvalue_idx, cl/cc read idx, the rest only w+nargs.
 			struct { uint16_t width; uint16_t nargs; uint16_t callee; uint16_t upvalue_idx; uint16_t idx; } call;
 			struct { uint16_t dst; uint16_t pool_idx; uint16_t first_capture; uint16_t n_captures; } closure;
-			struct { uint16_t dst; uint16_t lhs; uint16_t rhs; } arith;  // rr; rk holds the pool idx in rhs
+			struct { uint16_t dst; uint16_t lhs; uint16_t rhs; } arith;  // rr; *i holds the pool idx in rhs
 			struct { uint16_t dst; uint16_t obj; uint16_t key; uint16_t val; } field;
-			// ldf stf; *k holds the pool idx in key
+			// ldk stk; *i holds the pool idx in key
 			struct { uint32_t id; uint16_t cursor; uint16_t dst0; uint16_t dst1; } iter;
 		} u;
 		// Stamped from the SourceLoc passed to LirEmitter::emit; line 0 means
@@ -5510,7 +5510,7 @@ namespace
 
 		void emit_ldk(SourceLoc loc, uint16_t dst, uint16_t idx)
 		{
-			emit_load(loc, Opcode::ldk, dst, idx);
+			emit_load(loc, Opcode::ldi, dst, idx);
 		}
 
 		uint16_t intern_constant(std::string& serialized)
@@ -5599,7 +5599,7 @@ namespace
 
 		void emit_ret(SourceLoc loc, uint16_t src)
 		{
-			LirInst i = inst(Opcode::retv);
+			LirInst i = inst(Opcode::ret);
 			i.u.ret.src = src;
 			emit(loc, i);
 		}
@@ -5733,7 +5733,7 @@ namespace
 				emit_ldk(expr->loc, dst, pool_index);
 				return;
 			}
-			LirInst i = inst(Opcode::clos);
+			LirInst i = inst(Opcode::clo);
 			i.u.closure.dst = dst;
 			i.u.closure.pool_idx = pool_index;
 			i.u.closure.first_capture = narrow_or_die<uint16_t>(db, expr->loc, current_lambda().captures.size());
@@ -5747,16 +5747,16 @@ namespace
 			JETC_DIE_WHEN(db, expr->loc, !db.selected_ops_[expr->id], "codegen: {} without selection", what);
 			Compiler::OpSelection sel = *db.selected_ops_[expr->id];
 			// Single read point for selections: these payloads name an unboxed
-			// local register (for ldu/stu/ldus the same field holds an upvalue
+			// local register (for ldc/stcb/ldcb the same field holds an upvalue
 			// index).
 			switch (sel.op)
 			{
 				case Opcode::mov:
-				case Opcode::ldd:
-				case Opcode::std:
+				case Opcode::ldb:
+				case Opcode::stb:
 					sel.u.var.addr = physical(sel.u.var.addr);
 					break;
-				case Opcode::call_local_0:
+				case Opcode::cl0:
 					sel.u.call_ic_atom.idx = physical(sel.u.call_ic_atom.idx);
 					break;
 				default:
@@ -5775,8 +5775,8 @@ namespace
 					emit_to_reg(expr->set_bang.value, sel.u.var.addr);
 					return sel.u.var.addr;
 				}
-				case Opcode::std:
-				case Opcode::stu:
+				case Opcode::stb:
+				case Opcode::stcb:
 				{
 					uint16_t value_reg = emit_to_any_reg(expr->set_bang.value);
 					emit_store(expr->loc, sel.op, sel.u.var.addr, value_reg);
@@ -5860,7 +5860,7 @@ namespace
 				return std::nullopt;
 			}
 			Compiler::OpSelection sel = selection(e, "Call");
-			if (!is_call_shaped(sel.op) || (sel.op == Opcode::call_self_tail && !allow_self_tail))
+			if (!is_call_shaped(sel.op) || (sel.op == Opcode::cst && !allow_self_tail))
 			{
 				return std::nullopt;
 			}
@@ -5868,7 +5868,7 @@ namespace
 			{
 				if (is_binding_ref(e->call.args[i], owner, breadth))
 				{
-					if (sel.op == Opcode::call_self_tail)
+					if (sel.op == Opcode::cst)
 					{
 						for (size_t j = 0; j < e->call.args.size(); ++j)
 						{
@@ -5921,7 +5921,7 @@ namespace
 					{
 						continue;
 					}
-					else if (is_call_shaped(sel.op) && sel.op != Opcode::call_self_tail)
+					else if (is_call_shaped(sel.op) && sel.op != Opcode::cst)
 					{
 						current_lambda().phys_home[breadth] = *emit_call(val, sel);
 						owned.push_back(breadth);
@@ -6033,7 +6033,7 @@ namespace
 			std::optional<uint16_t> callee_temp;
 			switch (sel.op)
 			{
-				case Opcode::reset:
+				case Opcode::rst:
 				case Opcode::coro:
 				{
 					// Two slots for one argument: slot 0 roots the escape or coroutine, slot 1
@@ -6045,11 +6045,11 @@ namespace
 					i.u.call.nargs = 1;
 					emit(expr->loc, i);
 					// Slot 0 roots the escape or coroutine only while the op runs
-					// (vm.cc op_reset / op_coro); the result arrives in slot 1.
+					// (vm.cc op_rst / op_coro); the result arrives in slot 1.
 					release_reg(w);
 					return result;
 				}
-				case Opcode::call_self_tail:
+				case Opcode::cst:
 				{
 					std::vector<std::optional<uint16_t>> src_reg(nargs, std::nullopt);
 					for (uint16_t k = 0; k < nargs; ++k)
@@ -6109,24 +6109,24 @@ namespace
 					self_tail_saves.erase(expr->id);
 					return std::nullopt;
 				}
-				case Opcode::call_upval_slot_0:
-					i.op = tail ? Opcode::call_upval_slot_tail_0 : Opcode::call_upval_slot_0;
+				case Opcode::ccb0:
+					i.op = tail ? Opcode::ccbt0 : Opcode::ccb0;
 					i.u.call.upvalue_idx = sel.u.call_ic_slot.upvalue_idx;
 					break;
-				case Opcode::call_local_0:
-					i.op = tail ? Opcode::call_local_tail_0 : Opcode::call_local_0;
+				case Opcode::cl0:
+					i.op = tail ? Opcode::clt0 : Opcode::cl0;
 					i.u.call.idx = sel.u.call_ic_atom.idx;
 					break;
-				case Opcode::call_upval_0:
-					i.op = tail ? Opcode::call_upval_tail_0 : Opcode::call_upval_0;
+				case Opcode::cc0:
+					i.op = tail ? Opcode::cct0 : Opcode::cc0;
 					i.u.call.idx = sel.u.call_ic_atom.idx;
 					break;
-				case Opcode::call_self_0:
+				case Opcode::cs0:
 					JETC_DIE_WHEN(db, expr->loc, tail,
 					              "codegen: self direct call in tail position escaped recur");
 					break;
-				case Opcode::call:
-					i.op = tail ? Opcode::tcall : Opcode::call;
+				case Opcode::c:
+					i.op = tail ? Opcode::ct : Opcode::c;
 					callee_temp = emit_to_any_reg(expr->call.proc);
 					i.u.call.callee = *callee_temp;
 					break;
@@ -6155,7 +6155,7 @@ namespace
 			uint16_t w = alloc_window(expr->loc, 2);
 			emit_to_reg(expr->apply.proc, w);
 			emit_to_reg(expr->apply.args, static_cast<uint16_t>(w + 1));
-			LirInst i = inst(Opcode::apply);
+			LirInst i = inst(Opcode::app);
 			i.u.call.width = w;
 			emit(expr->loc, i);
 			release_reg(narrow_or_die<uint16_t>(db, expr->loc, w + 1));
@@ -6193,8 +6193,8 @@ namespace
 				}
 			}
 			emit_to_reg(expr->iter_next.consequent, dst);
-			emit_label(expr->loc, Opcode::skip, l_end);
-			emit_label(expr->loc, Opcode::label, l_alt);
+			emit_label(expr->loc, Opcode::skp, l_end);
+			emit_label(expr->loc, Opcode::loc, l_alt);
 			if (expr->iter_next.alternate)
 			{
 				emit_to_reg(expr->iter_next.alternate, dst);
@@ -6203,7 +6203,7 @@ namespace
 			{
 				emit_ldk(expr->loc, dst, intern_empty(ConstTag::Unknown));
 			}
-			emit_label(expr->loc, Opcode::label, l_end);
+			emit_label(expr->loc, Opcode::loc, l_end);
 			for (size_t n = 0; n < expr->iter_next.names.size(); ++n)
 			{
 				current_lambda().phys_home.erase(
@@ -6349,10 +6349,10 @@ namespace
 						case Opcode::mov:
 							emit_mov(expr->loc, dst, sel.u.var.addr);
 							break;
-						case Opcode::ldd:
+						case Opcode::ldb:
 							[[fallthrough]];
-						case Opcode::ldu:
-						case Opcode::ldus:
+						case Opcode::ldc:
+						case Opcode::ldcb:
 							emit_load(expr->loc, sel.op, dst, sel.u.var.addr);
 							break;
 						default:
@@ -6385,21 +6385,21 @@ namespace
 						case Opcode::div:
 						case Opcode::min:
 						case Opcode::max:
-						case Opcode::numeq:
+						case Opcode::cmp:
 						case Opcode::eq:
 						case Opcode::lt:
 						case Opcode::le:
 						case Opcode::gt:
 						case Opcode::ge:
-						case Opcode::addk:
-						case Opcode::subk:
-						case Opcode::mulk:
-						case Opcode::divk:
-						case Opcode::mink:
-						case Opcode::maxk:
-						case Opcode::numeqk:
-						case Opcode::eqk:
-						case Opcode::ltk:
+						case Opcode::addi:
+						case Opcode::subi:
+						case Opcode::muli:
+						case Opcode::divi:
+						case Opcode::mini:
+						case Opcode::maxi:
+						case Opcode::cmpi:
+						case Opcode::eqi:
+						case Opcode::lti:
 						{
 							bool takes_key = is_kform(sel.op);
 							LirInst i = inst(sel.op);
@@ -6417,14 +6417,14 @@ namespace
 							break;
 						}
 
-						case Opcode::ldf:
-						case Opcode::ldfk:
-						case Opcode::ldfh:
-						case Opcode::ldfkh:
+						case Opcode::ldk:
+						case Opcode::ldki:
+						case Opcode::ldkm:
+						case Opcode::ldkmi:
 							emit_field_get(expr, sel, expr->call.args[0], expr->call.args[1], dst);
 							break;
-						case Opcode::ldfo:
-						case Opcode::ldfok:
+						case Opcode::ldkd:
+						case Opcode::ldkdi:
 							emit_field_get(expr, sel, expr->call.args[0], expr->call.args[1], dst,
 							               expr->call.args[2]);
 							break;
@@ -6504,12 +6504,12 @@ namespace
 					else
 					{
 						uint16_t test = emit_to_any_reg(expr->if_.test);
-						emit_label(expr->loc, Opcode::if_false, l_alt, test);
+						emit_label(expr->loc, Opcode::bn, l_alt, test);
 						release_if_temp(test);
 					}
 					emit_to_reg(expr->if_.consequent, dst);
-					emit_label(expr->loc, Opcode::skip, l_end);
-					emit_label(expr->loc, Opcode::label, l_alt);
+					emit_label(expr->loc, Opcode::skp, l_end);
+					emit_label(expr->loc, Opcode::loc, l_alt);
 					if (expr->if_.alternate)
 					{
 						emit_to_reg(expr->if_.alternate, dst);
@@ -6518,7 +6518,7 @@ namespace
 					{
 						emit_ldk(expr->loc, dst, intern_empty(ConstTag::Unknown));
 					}
-					emit_label(expr->loc, Opcode::label, l_end);
+					emit_label(expr->loc, Opcode::loc, l_end);
 					break;
 				}
 
@@ -6547,13 +6547,13 @@ namespace
 
 		static size_t encoded_size(const LirInst& inst)
 		{
-			if (inst.op == Opcode::label)
+			if (inst.op == Opcode::loc)
 			{
 				return 0;
 			}
-			if (inst.op == Opcode::clos)
+			if (inst.op == Opcode::clo)
 			{
-				return OPCODE_SIZE + sizeof(OP_clos) +
+				return OPCODE_SIZE + sizeof(OP_clo) +
 				       inst.u.closure.n_captures * sizeof(OP_make_closure_capture);
 			}
 			return opcode_step(static_cast<uint8_t>(inst.op), nullptr);
@@ -6647,25 +6647,19 @@ namespace
 
 		std::vector<LambdaDebug::Line> fill_lambda_entry(uint16_t slot)
 		{
-			// Pool entry: [tag=Lambda][is_n_ary][n_params if !is_n_ary][n_regs][code_size][bytes...][name\0]
+			// Pool entry: [tag=Lambda][PoolLambda header][bytes...][name\0]
 			LirLambda& L = prog.lambdas[static_cast<uint32_t>(prog.pool_to_lambda[slot])];
 			std::vector<LambdaDebug::Line> lines;
 			Bytecode body = emit_code(L, lines);
 
+			PoolLambda header{static_cast<uint8_t>(L.is_variadic),
+			                  L.is_variadic ? 0 : narrow_or_die<uint32_t>(db, L.loc, L.n_params),
+			                  narrow_or_die<uint16_t>(db, L.loc, L.frame_regs()),
+			                  narrow_or_die<uint32_t>(db, L.loc, body.size())};
 			std::string entry;
 			entry.push_back(static_cast<char>(ConstTag::Lambda));
-			bool is_n_ary = L.is_variadic;
-			entry.append(reinterpret_cast<char*>(&is_n_ary), sizeof(is_n_ary));
-			if (!is_n_ary)
-			{
-				uint32_t parameter_count = narrow_or_die<uint32_t>(db, L.loc, L.n_params);
-				entry.append(reinterpret_cast<char*>(&parameter_count), sizeof(parameter_count));
-			}
-			uint16_t n_regs = narrow_or_die<uint16_t>(db, L.loc, L.frame_regs());
-			entry.append(reinterpret_cast<char*>(&n_regs), sizeof(n_regs));
-			uint32_t code_size = narrow_or_die<uint32_t>(db, L.loc, body.size());
-			entry.append(reinterpret_cast<char*>(&code_size), sizeof(code_size));
-			entry.append(reinterpret_cast<char*>(body.data()), code_size);
+			entry.append(reinterpret_cast<char*>(&header), sizeof(header));
+			entry.append(reinterpret_cast<char*>(body.data()), header.code_size);
 			if (!L.lambda_name.empty())
 			{
 				entry.append(L.lambda_name.data(), L.lambda_name.size());
@@ -6706,7 +6700,7 @@ namespace
 			uint32_t last_file = 0;
 			for (LirInst& i : L.code)
 			{
-				if (i.op == Opcode::label)
+				if (i.op == Opcode::loc)
 				{
 					label_pos[i.u.label.id] = off;
 				}
@@ -6797,7 +6791,7 @@ namespace
 			};
 			switch (i.op)
 			{
-				case Opcode::label:
+				case Opcode::loc:
 					break;
 
 				case Opcode::trunc: emit_unary.template operator()<OP_trunc>(); break;
@@ -6828,12 +6822,12 @@ namespace
 					break;
 				}
 
-				case Opcode::ldk: emit_load.template operator()<OP_ldk>(); break;
-				case Opcode::ldu: emit_load.template operator()<OP_ldu>(); break;
-				case Opcode::ldus: emit_load.template operator()<OP_ldus>(); break;
-				case Opcode::ldd: emit_load.template operator()<OP_ldd>(); break;
-				case Opcode::stu: emit_store.template operator()<OP_stu>(); break;
-				case Opcode::std: emit_store.template operator()<OP_std>(); break;
+				case Opcode::ldi: emit_load.template operator()<OP_ldi>(); break;
+				case Opcode::ldc: emit_load.template operator()<OP_ldc>(); break;
+				case Opcode::ldcb: emit_load.template operator()<OP_ldcb>(); break;
+				case Opcode::ldb: emit_load.template operator()<OP_ldb>(); break;
+				case Opcode::stcb: emit_store.template operator()<OP_stcb>(); break;
+				case Opcode::stb: emit_store.template operator()<OP_stb>(); break;
 
 				case Opcode::box:
 				{
@@ -6844,10 +6838,10 @@ namespace
 					break;
 				}
 
-				case Opcode::clos:
+				case Opcode::clo:
 				{
-					emit_opcode(bc, Opcode::clos);
-					OP_clos op{};
+					emit_opcode(bc, Opcode::clo);
+					OP_clo op{};
 					op.dst = i.u.closure.dst;
 					op.pool_idx = i.u.closure.pool_idx;
 					op.n_captures = i.u.closure.n_captures;
@@ -6865,38 +6859,38 @@ namespace
 				case Opcode::div: emit_binary.template operator()<OP_div>(); break;
 				case Opcode::min: emit_binary.template operator()<OP_min>(); break;
 				case Opcode::max: emit_binary.template operator()<OP_max>(); break;
-				case Opcode::numeq: emit_binary.template operator()<OP_numeq>(); break;
+				case Opcode::cmp: emit_binary.template operator()<OP_cmp>(); break;
 				case Opcode::eq: emit_binary.template operator()<OP_eq>(); break;
 				case Opcode::lt: emit_binary.template operator()<OP_lt>(); break;
 				case Opcode::le: emit_binary.template operator()<OP_le>(); break;
 				case Opcode::gt: emit_binary.template operator()<OP_gt>(); break;
 				case Opcode::ge: emit_binary.template operator()<OP_ge>(); break;
-				case Opcode::addk: emit_binary.template operator()<OP_addk>(); break;
-				case Opcode::subk: emit_binary.template operator()<OP_subk>(); break;
-				case Opcode::mulk: emit_binary.template operator()<OP_mulk>(); break;
-				case Opcode::divk: emit_binary.template operator()<OP_divk>(); break;
-				case Opcode::mink: emit_binary.template operator()<OP_mink>(); break;
-				case Opcode::maxk: emit_binary.template operator()<OP_maxk>(); break;
-				case Opcode::numeqk: emit_binary.template operator()<OP_numeqk>(); break;
-				case Opcode::eqk: emit_binary.template operator()<OP_eqk>(); break;
-				case Opcode::ltk: emit_binary.template operator()<OP_ltk>(); break;
+				case Opcode::addi: emit_binary.template operator()<OP_addi>(); break;
+				case Opcode::subi: emit_binary.template operator()<OP_subi>(); break;
+				case Opcode::muli: emit_binary.template operator()<OP_muli>(); break;
+				case Opcode::divi: emit_binary.template operator()<OP_divi>(); break;
+				case Opcode::mini: emit_binary.template operator()<OP_mini>(); break;
+				case Opcode::maxi: emit_binary.template operator()<OP_maxi>(); break;
+				case Opcode::cmpi: emit_binary.template operator()<OP_cmpi>(); break;
+				case Opcode::eqi: emit_binary.template operator()<OP_eqi>(); break;
+				case Opcode::lti: emit_binary.template operator()<OP_lti>(); break;
 
-				case Opcode::fadd:
-				case Opcode::fsub:
-				case Opcode::fmul:
-				case Opcode::fdiv:
-				case Opcode::fmin:
-				case Opcode::fmax:
-				case Opcode::ftrunc:
-				case Opcode::fsqrt:
-				case Opcode::ffloor:
-				case Opcode::fround:
-				case Opcode::fceil:
-				case Opcode::fnumeq:
-				case Opcode::flt:
-				case Opcode::fle:
-				case Opcode::fgt:
-				case Opcode::fge:
+				case Opcode::addf:
+				case Opcode::subf:
+				case Opcode::mulf:
+				case Opcode::divf:
+				case Opcode::minf:
+				case Opcode::maxf:
+				case Opcode::truncf:
+				case Opcode::sqrtf:
+				case Opcode::floorf:
+				case Opcode::roundf:
+				case Opcode::ceilf:
+				case Opcode::cmpf:
+				case Opcode::ltf:
+				case Opcode::lef:
+				case Opcode::gtf:
+				case Opcode::gef:
 				{
 					emit_opcode(bc, i.op);
 					JETC_DIE_UNLESS(db, i.loc, unboxed_float_valid(i.op, i.unboxed_float_mode),
@@ -6906,129 +6900,129 @@ namespace
 					break;
 				}
 
-				case Opcode::if_false:
+				case Opcode::bn:
 				{
-					emit_opcode(bc, Opcode::if_false);
-					OP_if_false op{};
+					emit_opcode(bc, Opcode::bn);
+					OP_bn op{};
 					op.src = i.u.label.src;
 					op.size = narrow_or_die<uint32_t>(db, i.loc,
-						label_target(i.loc, label_pos, i.u.label.id) - (bc.size() + sizeof(OP_if_false)));
+						label_target(i.loc, label_pos, i.u.label.id) - (bc.size() + sizeof(OP_bn)));
 					emit_operand(bc, op);
 					break;
 				}
 
-				case Opcode::if_numeq: emit_comparison.template operator()<OP_if_numeq>(); break;
-				case Opcode::if_eq: emit_comparison.template operator()<OP_if_eq>(); break;
-				case Opcode::if_lt: emit_comparison.template operator()<OP_if_lt>(); break;
-				case Opcode::if_le: emit_comparison.template operator()<OP_if_le>(); break;
-				case Opcode::if_gt: emit_comparison.template operator()<OP_if_gt>(); break;
-				case Opcode::if_ge: emit_comparison.template operator()<OP_if_ge>(); break;
-				case Opcode::if_numeqk: emit_comparison.template operator()<OP_if_numeqk>(); break;
-				case Opcode::if_eqk: emit_comparison.template operator()<OP_if_eqk>(); break;
-				case Opcode::if_ltk: emit_comparison.template operator()<OP_if_ltk>(); break;
+				case Opcode::bcmp: emit_comparison.template operator()<OP_bcmp>(); break;
+				case Opcode::beq: emit_comparison.template operator()<OP_beq>(); break;
+				case Opcode::blt: emit_comparison.template operator()<OP_blt>(); break;
+				case Opcode::ble: emit_comparison.template operator()<OP_ble>(); break;
+				case Opcode::bgt: emit_comparison.template operator()<OP_bgt>(); break;
+				case Opcode::bge: emit_comparison.template operator()<OP_bge>(); break;
+				case Opcode::bcmpi: emit_comparison.template operator()<OP_bcmpi>(); break;
+				case Opcode::beqi: emit_comparison.template operator()<OP_beqi>(); break;
+				case Opcode::blti: emit_comparison.template operator()<OP_blti>(); break;
 
-				case Opcode::skip:
+				case Opcode::skp:
 				{
-					emit_opcode(bc, Opcode::skip);
-					OP_skip op{};
+					emit_opcode(bc, Opcode::skp);
+					OP_skp op{};
 					op.size = narrow_or_die<uint32_t>(db, i.loc,
-						label_target(i.loc, label_pos, i.u.label.id) - (bc.size() + sizeof(OP_skip)));
+						label_target(i.loc, label_pos, i.u.label.id) - (bc.size() + sizeof(OP_skp)));
 					emit_operand(bc, op);
 					break;
 				}
 
-				case Opcode::retv:
+				case Opcode::ret:
 				{
-					emit_opcode(bc, Opcode::retv);
-					OP_retv op{};
+					emit_opcode(bc, Opcode::ret);
+					OP_ret op{};
 					op.src = i.u.ret.src;
 					emit_operand(bc, op);
 					break;
 				}
 
-				case Opcode::call: emit_direct_call.template operator()<OP_call>(); break;
-				case Opcode::tcall: emit_direct_call.template operator()<OP_tcall>(); break;
+				case Opcode::c: emit_direct_call.template operator()<OP_c>(); break;
+				case Opcode::ct: emit_direct_call.template operator()<OP_ct>(); break;
 
-				case Opcode::call_self_tail:
+				case Opcode::cst:
 				{
-					emit_opcode(bc, Opcode::call_self_tail);
-					OP_call_self_tail op{};
+					emit_opcode(bc, Opcode::cst);
+					OP_cst op{};
 					op.w = i.u.call.width;
 					op.nargs = i.u.call.nargs;
 					emit_operand(bc, op);
 					break;
 				}
 
-				case Opcode::apply:
+				case Opcode::app:
 				{
-					emit_opcode(bc, Opcode::apply);
-					OP_apply op{};
+					emit_opcode(bc, Opcode::app);
+					OP_app op{};
 					op.w = i.u.call.width;
 					emit_operand(bc, op);
 					break;
 				}
 
-				case Opcode::reset: emit_control.template operator()<OP_reset>(); break;
+				case Opcode::rst: emit_control.template operator()<OP_rst>(); break;
 				case Opcode::coro: emit_control.template operator()<OP_coro>(); break;
 
-				case Opcode::iter_next1:
+				case Opcode::itn1:
 				{
 					emit_opcode(bc, i.op);
-					OP_iter_next1 op{};
+					OP_itn1 op{};
 					op.cursor = i.u.iter.cursor;
 					op.dst = i.u.iter.dst0;
 					op.size = narrow_or_die<uint32_t>(db, i.loc,
-						label_target(i.loc, label_pos, i.u.iter.id) - (bc.size() + sizeof(OP_iter_next1)));
+						label_target(i.loc, label_pos, i.u.iter.id) - (bc.size() + sizeof(OP_itn1)));
 					emit_operand(bc, op);
 					break;
 				}
 
-				case Opcode::iter_next2:
+				case Opcode::itn2:
 				{
 					emit_opcode(bc, i.op);
-					OP_iter_next2 op{};
+					OP_itn2 op{};
 					op.cursor = i.u.iter.cursor;
 					op.dst0 = i.u.iter.dst0;
 					op.dst1 = i.u.iter.dst1;
 					op.size = narrow_or_die<uint32_t>(db, i.loc,
-						label_target(i.loc, label_pos, i.u.iter.id) - (bc.size() + sizeof(OP_iter_next2)));
+						label_target(i.loc, label_pos, i.u.iter.id) - (bc.size() + sizeof(OP_itn2)));
 					emit_operand(bc, op);
 					break;
 				}
 
-				case Opcode::call_upval_slot_0:
-					emit_call_slot.template operator()<OP_call_upval_slot>(v_cus);
+				case Opcode::ccb0:
+					emit_call_slot.template operator()<OP_ccb>(v_cus);
 					break;
-				case Opcode::call_upval_slot_tail_0:
-					emit_call_slot.template operator()<OP_call_upval_slot_tail>(v_cust);
+				case Opcode::ccbt0:
+					emit_call_slot.template operator()<OP_ccbt>(v_cust);
 					break;
-				case Opcode::call_local_0:
-					emit_call_atom.template operator()<OP_call_local>(v_cl);
+				case Opcode::cl0:
+					emit_call_atom.template operator()<OP_cl>(v_cl);
 					break;
-				case Opcode::call_local_tail_0:
-					emit_call_atom.template operator()<OP_call_local_tail>(v_clt);
+				case Opcode::clt0:
+					emit_call_atom.template operator()<OP_clt>(v_clt);
 					break;
-				case Opcode::call_upval_0:
-					emit_call_atom.template operator()<OP_call_upval>(v_cu);
+				case Opcode::cc0:
+					emit_call_atom.template operator()<OP_cc>(v_cu);
 					break;
-				case Opcode::call_upval_tail_0:
-					emit_call_atom.template operator()<OP_call_upval_tail>(v_cut);
+				case Opcode::cct0:
+					emit_call_atom.template operator()<OP_cct>(v_cut);
 					break;
 
-				case Opcode::call_self_0:
+				case Opcode::cs0:
 				{
 					emit_replicated(bc, i.op, v_cself);
-					OP_call_self op{};
+					OP_cs op{};
 					op.w = i.u.call.width;
 					op.nargs = i.u.call.nargs;
 					emit_operand(bc, op);
 					break;
 				}
 
-				case Opcode::ldf:
+				case Opcode::ldk:
 				{
-					emit_opcode(bc, Opcode::ldf);
-					OP_ldf op{};
+					emit_opcode(bc, Opcode::ldk);
+					OP_ldk op{};
 					op.dst = i.u.field.dst;
 					op.obj = i.u.field.obj;
 					op.key = i.u.field.key;
@@ -7036,10 +7030,10 @@ namespace
 					break;
 				}
 
-				case Opcode::stf:
+				case Opcode::stk:
 				{
-					emit_opcode(bc, Opcode::stf);
-					OP_stf op{};
+					emit_opcode(bc, Opcode::stk);
+					OP_stk op{};
 					op.obj = i.u.field.obj;
 					op.key = i.u.field.key;
 					op.val = i.u.field.val;
@@ -7047,10 +7041,10 @@ namespace
 					break;
 				}
 
-				case Opcode::ldfk:
+				case Opcode::ldki:
 				{
-					emit_opcode(bc, Opcode::ldfk);
-					OP_ldfk op{};
+					emit_opcode(bc, Opcode::ldki);
+					OP_ldki op{};
 					op.dst = i.u.field.dst;
 					op.obj = i.u.field.obj;
 					op.key = i.u.field.key;
@@ -7058,10 +7052,10 @@ namespace
 					break;
 				}
 
-				case Opcode::stfk:
+				case Opcode::stki:
 				{
-					emit_opcode(bc, Opcode::stfk);
-					OP_stfk op{};
+					emit_opcode(bc, Opcode::stki);
+					OP_stki op{};
 					op.obj = i.u.field.obj;
 					op.key = i.u.field.key;
 					op.val = i.u.field.val;
@@ -7069,10 +7063,10 @@ namespace
 					break;
 				}
 
-				case Opcode::ldfh:
+				case Opcode::ldkm:
 				{
-					emit_opcode(bc, Opcode::ldfh);
-					OP_ldfh op{};
+					emit_opcode(bc, Opcode::ldkm);
+					OP_ldkm op{};
 					op.dst = i.u.field.dst;
 					op.obj = i.u.field.obj;
 					op.key = i.u.field.key;
@@ -7080,10 +7074,10 @@ namespace
 					break;
 				}
 
-				case Opcode::ldfkh:
+				case Opcode::ldkmi:
 				{
-					emit_opcode(bc, Opcode::ldfkh);
-					OP_ldfkh op{};
+					emit_opcode(bc, Opcode::ldkmi);
+					OP_ldkmi op{};
 					op.dst = i.u.field.dst;
 					op.obj = i.u.field.obj;
 					op.key = i.u.field.key;
@@ -7091,10 +7085,10 @@ namespace
 					break;
 				}
 
-				case Opcode::ldfo:
+				case Opcode::ldkd:
 				{
-					emit_opcode(bc, Opcode::ldfo);
-					OP_ldfo op{};
+					emit_opcode(bc, Opcode::ldkd);
+					OP_ldkd op{};
 					op.dst = i.u.field.dst;
 					op.obj = i.u.field.obj;
 					op.key = i.u.field.key;
@@ -7103,10 +7097,10 @@ namespace
 					break;
 				}
 
-				case Opcode::ldfok:
+				case Opcode::ldkdi:
 				{
-					emit_opcode(bc, Opcode::ldfok);
-					OP_ldfok op{};
+					emit_opcode(bc, Opcode::ldkdi);
+					OP_ldkdi op{};
 					op.dst = i.u.field.dst;
 					op.obj = i.u.field.obj;
 					op.key = i.u.field.key;

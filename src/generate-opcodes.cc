@@ -70,7 +70,7 @@ struct Opcode
           });
     if (op_variants['k'])
     {
-      base_metadata("Opcode", "k_variant", ("Opcode::" + name + "k").c_str());
+      base_metadata("Opcode", "k_variant", ("Opcode::" + name + "i").c_str());
       variant_metadata("k", "bool", "is_kform", "true");
       if (op_variants['h'])
       {
@@ -79,7 +79,7 @@ struct Opcode
     }
     if (op_variants['f'])
     {
-      metadata("std::optional<Opcode>", "unboxed_float_opcode", ("Opcode::f" + name).c_str());
+      metadata("std::optional<Opcode>", "unboxed_float_opcode", ("Opcode::" + name + "f").c_str());
     }
     return *this;
   }
@@ -127,10 +127,10 @@ struct Opcode
 
   Opcode& branch_fusion()
   {
-    base_metadata("std::optional<Opcode>", "branch_fusion", ("Opcode::if_" + name).c_str());
+    base_metadata("std::optional<Opcode>", "branch_fusion", ("Opcode::b" + name).c_str());
     if (op_variants['k'])
     {
-      variant_metadata("k", "std::optional<Opcode>", "branch_fusion", ("Opcode::if_" + name + "k").c_str());
+      variant_metadata("k", "std::optional<Opcode>", "branch_fusion", ("Opcode::b" + name + "i").c_str());
     }
     return *this;
   }
@@ -149,19 +149,19 @@ struct Opcode
     f("", name, shown);
     if (op_variants['h'])
     {
-      f("h", name + "h", shown + "h");
+      f("h", name + "m", shown + "m");
     }
     if (op_variants['k'])
     {
-      f("k", name + "k", shown + "k");
+      f("k", name + "i", shown + "i");
       if (op_variants['h'])
       {
-        f("kh", name + "kh", shown + "kh");
+        f("kh", name + "mi", shown + "mi");
       }
     }
     if (op_variants['f'])
     {
-      f("f", "f" + name, "f" + shown);
+      f("f", name + "f", shown + "f");
     }
   }
 
@@ -174,7 +174,7 @@ struct Opcode
     {
       for (int i = 0; i < N_REPLICAS; ++i)
       {
-        std::string suffix = "_" + std::to_string(i);
+        std::string suffix = std::to_string(i);
         apply([&](const std::string& variant, const std::string& name, const std::string&)
               {
                 fr(name, name + suffix, variant);
@@ -357,18 +357,18 @@ int main(int argc, char* argv[])
     .metadata("bool", "is_if_cmp", "false")
     .metadata("bool", "is_call_shaped", "false")
     .metadata("bool", "is_kform", "false")
-    .metadata("Opcode", "k_variant", "Opcode::halt")
+    .metadata("Opcode", "k_variant", "Opcode::hlt")
     .metadata("std::optional<Opcode>", "unboxed_float_opcode", "std::nullopt")
     .metadata("std::optional<Opcode>", "branch_fusion", "std::nullopt")
     .metadata("size_t", "operand_size", "0")
     .metadata("UnboxedFloatKind", "unboxed_float_kind", "UnboxedFloatKind::None");
 
-  g.opcode("halt");
+  g.opcode("hlt");
 
-  g.opcode("skip")
+  g.opcode("skp")
     .operand("uint32_t", "size");
 
-  g.opcode("label");
+  g.opcode("loc");
 
   g.opcode("mov")
     .operand("uint16_t", "dst")
@@ -379,30 +379,30 @@ int main(int argc, char* argv[])
     .operand("uint16_t", "dst1")
     .operand("uint16_t", "src1");
 
-  g.opcode("ldk")
+  g.opcode("ldi")
     .operand("uint16_t", "dst")
     .operand("uint16_t", "idx");
-  g.opcode("ldu")
+  g.opcode("ldc")
     .operand("uint16_t", "dst")
     .operand("uint16_t", "idx");
-  g.opcode("ldus")
+  g.opcode("ldcb")
     .operand("uint16_t", "dst")
     .operand("uint16_t", "idx");
-  g.opcode("stu")
+  g.opcode("stcb")
     .operand("uint16_t", "idx")
     .operand("uint16_t", "src");
 
-  g.opcode("ldd")
+  g.opcode("ldb")
     .operand("uint16_t", "dst")
     .operand("uint16_t", "idx");
-  g.opcode("std")
+  g.opcode("stb")
     .operand("uint16_t", "idx")
     .operand("uint16_t", "src");
 
   g.opcode("box")
     .operand("uint16_t", "reg");
 
-  g.opcode("clos")
+  g.opcode("clo")
 	  .operand("uint16_t", "dst")
     .operand("uint16_t", "pool_idx")
     .operand("uint16_t", "n_captures");
@@ -435,7 +435,7 @@ int main(int argc, char* argv[])
 	  .operand("uint16_t", "a")
     .operand("uint16_t", "b");
 
-  g.opcode("numeq")
+  g.opcode("cmp")
     .variants("kf")
     .branch_fusion()
     .unboxed_float_kind("Comparison")
@@ -482,91 +482,91 @@ int main(int argc, char* argv[])
 	  .operand("uint16_t", "a")
     .operand("uint16_t", "b");
 
-  g.opcode("if_false")
+  g.opcode("bn")
 	  .operand("uint16_t", "src")
     .operand("uint32_t", "size");
 
-  g.opcode("if_numeq")
+  g.opcode("bcmp")
     .if_comparison()
     .variants("k")
     .operand("uint16_t", "a")
     .operand("uint16_t", "b")
     .operand("uint32_t", "size");
 
-  g.opcode("if_eq")
+  g.opcode("beq")
     .if_comparison()
     .variants("k")
     .operand("uint16_t", "a")
     .operand("uint16_t", "b")
     .operand("uint32_t", "size");
 
-  g.opcode("if_lt")
+  g.opcode("blt")
     .if_comparison()
     .variants("k")
     .operand("uint16_t", "a")
     .operand("uint16_t", "b")
     .operand("uint32_t", "size");
 
-  g.opcode("if_le")
+  g.opcode("ble")
     .if_comparison()
     .operand("uint16_t", "a")
     .operand("uint16_t", "b")
     .operand("uint32_t", "size");
 
-  g.opcode("if_gt")
+  g.opcode("bgt")
     .if_comparison()
     .operand("uint16_t", "a")
     .operand("uint16_t", "b")
     .operand("uint32_t", "size");
 
-  g.opcode("if_ge")
+  g.opcode("bge")
     .if_comparison()
     .operand("uint16_t", "a")
     .operand("uint16_t", "b")
     .operand("uint32_t", "size");
 
-  g.opcode("retv")
+  g.opcode("ret")
     .operand("uint16_t", "src");
 
-  g.opcode("call")
+  g.opcode("c")
     .call_shaped()
 	  .operand("uint16_t", "w")
     .operand("uint16_t", "callee")
     .operand("uint16_t", "nargs");
 
-  g.opcode("tcall")
+  g.opcode("ct")
 	  .operand("uint16_t", "w")
     .operand("uint16_t", "callee")
     .operand("uint16_t", "nargs");
 
-  g.opcode("call_self_tail")
+  g.opcode("cst")
     .call_shaped()
 	  .operand("uint16_t", "w")
     .operand("uint16_t", "nargs");
 
-  g.opcode("call_self")
+  g.opcode("cs")
     .replicated()
     .call_shaped()
 	  .operand("uint16_t", "w")
     .operand("uint16_t", "nargs");
 
-  g.opcode("apply")
+  g.opcode("app")
     .operand("uint16_t", "w");
 
-  g.opcode("iter_next1")
+  g.opcode("itn1")
 	  .operand("uint16_t", "cursor")
     .operand("uint16_t", "dst")
     .operand("uint32_t", "size")
     .icfield("uint64_t", "dispatch_key");
 
-  g.opcode("iter_next2")
+  g.opcode("itn2")
 	  .operand("uint16_t", "cursor")
     .operand("uint16_t", "dst0")
     .operand("uint16_t", "dst1")
     .operand("uint32_t", "size")
     .icfield("uint64_t", "dispatch_key");
 
-  g.opcode("call_local")
+  g.opcode("cl")
     .replicated()
     .call_shaped()
 	  .operand("uint16_t", "w")
@@ -577,7 +577,7 @@ int main(int argc, char* argv[])
     .icfield("uint64_t", "ic_atom")
     .icfield("uint64_t", "ic_code");
 
-  g.opcode("call_local_tail")
+  g.opcode("clt")
     .replicated()
 	  .operand("uint16_t", "w")
     .operand("uint16_t", "idx")
@@ -587,7 +587,7 @@ int main(int argc, char* argv[])
     .icfield("uint64_t", "ic_atom")
     .icfield("uint64_t", "ic_code");
 
-  g.opcode("call_upval")
+  g.opcode("cc")
     .replicated()
     .call_shaped()
 	  .operand("uint16_t", "w")
@@ -598,7 +598,7 @@ int main(int argc, char* argv[])
     .icfield("uint64_t", "ic_atom")
     .icfield("uint64_t", "ic_code");
 
-  g.opcode("call_upval_tail")
+  g.opcode("cct")
     .replicated()
 	  .operand("uint16_t", "w")
     .operand("uint16_t", "idx")
@@ -608,7 +608,7 @@ int main(int argc, char* argv[])
     .icfield("uint64_t", "ic_atom")
     .icfield("uint64_t", "ic_code");
 
-  g.opcode("call_upval_slot")
+  g.opcode("ccb")
     .replicated()
     .call_shaped()
 	  .operand("uint16_t", "w")
@@ -621,7 +621,7 @@ int main(int argc, char* argv[])
     .icfield("uint64_t", "ic_code")
     .icfield("uint64_t", "ic_version");
 
-  g.opcode("call_upval_slot_tail")
+  g.opcode("ccbt")
     .replicated()
 	  .operand("uint16_t", "w")
     .operand("uint16_t", "upvalue_idx")
@@ -633,7 +633,7 @@ int main(int argc, char* argv[])
     .icfield("uint64_t", "ic_code")
     .icfield("uint64_t", "ic_version");
 
-  g.opcode("ldf")
+  g.opcode("ldk")
     .variants("kh")
 	  .operand("uint16_t", "dst")
 	  .operand("uint16_t", "obj")
@@ -642,7 +642,7 @@ int main(int argc, char* argv[])
     .icfield("uint64_t", "cached_index")
     .icfield("uint64_t", "cached_key");
 
-  g.opcode("stf")
+  g.opcode("stk")
     .variants("k")
 	  .operand("uint16_t", "obj")
 	  .operand("uint16_t", "key")
@@ -651,7 +651,7 @@ int main(int argc, char* argv[])
     .icfield("uint64_t", "cached_index")
     .icfield("uint64_t", "cached_key");
 
-  g.opcode("ldfo")
+  g.opcode("ldkd")
     .variants("k")
 	  .operand("uint16_t", "dst")
 	  .operand("uint16_t", "obj")
@@ -661,20 +661,20 @@ int main(int argc, char* argv[])
     .icfield("uint64_t", "cached_index")
     .icfield("uint64_t", "cached_key");
 
-  g.opcode("reset")
+  g.opcode("rst")
     .call_shaped()
     .operand("uint16_t", "w");
 
-  g.opcode("retk")
+  g.opcode("retx")
     .operand("Struct*", "escape");
 
   g.opcode("coro")
     .call_shaped()
     .operand("uint16_t", "w");
 
-  g.opcode("retc");
-  g.opcode("retu");
-  g.opcode("return_to_host");
+  g.opcode("retr");
+  g.opcode("retn");
+  g.opcode("reth");
 
   g.opcode("trunc")
     .variants("f")
