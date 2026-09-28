@@ -560,46 +560,6 @@ const char* opcode_name(uint8_t op)
 	return op < OPCODE_COUNT ? OPCODE_INFO[op].name : "?unknown";
 }
 
-bool is_call_slot_op(uint8_t op)
-{
-#define X(name, n)																 \
-	if (op == static_cast<uint8_t>(Opcode::name))	  \
-	{																							  \
-		return true;																	 \
-	}
-	JET_REPLICATE(X, ccb)
-	JET_REPLICATE(X, ccbt)
-#undef X
-	return false;
-}
-
-bool is_call_atom_op(uint8_t op)
-{
-#define X(name, n)																 \
-	if (op == static_cast<uint8_t>(Opcode::name))	  \
-	{																							  \
-		return true;																	 \
-	}
-	JET_REPLICATE(X, cl)
-	JET_REPLICATE(X, clt)
-	JET_REPLICATE(X, cc)
-	JET_REPLICATE(X, cct)
-#undef X
-	return false;
-}
-
-bool is_call_self_op(uint8_t op)
-{
-#define X(name, n)																 \
-	if (op == static_cast<uint8_t>(Opcode::name))	  \
-	{																							  \
-		return true;																	 \
-	}
-	JET_REPLICATE(X, cs)
-#undef X
-	return false;
-}
-
 template <typename Instr>
 void disasm_fields(FILE* out, Code* operands)
 {
