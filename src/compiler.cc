@@ -40,31 +40,31 @@ struct SourceLoc
 	static SourceLoc none() { return SourceLoc{}; }
 };
 
-#define JETC_DIE(db, loc, fmt, ...)                                                                      \
-	do                                                                                                   \
-	{                                                                                                    \
-		const Compiler& compiler = db;                                                                   \
-		const SourceLoc& source_loc = loc;                                                               \
-		JET_DIE_UNLESS(nullptr, source_loc.file_id < compiler.file_table.size(),                         \
-		               "compiler: invalid source location");                                             \
-		if (source_loc.line != 0)                                                                        \
-		{                                                                                                \
-			JET_DIE(nullptr, "{}:{}:{}: " fmt, compiler.file_table[source_loc.file_id],          \
-			        source_loc.line, source_loc.col __VA_OPT__(, ) __VA_ARGS__);                         \
-		}                                                                                                \
-		else                                                                                             \
-		{                                                                                                \
-			JET_DIE(nullptr, fmt __VA_OPT__(, ) __VA_ARGS__);                                            \
-		}                                                                                                \
+#define JETC_DIE(db, loc, fmt, ...)																																			 \
+	do																																																	 \
+	{																																																		 \
+		const Compiler& compiler = db;																																	 \
+		const SourceLoc& source_loc = loc;																															 \
+		JET_DIE_UNLESS(nullptr, source_loc.file_id < compiler.file_table.size(),												 \
+									 "compiler: invalid source location");																						 \
+		if (source_loc.line != 0)																																				 \
+		{																																																 \
+			JET_DIE(nullptr, "{}:{}:{}: " fmt, compiler.file_table[source_loc.file_id],					 \
+							source_loc.line, source_loc.col __VA_OPT__(, ) __VA_ARGS__);												 \
+		}																																																 \
+		else																																														 \
+		{																																																 \
+			JET_DIE(nullptr, fmt __VA_OPT__(, ) __VA_ARGS__);																						 \
+		}																																																 \
 	} while (0)
 
-#define JETC_DIE_WHEN(db, loc, cond, ...)                                                                \
-	do                                                                                                       \
-	{                                                                                                        \
-		if (cond) [[unlikely]]                                                                                \
-		{                                                                                                      \
-			JETC_DIE(db, loc, __VA_ARGS__);                                                                    \
-		}                                                                                                      \
+#define JETC_DIE_WHEN(db, loc, cond, ...)																																 \
+	do																																																			 \
+	{																																																				 \
+		if (cond) [[unlikely]]																																								\
+		{																																																			 \
+			JETC_DIE(db, loc, __VA_ARGS__);																																		 \
+		}																																																			 \
 	} while (0)
 
 #define JETC_DIE_UNLESS(db, loc, cond, ...) JETC_DIE_WHEN(db, loc, !(cond), __VA_ARGS__)
@@ -451,7 +451,7 @@ struct Program
 inline bool is_delimiter(char c)
 {
 	return c == '\0' || c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '(' || c == ')' || c == '"' ||
-	       c == ';' || c == '`' || c == ',';
+				 c == ';' || c == '`' || c == ',';
 }
 
 // A struct form's constructor is also the name its type is bound to in the primitive Env.
@@ -541,8 +541,8 @@ inline void append_utf8(std::string& out, uint32_t code)
 inline bool is_ident_start(char c)
 {
 	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '!' || c == '$' || c == '%' || c == '&' ||
-	       c == '*' || c == '/' || c == ':' || c == '<' || c == '=' || c == '>' || c == '?' || c == '^' ||
-	       c == '_' || c == '~' || c == '-' || c == '.';
+				 c == '*' || c == '/' || c == ':' || c == '<' || c == '=' || c == '>' || c == '?' || c == '^' ||
+				 c == '_' || c == '~' || c == '-' || c == '.';
 }
 
 inline bool is_ident_cont(char c)
@@ -566,13 +566,19 @@ struct ResolvedBinding
 };
 
 template <typename T>
-typename std::vector<T>::reference get(std::vector<T>& values, size_t idx)
+T get(const std::vector<T>& values, size_t idx)
+{
+	return idx < values.size() ? values[idx] : T{};
+}
+
+template <typename T>
+void set(std::vector<T>& values, size_t idx, const T& value)
 {
 	if (values.size() <= idx)
 	{
 		values.resize(idx + 1);
 	}
-	return values[idx];
+	values[idx] = value;
 }
 
 static uint64_t binding_key(ResolvedBinding binding)
@@ -697,7 +703,7 @@ struct Compiler
 		Opcode op;
 		union
 		{
-			struct { uint16_t addr; } var;     // register / upvalue idx of ref/set
+			struct { uint16_t addr; } var;		 // register / upvalue idx of ref/set
 			struct { uint16_t upvalue_idx; } call_ic_slot;
 			struct { uint16_t idx; } call_ic_atom;
 		} u;
@@ -710,7 +716,7 @@ struct Compiler
 	void collect_branch_fusion_facts(Program& program);
 	void select_branch_fusions();
 	void select_field_op(Expr* expr, Expr* current, Expr* receiver, Expr* key, Opcode reg_op,
-	                     Opcode const_op);
+											 Opcode const_op);
 	void select_var_op(Expr* expr, Expr* current, bool is_set);
 
 	void run_anf_inline(Program& program);
@@ -732,15 +738,15 @@ inline char decode_char_literal(Compiler& db, SourceLoc loc, std::string_view bo
 		char value;
 	};
 	static constexpr Named names[] = {
-		{"alarm",     0x07},
+		{"alarm",			0x07},
 		{"backspace", 0x08},
-		{"delete",    0x7F},
-		{"escape",    0x1B},
-		{"newline",   0x0A},
-		{"null",      0x00},
-		{"return",    0x0D},
-		{"space",     0x20},
-		{"tab",       0x09},
+		{"delete",		0x7F},
+		{"escape",		0x1B},
+		{"newline",		0x0A},
+		{"null",			0x00},
+		{"return",		0x0D},
+		{"space",			0x20},
+		{"tab",				0x09},
 	};
 	for (Named named : names)
 	{
@@ -890,13 +896,13 @@ namespace
 						db,
 						loc(),
 						!at_end() && ((peek() >= '0' && peek() <= '9') ||
-						              (peek() >= 'a' && peek() <= 'f') ||
-						              (peek() >= 'A' && peek() <= 'F')),
+													(peek() >= 'a' && peek() <= 'f') ||
+													(peek() >= 'A' && peek() <= 'F')),
 						"invalid hexadecimal literal"
 						);
 					while (!at_end() && ((peek() >= '0' && peek() <= '9') ||
-					                     (peek() >= 'a' && peek() <= 'f') ||
-					                     (peek() >= 'A' && peek() <= 'F')))
+															 (peek() >= 'a' && peek() <= 'f') ||
+															 (peek() >= 'A' && peek() <= 'F')))
 					{
 						buf += advance();
 					}
@@ -948,8 +954,8 @@ namespace
 			{
 				buf += advance();
 				while (!at_end() && ((peek() >= '0' && peek() <= '9') ||
-				                     (peek() >= 'a' && peek() <= 'f') ||
-				                     (peek() >= 'A' && peek() <= 'F')))
+														 (peek() >= 'a' && peek() <= 'f') ||
+														 (peek() >= 'A' && peek() <= 'F')))
 				{
 					buf += advance();
 				}
@@ -1031,25 +1037,25 @@ namespace
 				TokenKind kind;
 			};
 			static constexpr Keyword keywords[] = {
-				{"lambda",  TokenKind::Lambda},
-				{"define",  TokenKind::Define},
-				{"if",      TokenKind::If},
-				{"set!",    TokenKind::Set},
-				{"setf!",   TokenKind::Setf},
-				{"quote",   TokenKind::QuoteWord},
-				{"apply",   TokenKind::Apply},
-				{"let",     TokenKind::Let},
-				{"let*",    TokenKind::LetStar},
-				{"letrec",  TokenKind::Letrec},
+				{"lambda",	TokenKind::Lambda},
+				{"define",	TokenKind::Define},
+				{"if",			TokenKind::If},
+				{"set!",		TokenKind::Set},
+				{"setf!",		TokenKind::Setf},
+				{"quote",		TokenKind::QuoteWord},
+				{"apply",		TokenKind::Apply},
+				{"let",			TokenKind::Let},
+				{"let*",		TokenKind::LetStar},
+				{"letrec",	TokenKind::Letrec},
 				{"letrec*", TokenKind::Letrec},
-				{"let/ec",  TokenKind::LetEc},
+				{"let/ec",	TokenKind::LetEc},
 				{"let/coro", TokenKind::LetCoro},
-				{"begin",   TokenKind::Begin},
-				{"when",    TokenKind::When},
-				{"unless",  TokenKind::Unless},
-				{"cond",    TokenKind::Cond},
-				{"and",     TokenKind::And},
-				{"or",      TokenKind::Or},
+				{"begin",		TokenKind::Begin},
+				{"when",		TokenKind::When},
+				{"unless",	TokenKind::Unless},
+				{"cond",		TokenKind::Cond},
+				{"and",			TokenKind::And},
+				{"or",			TokenKind::Or},
 				{"include", TokenKind::Include},
 			};
 			for (Keyword keyword : keywords)
@@ -1208,7 +1214,7 @@ namespace
 		std::string_view expect_identifier(const char* what)
 		{
 			JETC_DIE_UNLESS(db, peek().loc, peek().kind == TokenKind::Variable, "expected identifier for {}",
-			                what);
+											what);
 			return advance().text;
 		}
 
@@ -1283,7 +1289,7 @@ namespace
 						break;
 					default:
 						JETC_DIE_UNLESS(db, loc, skip_line_continuation(inner, i),
-						                "unknown string escape '\\{:c}'", inner[i]);
+														"unknown string escape '\\{:c}'", inner[i]);
 						break;
 				}
 			}
@@ -1529,7 +1535,7 @@ namespace
 			if (peek().kind == TokenKind::LParen)
 			{
 				// (define (f arg ...) body ...)
-				//   ==> (define f (lambda (arg ...) body ...))
+				//	 ==> (define f (lambda (arg ...) body ...))
 				advance();
 				std::string_view name = expect_identifier("define");
 
@@ -1744,13 +1750,13 @@ namespace
 		}
 
 		// (let/ec k ((a v) ...) body ...)
-		//   ==> (%reset (lambda (k) (let ((a v) ...) body ...)))
+		//	 ==> (%reset (lambda (k) (let ((a v) ...) body ...)))
 		// (let/coro yield ((a v) ...) body ...)
-		//   ==> (%coro (lambda (yield) (let ((a v) ...) body ...)))
+		//	 ==> (%coro (lambda (yield) (let ((a v) ...) body ...)))
 		// The body must be a real lambda: `reset` and `coro` give it a frame of its own,
 		// so tail calls inside it reuse that frame instead of the one holding the form.
 		Expr* parse_let_control(SourceLoc loc, std::string_view prim, const char* form_name,
-		                        const char* binding_name)
+														const char* binding_name)
 		{
 			advance();
 
@@ -1848,7 +1854,7 @@ namespace
 			}
 
 			// Named let: (let f ((x v) ...) body ...)
-			//   ==> (letrec ((f (lambda (x ...) body ...))) (f v ...))
+			//	 ==> (letrec ((f (lambda (x ...) body ...))) (f v ...))
 			Expr* lam = make_expr(loc, ExprKind::Lambda);
 			lam->lambda.params = make_string_slice(names);
 			lam->lambda.is_variadic = false;
@@ -1874,7 +1880,7 @@ namespace
 		}
 
 		// (let* ((x v) binding ...) body ...)
-		//   ==> (let ((x v)) (let* (binding ...) body ...))
+		//	 ==> (let ((x v)) (let* (binding ...) body ...))
 		// (let* () body ...) ==> (let () body ...)
 		Expr* parse_let_star(SourceLoc loc)
 		{
@@ -2043,7 +2049,7 @@ namespace
 		}
 
 		// (include "path")
-		//   ==> (begin form ...) over the forms parsed out of path
+		//	 ==> (begin form ...) over the forms parsed out of path
 		// The included text gets its own file_id, so error positions name that file.
 		Expr* parse_include(SourceLoc loc)
 		{
@@ -2718,7 +2724,7 @@ Expr* Compiler::expand(Expr* expr)
 		case ExprKind::When:
 		case ExprKind::Unless:
 		{
-			// (when test body ...)   ==> (if test (begin body ...))
+			// (when test body ...)		==> (if test (begin body ...))
 			// (unless test body ...) ==> (if test <void> (begin body ...))
 			bool is_when = expr->kind == ExprKind::When;
 			Expr* test = expand(is_when ? expr->when.test : expr->unless.test);
@@ -2736,7 +2742,7 @@ Expr* Compiler::expand(Expr* expr)
 		case ExprKind::And:
 		{
 			// (and e1 e ...)
-			//   ==> (if e1 (and e ...) #f)
+			//	 ==> (if e1 (and e ...) #f)
 			// (and) is #t and (and e) is e.
 			Slice<Expr*>& exprs = expr->and_.exprs;
 			if (exprs.empty())
@@ -2763,7 +2769,7 @@ Expr* Compiler::expand(Expr* expr)
 		case ExprKind::Or:
 		{
 			// (or e1 e ...)
-			//   ==> (let ((t e1)) (if t t (or e ...)))
+			//	 ==> (let ((t e1)) (if t t (or e ...)))
 			// (or) is #f and (or e) is e. The temp returns a true test value without
 			// evaluating e1 twice.
 			Slice<Expr*>& exprs = expr->or_.exprs;
@@ -2802,7 +2808,7 @@ Expr* Compiler::expand(Expr* expr)
 		case ExprKind::Cond:
 		{
 			// (cond (test body) clause ...)
-			//   ==> (if test body (cond clause ...))
+			//	 ==> (if test body (cond clause ...))
 			// (cond (else body)) ==> body. (cond) is <void>, and so is falling off the
 			// last clause with no else.
 			Slice<Expr*>& clauses = expr->cond.clauses;
@@ -2892,7 +2898,7 @@ Expr* Compiler::rewrite_define_in(Expr* expr, OrderedNameSet& names)
 }
 
 // form ... (define x e) form ...
-//   ==> (let ((x #f)) form ... (set! x e) form ...)
+//	 ==> (let ((x #f)) form ... (set! x e) form ...)
 // One let binds every name defined in the body, and running each set! in place
 // of its define gives the body letrec* semantics.
 Slice<Expr*> Compiler::hoist_defines_in_body(SourceLoc loc, Slice<Expr*> body)
@@ -2926,10 +2932,10 @@ Slice<Expr*> Compiler::hoist_defines_in_body(SourceLoc loc, Slice<Expr*> body)
 Expr* Compiler::expand_letrec(Expr* expr)
 {
 	// (letrec ((x e) ...) body ...)
-	//   ==>
+	//	 ==>
 	// (let ((x #f) ...)
-	//   (set! x e) ...
-	//   body ...)
+	//	 (set! x e) ...
+	//	 body ...)
 	// Sequential set!s give letrec* semantics, which is what almost all uses
 	// of letrec actually want and matches what we accept for both keywords.
 	uint32_t name_count = expr->let.names.size();
@@ -3075,8 +3081,8 @@ Expr* Compiler::compute_anf(Expr* expr)
 		{
 			Expr* proc = expr->call.proc;
 			if (proc->kind == ExprKind::Lambda
-			    && !proc->lambda.is_variadic
-			    && proc->lambda.params.size() == expr->call.args.size())
+					&& !proc->lambda.is_variadic
+					&& proc->lambda.params.size() == expr->call.args.size())
 			{
 				// ((lambda (x ...) body ...) e ...) -> (let ((x e) ...) body ...)
 				Expr* let_e = make_expr(expr->loc, ExprKind::Let);
@@ -3225,10 +3231,10 @@ void Compiler::record_ref(ResolvedBinding binding)
 	}
 
 	LambdaBindings& ob = lambda_bindings_[binding.lambda];
-	get(ob.captured, binding.breadth) = true;
+	set(ob.captured, binding.breadth, true);
 	if (!get(ob.is_initialized, binding.breadth))
 	{
-		get(ob.captured_before_init, binding.breadth) = true;
+		set(ob.captured_before_init, binding.breadth, true);
 	}
 
 	uint32_t bw = static_cast<uint32_t>(binding.breadth);
@@ -3253,13 +3259,13 @@ void Compiler::record_set(ResolvedBinding binding, bool is_init, Expr* val)
 	LambdaBindings& lb = lambda_bindings_[binding.lambda];
 	if (!is_init || get(lb.is_initialized, binding.breadth))
 	{
-		get(lb.reassigned_after_init, binding.breadth) = true;
+		set(lb.reassigned_after_init, binding.breadth, true);
 		return;
 	}
-	get(lb.is_initialized, binding.breadth) = true;
+	set(lb.is_initialized, binding.breadth, true);
 	if (val)
 	{
-		get(lb.bound_init, binding.breadth) = val;
+		set(lb.bound_init, binding.breadth, val);
 	}
 }
 
@@ -3459,8 +3465,8 @@ void Compiler::compute_binding_addresses_in(Expr* expr)
 					frame.push_back(name);
 					auto it = idx.find(name);
 					shadowed.push_back({name, it == idx.end()
-					                    ? std::nullopt
-					                    : std::optional<size_t>(it->second)});
+															? std::nullopt
+															: std::optional<size_t>(it->second)});
 					idx[name] = breadth;
 				}
 			}
@@ -3502,8 +3508,8 @@ void Compiler::compute_binding_addresses_in(Expr* expr)
 					frame.push_back(name);
 					auto it = idx.find(name);
 					shadowed.push_back({name, it == idx.end()
-					                    ? std::nullopt
-					                    : std::optional<size_t>(it->second)});
+															? std::nullopt
+															: std::optional<size_t>(it->second)});
 					idx[name] = breadth;
 				}
 			}
@@ -3664,8 +3670,8 @@ namespace
 	bool needs_slot(Expr* owner, uint32_t breadth)
 	{
 		return owner->lambda.captured_locals[breadth]
-		       && (owner->lambda.reassigned_after_init_locals[breadth]
-		           || owner->lambda.captured_before_init_locals[breadth]);
+					 && (owner->lambda.reassigned_after_init_locals[breadth]
+							 || owner->lambda.captured_before_init_locals[breadth]);
 	}
 
 	std::optional<uint16_t> find_upvalue(Expr* current, Expr* owner, uint32_t breadth)
@@ -3907,7 +3913,7 @@ bool Compiler::is_self_tail_call(Expr* expr, Expr* current)
 	ResolvedBinding proc_binding = binding(proc);
 	LambdaBindings& lb = lambda_bindings_[proc_binding.lambda];
 	return !get(lb.reassigned_after_init, proc_binding.breadth)
-	       && get(lb.bound_init, proc_binding.breadth) == current;
+				 && get(lb.bound_init, proc_binding.breadth) == current;
 }
 
 Compiler::PrimLowering Compiler::prim_call_lowering(Expr* call)
@@ -3979,7 +3985,7 @@ void Compiler::collect_intrinsic_callees(Expr* expr, Expr* current)
 {
 	if (expr->kind == ExprKind::Call && is_intrinsic_callee(expr, current))
 	{
-		get(intrinsic_callee_, expr->call.proc->id) = true;
+		set(intrinsic_callee_, expr->call.proc->id, true);
 	}
 	if (expr->kind == ExprKind::Lambda)
 	{
@@ -4053,7 +4059,7 @@ void Compiler::select_call_op(Expr* expr, Expr* current)
 	{
 		Opcode op = pl.op;
 		if (expr->call.args[1]->kind == ExprKind::NumberLit
-		    || (op == Opcode::eq && is_literal_key(expr->call.args[1])))
+				|| (op == Opcode::eq && is_literal_key(expr->call.args[1])))
 		{
 			op = OPCODE_INFO[static_cast<size_t>(op)].k_variant;
 		}
@@ -4075,8 +4081,8 @@ void Compiler::select_call_op(Expr* expr, Expr* current)
 	if (!is_tail(expr))
 	{
 		if (LambdaBindings& lb = lambda_bindings_[proc_binding.lambda];
-		    !get(lb.reassigned_after_init, proc_binding.breadth)
-		    && get(lb.bound_init, proc_binding.breadth) == current)
+				!get(lb.reassigned_after_init, proc_binding.breadth)
+				&& get(lb.bound_init, proc_binding.breadth) == current)
 		{
 			sel.op = Opcode::cs0;
 			return;
@@ -4089,7 +4095,7 @@ void Compiler::select_call_op(Expr* expr, Expr* current)
 	if (proc_binding.lambda != current && slot)
 	{
 		std::optional<uint16_t> found = find_upvalue(current, proc_binding.lambda,
-		                                             static_cast<uint32_t>(proc_binding.breadth));
+																								 static_cast<uint32_t>(proc_binding.breadth));
 		JETC_DIE_UNLESS(*this, expr->loc, found, "codegen: cacheable call missing upvalue entry");
 		sel.op = Opcode::ccb0;
 		sel.u.call_ic_slot.upvalue_idx = *found;
@@ -4107,7 +4113,7 @@ void Compiler::select_call_op(Expr* expr, Expr* current)
 		else
 		{
 			std::optional<uint16_t> found = find_upvalue(current, proc_binding.lambda,
-			                                             static_cast<uint32_t>(proc_binding.breadth));
+																									 static_cast<uint32_t>(proc_binding.breadth));
 			JETC_DIE_UNLESS(*this, expr->loc, found, "codegen: cacheable call missing upvalue entry");
 			sel.op = Opcode::cc0;
 			sel.u.call_ic_atom.idx = *found;
@@ -4354,7 +4360,7 @@ namespace
 				candidate_lambdas.insert(init);
 			}
 			else if (init->kind == ExprKind::NumberLit || init->kind == ExprKind::BooleanLit ||
-			         init->kind == ExprKind::CharacterLit)
+							 init->kind == ExprKind::CharacterLit)
 			{
 				const_cands[binding_key({owner, breadth})] = init;
 			}
@@ -4426,7 +4432,7 @@ namespace
 					break;
 				case ExprKind::VarRef:
 					e->var_ref = orig->var_ref;
-					get(db.bindings_, e->id) = translate(get(db.bindings_, orig->id), ctx);
+					set(db.bindings_, e->id, translate(get(db.bindings_, orig->id), ctx));
 					break;
 				case ExprKind::Call:
 					e->call.proc = clone(orig->call.proc, ctx);
@@ -4453,7 +4459,7 @@ namespace
 					e->set_bang.name = orig->set_bang.name;
 					e->set_bang.is_init = orig->set_bang.is_init;
 					e->set_bang.value = clone(orig->set_bang.value, ctx);
-					get(db.bindings_, e->id) = translate(get(db.bindings_, orig->id), ctx);
+					set(db.bindings_, e->id, translate(get(db.bindings_, orig->id), ctx));
 					break;
 				case ExprKind::SetRef:
 					e->set_ref.obj = clone(orig->set_ref.obj, ctx);
@@ -4465,8 +4471,8 @@ namespace
 					e->iter_next.names = orig->iter_next.names;
 					e->iter_next.consequent = clone(orig->iter_next.consequent, ctx);
 					e->iter_next.alternate = orig->iter_next.alternate
-					                         ? clone(orig->iter_next.alternate, ctx)
-					                         : nullptr;
+																	 ? clone(orig->iter_next.alternate, ctx)
+																	 : nullptr;
 					if (orig->iter_next.owner == ctx.callee)
 					{
 						e->iter_next.owner = ctx.host;
@@ -4484,7 +4490,7 @@ namespace
 							}
 						}
 						JETC_DIE_UNLESS(db, orig->loc, owner,
-						                "anf-inline: cloned iteration owned outside the clone");
+														"anf-inline: cloned iteration owned outside the clone");
 						e->iter_next.owner = owner;
 						e->iter_next.slot_base = orig->iter_next.slot_base;
 					}
@@ -4514,7 +4520,7 @@ namespace
 							}
 						}
 						JETC_DIE_UNLESS(db, orig->loc, owner,
-						                "anf-inline: cloned let owned by a lambda outside the clone");
+														"anf-inline: cloned let owned by a lambda outside the clone");
 						e->let.owner = owner;
 						e->let.slot_base = orig->let.slot_base;
 					}
@@ -4602,10 +4608,10 @@ namespace
 					if (proc->kind == ExprKind::VarRef)
 					{
 						if (auto it = lambda_cands.find(binding_key(get(db.bindings_, proc->id)));
-						    it != lambda_cands.end())
+								it != lambda_cands.end())
 						{
 							if (Expr* callee = it->second;
-							    callee->lambda.params.size() == expr->call.args.size() && !active.count(
+									callee->lambda.params.size() == expr->call.args.size() && !active.count(
 									callee))
 							{
 								Expr* let = splice(expr, callee);
@@ -4662,7 +4668,7 @@ namespace
 							// is_init set!s over #f sentinels) is covered by
 							// bound_init candidacy instead.
 							if (!get(ob.is_initialized, expr->let.slot_base + i)
-							    && !get(ob.reassigned_after_init, expr->let.slot_base + i))
+									&& !get(ob.reassigned_after_init, expr->let.slot_base + i))
 							{
 								consider(expr->let.owner, expr->let.slot_base + i, expr->let.vals[i]);
 							}
@@ -4744,15 +4750,11 @@ namespace
 
 		Expr* clone_proc(Expr* proc)
 		{
-			// TODO: this `get` call has to happen first, otherwise another
-			//       `get` could resize `bindings_` and cause a UAF. would
-			//       be better if the compiler just didn't have this hazard
-			//       to begin with.
 			ResolvedBinding source{get(db.bindings_, proc->id)};
 
 			Expr* e = db.make_expr(proc->loc, ExprKind::VarRef);
 			e->var_ref.name = proc->var_ref.name;
-			get(db.bindings_, e->id) = source;
+			set(db.bindings_, e->id, source);
 			return e;
 		}
 
@@ -4810,8 +4812,8 @@ namespace
 				case ExprKind::Call:
 				{
 					if (bool proc_is_name = expr->call.proc->kind == ExprKind::VarRef
-					                        && expr->call.proc->var_ref.name == name;
-					    !proc_is_name && name_used_as_value(expr->call.proc, name))
+																	&& expr->call.proc->var_ref.name == name;
+							!proc_is_name && name_used_as_value(expr->call.proc, name))
 					{
 						return true;
 					}
@@ -4826,7 +4828,7 @@ namespace
 				}
 				case ExprKind::SetBang:
 					return expr->set_bang.name == name
-					       || name_used_as_value(expr->set_bang.value, name);
+								 || name_used_as_value(expr->set_bang.value, name);
 				default:
 				{
 					bool found = false;
@@ -4846,8 +4848,8 @@ namespace
 				case ExprKind::Call:
 				{
 					if (bool is_self = expr->call.proc->kind == ExprKind::VarRef
-					                   && expr->call.proc->var_ref.name == name;
-					    is_self && !in_tail)
+														 && expr->call.proc->var_ref.name == name;
+							is_self && !in_tail)
 					{
 						return false;
 					}
@@ -4866,14 +4868,14 @@ namespace
 				}
 				case ExprKind::If:
 					return self_calls_all_tail(expr->if_.test, name, false)
-					       && self_calls_all_tail(expr->if_.consequent, name, in_tail)
-					       && (!expr->if_.alternate
-					           || self_calls_all_tail(expr->if_.alternate, name, in_tail));
+								 && self_calls_all_tail(expr->if_.consequent, name, in_tail)
+								 && (!expr->if_.alternate
+										 || self_calls_all_tail(expr->if_.alternate, name, in_tail));
 				case ExprKind::IterNext:
 					return self_calls_all_tail(expr->iter_next.cursor, name, false)
-					       && self_calls_all_tail(expr->iter_next.consequent, name, in_tail)
-					       && (!expr->iter_next.alternate
-					           || self_calls_all_tail(expr->iter_next.alternate, name, in_tail));
+								 && self_calls_all_tail(expr->iter_next.consequent, name, in_tail)
+								 && (!expr->iter_next.alternate
+										 || self_calls_all_tail(expr->iter_next.alternate, name, in_tail));
 				case ExprKind::Let:
 				{
 					for (Expr* val : expr->let.vals)
@@ -4886,7 +4888,7 @@ namespace
 					for (uint32_t i = 0; i < expr->let.body.size(); ++i)
 					{
 						if (bool last = (i == expr->let.body.size() - 1);
-						    !self_calls_all_tail(expr->let.body[i], name, last && in_tail))
+								!self_calls_all_tail(expr->let.body[i], name, last && in_tail))
 						{
 							return false;
 						}
@@ -4897,7 +4899,7 @@ namespace
 					for (uint32_t i = 0; i < expr->lambda.body.size(); ++i)
 					{
 						if (bool last = (i == expr->lambda.body.size() - 1);
-						    !self_calls_all_tail(expr->lambda.body[i], name, last))
+								!self_calls_all_tail(expr->lambda.body[i], name, last))
 						{
 							return false;
 						}
@@ -4922,7 +4924,7 @@ namespace
 		};
 
 		void collect_captures_in(Expr* expr, Expr* lambda, std::string_view self_name,
-		                         std::vector<Capture>& out, std::unordered_set<uint64_t>& seen)
+														 std::vector<Capture>& out, std::unordered_set<uint64_t>& seen)
 		{
 			switch (expr->kind)
 			{
@@ -4938,7 +4940,7 @@ namespace
 						return;
 					}
 					if (uint64_t key = (static_cast<uint64_t>(b.lambda->id) << 32) | b.breadth;
-					    seen.insert(key).second)
+							seen.insert(key).second)
 					{
 						out.push_back({expr->var_ref.name, b});
 					}
@@ -4991,15 +4993,15 @@ namespace
 			// this ref before resolve_bindings reruns.
 			Expr* e = db.make_expr(loc, ExprKind::VarRef);
 			e->var_ref.name = cap.name;
-			get(db.bindings_, e->id) = cap.binding;
+			set(db.bindings_, e->id, cap.binding);
 			return e;
 		}
 
 		void prepend_capture_args(Expr* expr, std::string_view name, const std::vector<Capture>& captures)
 		{
 			if (expr->kind == ExprKind::Call
-			    && expr->call.proc->kind == ExprKind::VarRef
-			    && expr->call.proc->var_ref.name == name)
+					&& expr->call.proc->kind == ExprKind::VarRef
+					&& expr->call.proc->var_ref.name == name)
 			{
 				uint32_t arg_count = static_cast<uint32_t>(expr->call.args.size());
 				Expr** new_args = db.arena.alloc_array<Expr*>(arg_count + captures.size());
@@ -5042,9 +5044,9 @@ namespace
 			for (size_t i = 0; i < let_expr->let.body.size(); ++i)
 			{
 				if (Expr* form = let_expr->let.body[i]; form->kind == ExprKind::SetBang
-				    && form->set_bang.name == name
-				    && form->set_bang.is_init
-				    && form->set_bang.value->kind == ExprKind::Lambda)
+						&& form->set_bang.name == name
+						&& form->set_bang.is_init
+						&& form->set_bang.value->kind == ExprKind::Lambda)
 				{
 					if (lambda)
 					{
@@ -5062,8 +5064,8 @@ namespace
 			for (Expr* form : let_expr->let.body)
 			{
 				if (form->kind == ExprKind::SetBang
-				    && form->set_bang.name == name
-				    && !form->set_bang.is_init)
+						&& form->set_bang.name == name
+						&& !form->set_bang.is_init)
 				{
 					return let_expr;
 				}
@@ -5162,17 +5164,17 @@ namespace
 
 	struct LirInst
 	{
-		Opcode op;   // base opcode only: no _1.._7 replicas; label is IR-only
+		Opcode op;	 // base opcode only: no _1.._7 replicas; label is IR-only
 		UnboxedFloatMode unboxed_float_mode{UnboxedFloatMode::Start};
 		union
 		{
-			struct { uint16_t dst; uint16_t src; } mov;              // mov
+			struct { uint16_t dst; uint16_t src; } mov;							 // mov
 			struct { uint16_t dst0; uint16_t src0; uint16_t dst1; uint16_t src1; } mov2;
-			struct { uint16_t dst; uint16_t idx; } load;             // ldi ldc ldcb ldb
-			struct { uint16_t idx; uint16_t src; } store;            // stcb stb
-			struct { uint16_t reg; } box;                            // box
-			struct { uint16_t src; } ret;                            // ret
-			struct { uint32_t id; uint16_t src; } label;             // loc; bn/skp target
+			struct { uint16_t dst; uint16_t idx; } load;						 // ldi ldc ldcb ldb
+			struct { uint16_t idx; uint16_t src; } store;						 // stcb stb
+			struct { uint16_t reg; } box;														 // box
+			struct { uint16_t src; } ret;														 // ret
+			struct { uint32_t id; uint16_t src; } label;						 // loc; bn/skp target
 			struct
 			{
 				uint32_t id;
@@ -5183,7 +5185,7 @@ namespace
 			// reads upvalue_idx, cl/cc read idx, the rest only w+nargs.
 			struct { uint16_t width; uint16_t nargs; uint16_t callee; uint16_t upvalue_idx; uint16_t idx; } call;
 			struct { uint16_t dst; uint16_t pool_idx; uint16_t first_capture; uint16_t n_captures; } closure;
-			struct { uint16_t dst; uint16_t lhs; uint16_t rhs; } arith;  // rr; *i holds the pool idx in rhs
+			struct { uint16_t dst; uint16_t lhs; uint16_t rhs; } arith;	 // rr; *i holds the pool idx in rhs
 			struct { uint16_t dst; uint16_t obj; uint16_t key; uint16_t val; } field;
 			// ldk stk; *i holds the pool idx in key
 			struct { uint32_t id; uint16_t cursor; uint16_t dst0; uint16_t dst1; } iter;
@@ -5218,7 +5220,7 @@ namespace
 		{
 			return reg_floor + reg_used.size();
 		}
-		uint16_t pool_slot = 0;   // unused for the toplevel (index 0)
+		uint16_t pool_slot = 0;		// unused for the toplevel (index 0)
 		std::string_view lambda_name;
 		// Physical register per binding breadth; absent means the identity
 		// register (call results adopted as homes).
@@ -5229,9 +5231,9 @@ namespace
 
 	struct LirProgram
 	{
-		std::vector<LirLambda> lambdas;    // [0] = toplevel
-		std::vector<std::string> pool;     // lambda entries stay empty until emit
-		std::vector<int32_t> pool_to_lambda;  // pool slot -> lambdas index, -1 = constant
+		std::vector<LirLambda> lambdas;		 // [0] = toplevel
+		std::vector<std::string> pool;		 // lambda entries stay empty until emit
+		std::vector<int32_t> pool_to_lambda;	// pool slot -> lambdas index, -1 = constant
 		uint32_t next_label = 0;
 	};
 
@@ -5280,7 +5282,7 @@ namespace
 		void unboxed_float_rewrite(SourceLoc loc, LirInst& instruction, Opcode opcode, UnboxedFloatMode mode)
 		{
 			JETC_DIE_UNLESS(db, loc, unboxed_float_valid(opcode, mode),
-			               "codegen: invalid unboxed float instruction");
+										 "codegen: invalid unboxed float instruction");
 			instruction.op = opcode;
 			instruction.unboxed_float_mode = mode;
 		}
@@ -5305,7 +5307,7 @@ namespace
 			}
 			std::optional<Opcode> opcode{unboxed_float_opcode(code.back().op)};
 			if (opcode && unboxed_float_kind(*opcode) != UnboxedFloatKind::Comparison
-			    && code.back().u.arith.dst == home)
+					&& code.back().u.arith.dst == home)
 			{
 				current_lambda().chain.binding = binding_key({.lambda = owner, .breadth = breadth});
 			}
@@ -5322,13 +5324,13 @@ namespace
 				{
 					Expr* argument{expression->call.args[arg]};
 					return argument == lambda.chain.expr
-					       || (lambda.chain.binding && argument->kind == ExprKind::VarRef
-					           && binding_key(db.binding(argument)) == *lambda.chain.binding);
+								 || (lambda.chain.binding && argument->kind == ExprKind::VarRef
+										 && binding_key(db.binding(argument)) == *lambda.chain.binding);
 				};
 				bool constant{is_kform(inst.op)};
 				bool lhs{matches(0) && inst.u.arith.lhs == previous.u.arith.dst};
 				bool rhs{expression->call.args.size() == 2 && !constant && matches(1)
-				         && inst.u.arith.rhs == previous.u.arith.dst};
+								 && inst.u.arith.rhs == previous.u.arith.dst};
 				if (lhs || rhs)
 				{
 					UnboxedFloatMode mode;
@@ -5336,7 +5338,7 @@ namespace
 					{
 						case UnboxedFloatMode::Start:
 							mode = is_kform(previous.op)
-							       ? UnboxedFloatMode::StartConstant : UnboxedFloatMode::Start;
+										 ? UnboxedFloatMode::StartConstant : UnboxedFloatMode::Start;
 							break;
 						case UnboxedFloatMode::StoreLeft:
 							mode = UnboxedFloatMode::Left;
@@ -5384,7 +5386,7 @@ namespace
 			used.push_back(true);
 			constexpr size_t reg_limit = std::numeric_limits<uint16_t>::max();
 			JETC_DIE_WHEN(db, loc, L.frame_regs() > reg_limit, "codegen: frame exceeds {} registers",
-			              reg_limit);
+										reg_limit);
 			return narrow_or_die<uint16_t>(db, loc, L.reg_floor + used.size() - 1);
 		}
 
@@ -5422,7 +5424,7 @@ namespace
 			}
 			constexpr size_t reg_limit = std::numeric_limits<uint16_t>::max();
 			JETC_DIE_WHEN(db, loc, L.frame_regs() > reg_limit, "codegen: frame exceeds {} registers",
-			              reg_limit);
+										reg_limit);
 			return narrow_or_die<uint16_t>(db, loc, L.reg_floor + top);
 		}
 
@@ -5431,7 +5433,7 @@ namespace
 			LirLambda& L = current_lambda();
 			size_t slot = reg - L.reg_floor;
 			JETC_DIE_WHEN(db, L.loc, slot >= L.reg_used.size(), "codegen: release of unallocated register {}",
-			              reg);
+										reg);
 			JETC_DIE_WHEN(db, L.loc, !L.reg_used[slot], "codegen: double release of register {}", reg);
 			L.reg_used[slot] = false;
 		}
@@ -5797,7 +5799,7 @@ namespace
 			i.u.field.obj = emit_to_any_reg(expr->set_ref.obj);
 			bool literal_key = is_kform(sel.op);
 			i.u.field.key = literal_key ? intern_literal_key(expr->set_ref.key)
-			                : emit_to_any_reg(expr->set_ref.key);
+											: emit_to_any_reg(expr->set_ref.key);
 			uint16_t v = emit_to_any_reg(expr->set_ref.value);
 			i.u.field.val = v;
 			emit(expr->loc, i);
@@ -5810,7 +5812,7 @@ namespace
 		}
 
 		void emit_field_get(Expr* expr, Compiler::OpSelection sel, Expr* receiver, Expr* key,
-		                    uint16_t dst, Expr* fallback = nullptr)
+												uint16_t dst, Expr* fallback = nullptr)
 		{
 			LirInst i = inst(sel.op);
 			i.u.field.dst = dst;
@@ -5853,7 +5855,7 @@ namespace
 		}
 
 		std::optional<uint16_t> window_slot(Expr* e, Expr* owner, size_t breadth,
-		                                    bool allow_self_tail = false)
+																				bool allow_self_tail = false)
 		{
 			if (e->kind != ExprKind::Call)
 			{
@@ -5932,8 +5934,8 @@ namespace
 				{
 					ResolvedBinding source = db.binding(val);
 					if (Compiler::OpSelection sel = selection(val, "var access"); sel.op == Opcode::mov
-					    && !expr->let.owner->lambda.reassigned_after_init_locals[breadth]
-					    && !source.lambda->lambda.reassigned_after_init_locals[source.breadth])
+							&& !expr->let.owner->lambda.reassigned_after_init_locals[breadth]
+							&& !source.lambda->lambda.reassigned_after_init_locals[source.breadth])
 					{
 						current_lambda().phys_home[breadth] = sel.u.var.addr;
 						continue;
@@ -5951,7 +5953,7 @@ namespace
 					{
 						uint32_t uses = db.binding_use_count(expr->let.owner, breadth);
 						JETC_DIE_WHEN(db, expr->loc, uses != 1,
-						              "codegen: sunk temporary has {} uses, expected exactly 1", uses);
+													"codegen: sunk temporary has {} uses, expected exactly 1", uses);
 						current_lambda().phys_home[breadth] = *target;
 						emit_to_reg(val, *target);
 						continue;
@@ -6057,7 +6059,7 @@ namespace
 						if (Expr* arg = expr->call.args[k]; arg->kind == ExprKind::VarRef)
 						{
 							if (Compiler::OpSelection arg_sel = selection(arg, "self tail call arg");
-							    arg_sel.op == Opcode::mov)
+									arg_sel.op == Opcode::mov)
 							{
 								src_reg[k] = arg_sel.u.var.addr;
 							}
@@ -6065,14 +6067,14 @@ namespace
 					}
 					std::unordered_map<uint16_t, uint16_t> saved;
 					if (auto early_save = self_tail_saves.find(expr->id);
-					    early_save != self_tail_saves.end())
+							early_save != self_tail_saves.end())
 					{
 						saved[early_save->second.target] = early_save->second.temp;
 					}
 					for (uint16_t k = 0; k < nargs; ++k)
 					{
 						if (std::optional<uint16_t> src = src_reg[k];
-						    src && *src < nargs && *src != k && src_reg[*src] != *src)
+								src && *src < nargs && *src != k && src_reg[*src] != *src)
 						{
 							if (saved.find(*src) == saved.end())
 							{
@@ -6123,7 +6125,7 @@ namespace
 					break;
 				case Opcode::cs0:
 					JETC_DIE_WHEN(db, expr->loc, tail,
-					              "codegen: self direct call in tail position escaped recur");
+												"codegen: self direct call in tail position escaped recur");
 					break;
 				case Opcode::c:
 					i.op = tail ? Opcode::ct : Opcode::c;
@@ -6406,8 +6408,8 @@ namespace
 							i.u.arith.dst = dst;
 							i.u.arith.lhs = emit_to_any_reg(expr->call.args[0]);
 							i.u.arith.rhs = takes_key
-							              ? intern_literal_key(expr->call.args[1])
-							              : emit_to_any_reg(expr->call.args[1]);
+														? intern_literal_key(expr->call.args[1])
+														: emit_to_any_reg(expr->call.args[1]);
 							emit_arithmetic(expr, i);
 							release_if_temp(i.u.arith.lhs);
 							if (!takes_key)
@@ -6426,7 +6428,7 @@ namespace
 						case Opcode::ldkd:
 						case Opcode::ldkdi:
 							emit_field_get(expr, sel, expr->call.args[0], expr->call.args[1], dst,
-							               expr->call.args[2]);
+														 expr->call.args[2]);
 							break;
 
 						default:
@@ -6493,7 +6495,7 @@ namespace
 						i.u.if_cmp.lhs = emit_to_any_reg(cmp->call.args[0]);
 						bool cmp_k = is_kform(sel.op);
 						i.u.if_cmp.rhs = cmp_k ? intern_literal_key(cmp->call.args[1])
-						               : emit_to_any_reg(cmp->call.args[1]);
+													 : emit_to_any_reg(cmp->call.args[1]);
 						emit(expr->loc, i);
 						release_if_temp(i.u.if_cmp.lhs);
 						if (!cmp_k)
@@ -6554,7 +6556,7 @@ namespace
 			if (inst.op == Opcode::clo)
 			{
 				return OPCODE_SIZE + sizeof(OP_clo) +
-				       inst.u.closure.n_captures * sizeof(OP_make_closure_capture);
+							 inst.u.closure.n_captures * sizeof(OP_make_closure_capture);
 			}
 			return opcode_step(static_cast<uint8_t>(inst.op), nullptr);
 		}
@@ -6653,9 +6655,9 @@ namespace
 			Bytecode body = emit_code(L, lines);
 
 			PoolLambda header{static_cast<uint8_t>(L.is_variadic),
-			                  L.is_variadic ? 0 : narrow_or_die<uint32_t>(db, L.loc, L.n_params),
-			                  narrow_or_die<uint16_t>(db, L.loc, L.frame_regs()),
-			                  narrow_or_die<uint32_t>(db, L.loc, body.size())};
+												L.is_variadic ? 0 : narrow_or_die<uint32_t>(db, L.loc, L.n_params),
+												narrow_or_die<uint16_t>(db, L.loc, L.frame_regs()),
+												narrow_or_die<uint32_t>(db, L.loc, body.size())};
 			std::string entry;
 			entry.push_back(static_cast<char>(ConstTag::Lambda));
 			entry.append(reinterpret_cast<char*>(&header), sizeof(header));
@@ -6675,7 +6677,7 @@ namespace
 			for (size_t read = 0; read < L.code.size(); ++read)
 			{
 				if (read + 1 < L.code.size() && L.code[read].op == Opcode::mov
-				    && L.code[read + 1].op == Opcode::mov)
+						&& L.code[read + 1].op == Opcode::mov)
 				{
 					LirInst fused{};
 					fused.loc = L.code[read].loc;
@@ -6711,7 +6713,7 @@ namespace
 						last_line = i.loc.line;
 						last_file = i.loc.file_id;
 						lines.push_back({static_cast<uint32_t>(off), static_cast<uint32_t>(i.loc.line),
-						                 last_file});
+														 last_file});
 					}
 					off += encoded_size(i);
 				}
@@ -6726,7 +6728,7 @@ namespace
 		}
 
 		void emit_inst(Bytecode& bc, LirLambda& L, LirInst& i,
-		               std::unordered_map<uint32_t, size_t>& label_pos)
+									 std::unordered_map<uint32_t, size_t>& label_pos)
 		{
 			auto&& emit_load = [&]<typename Instr>()
 			{
@@ -6894,7 +6896,7 @@ namespace
 				{
 					emit_opcode(bc, i.op);
 					JETC_DIE_UNLESS(db, i.loc, unboxed_float_valid(i.op, i.unboxed_float_mode),
-					               "codegen: invalid unboxed float instruction");
+												 "codegen: invalid unboxed float instruction");
 					OP_unboxed_float operands{i.u.arith.dst, i.u.arith.lhs, i.u.arith.rhs, i.unboxed_float_mode};
 					emit_operand(bc, operands);
 					break;
@@ -7247,7 +7249,7 @@ namespace
 						args.push_back(datum_to_atom(vm, expr->call.args[i]));
 					}
 					return construct_struct(vm, unbox<StructType>(*bound_type), args.data(),
-					                        args.data() + args.size());
+																	args.data() + args.size());
 				}
 				JET_DIE(&vm, "datum_to_atom: unexpected call proc");
 			}
