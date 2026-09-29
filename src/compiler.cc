@@ -982,15 +982,12 @@ namespace
 				{
 					buf += advance();
 				}
-				JETC_DIE_UNLESS(
-					db,
-					start,
-					!at_end() && peek() >= '0' && peek() <= '9',
-					"exponent requires at least one digit");
+				size_t digits_start = buf.size();
 				while (!at_end() && peek() >= '0' && peek() <= '9')
 				{
 					buf += advance();
 				}
+				JETC_DIE_UNLESS(db, start, buf.size() > digits_start, "exponent requires at least one digit");
 			}
 			emit(start, TokenKind::Number, intern(buf));
 		}
