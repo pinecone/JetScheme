@@ -1153,7 +1153,7 @@ static Atom put_buffer(VmState& vm, std::string& buf, const char* who, Atom* fir
 	{
 		OPort* op{static_cast<OPort*>(slow_unbox<Port>(vm, first[1]))};
 		JET_DIE_UNLESS(&vm, op->is_output(), "{}: not an output port", who);
-		op->write_bytes(buf.data(), buf.size());
+		op->write_bytes(vm, buf.data(), buf.size());
 		return Atom{};
 	}
 
@@ -1470,7 +1470,7 @@ static Atom close_input_port(VmState& vm, Atom port)
 {
 	Port* port_object{slow_unbox<Port>(vm, port)};
 	JET_DIE_UNLESS(&vm, port_object->is_input(), "close-input-port: not an input port");
-	port_object->close();
+	port_object->close(vm);
 	return Atom{};
 }
 
@@ -1478,7 +1478,7 @@ static Atom close_output_port(VmState& vm, Atom port)
 {
 	Port* port_object{slow_unbox<Port>(vm, port)};
 	JET_DIE_UNLESS(&vm, port_object->is_output(), "close-output-port: not an output port");
-	port_object->close();
+	port_object->close(vm);
 	return Atom{};
 }
 
@@ -1501,7 +1501,7 @@ static Atom read_bytes_all(VmState& vm, Atom port)
 	while (!ip->eof())
 	{
 		result.resize(filled + CHUNK_SIZE);
-		size_t taken{ip->read_bytes(reinterpret_cast<char*>(result.data() + filled), CHUNK_SIZE)};
+		size_t taken{ip->read_bytes(vm, reinterpret_cast<char*>(result.data() + filled), CHUNK_SIZE)};
 		filled += taken;
 		JET_DIE_UNLESS(&vm, taken != 0 || ip->eof(), "read-bytes/all: input made no progress");
 	}
@@ -1516,7 +1516,7 @@ static Atom write_bytes(VmState& vm, Atom b, Atom port)
 	JET_DIE_UNLESS(&vm, op->is_output(), "write-bytes: not an output port");
 
 	ByteVector* bytevector{slow_unbox<ByteVector>(vm, b)};
-	op->write_bytes(reinterpret_cast<const char*>(bytevector->data()), bytevector->size());
+	op->write_bytes(vm, reinterpret_cast<const char*>(bytevector->data()), bytevector->size());
 
 	return Atom{};
 }
@@ -1525,7 +1525,7 @@ static Atom write_char(VmState& vm, Atom ch, Atom port)
 {
 	OPort* op{static_cast<OPort*>(slow_unbox<Port>(vm, port))};
 	JET_DIE_UNLESS(&vm, op->is_output(), "write-char: not an output port");
-	op->write_byte(slow_unbox<Character>(vm, ch));
+	op->write_byte(vm, slow_unbox<Character>(vm, ch));
 	return Atom{};
 }
 
@@ -1593,12 +1593,14 @@ char IPortFile::peek_byte()
 	return static_cast<char>(byte);
 }
 
-size_t IPortFile::read_bytes(char* buffer, size_t count)
+size_t IPortFile::read_bytes(VmState& vm, char* buffer, size_t count)
 {
-	return fread(buffer, 1, count, f_);
+	size_t n{fread(buffer, 1, count, f_)};
+	JET_DIE_WHEN(&vm, n < count && ferror(f_), "read error: {}", strerror(errno));
+	return n;
 }
 
-void IPortFile::close()
+void IPortFile::close(VmState&)
 {
 	if (f_)
 	{
@@ -1622,7 +1624,7 @@ char IPortMem::peek_byte()
 	return pos_ < src_.size() ? src_[pos_] : '\0';
 }
 
-size_t IPortMem::read_bytes(char* buffer, size_t count)
+size_t IPortMem::read_bytes(VmState&, char* buffer, size_t count)
 {
 	size_t available{src_.size() - pos_};
 	size_t taken{count < available ? count : available};
@@ -1646,17 +1648,19 @@ OPortFile::~OPortFile()
 	}
 }
 
-void OPortFile::write_bytes(const char* data, size_t size)
+void OPortFile::write_bytes(VmState& vm, const char* data, size_t size)
 {
-	fwrite(data, 1, size, f_);
+	size_t n{fwrite(data, 1, size, f_)};
+	JET_DIE_WHEN(&vm, n < size, "write error: {}", strerror(errno));
 }
 
-void OPortFile::close()
+void OPortFile::close(VmState& vm)
 {
 	if (f_)
 	{
-		fclose(f_);
+		int r{fclose(f_)};
 		f_ = nullptr;
+		JET_DIE_WHEN(&vm, r != 0, "close error: {}", strerror(errno));
 	}
 }
 

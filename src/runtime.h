@@ -1422,7 +1422,7 @@ public:
 	enum class Mode : uint8_t { Input, Output };
 
 	Port(Mode m) : mode_{m} {}
-	virtual void close() = 0;
+	virtual void close(VmState& vm) = 0;
 	virtual ~Port() = default;
 
 	bool is_input() const { return mode_ == Mode::Input; }
@@ -1438,7 +1438,7 @@ public:
 	IPort() : Port{Mode::Input} {}
 	virtual char read_byte() = 0;
 	virtual char peek_byte() = 0;
-	virtual size_t read_bytes(char* p, size_t n) = 0;
+	virtual size_t read_bytes(VmState& vm, char* p, size_t n) = 0;
 	virtual bool eof() = 0;
 };
 
@@ -1446,11 +1446,11 @@ class OPort : public Port
 {
 public:
 	OPort() : Port{Mode::Output} {}
-	virtual void write_bytes(const char* data, size_t size) = 0;
+	virtual void write_bytes(VmState& vm, const char* data, size_t size) = 0;
 
-	void write_byte(char value)
+	void write_byte(VmState& vm, char value)
 	{
-		write_bytes(&value, 1);
+		write_bytes(vm, &value, 1);
 	}
 };
 
@@ -1466,9 +1466,9 @@ public:
 
 	char read_byte() override;
 	char peek_byte() override;
-	size_t read_bytes(char* p, size_t n) override;
+	size_t read_bytes(VmState& vm, char* p, size_t n) override;
 
-	void close() override;
+	void close(VmState& vm) override;
 	bool eof() override;
 
 private:
@@ -1482,9 +1482,9 @@ public:
 
 	char read_byte() override;
 	char peek_byte() override;
-	size_t read_bytes(char* p, size_t n) override;
+	size_t read_bytes(VmState&, char* p, size_t n) override;
 
-	void close() override {}
+	void close(VmState&) override {}
 	bool eof() override { return pos_ >= src_.size(); }
 
 private:
@@ -1498,8 +1498,8 @@ public:
 	explicit OPortFile(VmState& s, std::string_view name);
 	~OPortFile() override;
 
-	void write_bytes(const char* data, size_t size) override;
-	void close() override;
+	void write_bytes(VmState& vm, const char* data, size_t size) override;
+	void close(VmState& vm) override;
 
 private:
 	FILE* f_;
