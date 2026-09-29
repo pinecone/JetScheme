@@ -982,6 +982,11 @@ namespace
 				{
 					buf += advance();
 				}
+				JETC_DIE_UNLESS(
+					db,
+					start,
+					!at_end() && peek() >= '0' && peek() <= '9',
+					"exponent requires at least one digit");
 				while (!at_end() && peek() >= '0' && peek() <= '9')
 				{
 					buf += advance();
