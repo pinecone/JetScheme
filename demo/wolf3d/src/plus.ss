@@ -821,7 +821,10 @@
                      (if (or (> tiley bottom) (zero? nearest))
                          nearest
                          (rows (+ tiley 1)
-                               (min nearest (plus:wall-distance worldx worldy tilex tiley))))))))))
+                               (if (zero? (tileat tilex tiley))
+                                   nearest
+                                   (min nearest
+                                        (plus:wall-distance worldx worldy tilex tiley)))))))))))
 
 (define (plus:corner-wall? tilex tiley)
   (and (plus:in-map? tilex tiley)
@@ -1780,12 +1783,13 @@
          (texels (if mip (ref mip 'texels) (PM_GetPage page)))
          (offset (* (quotient (* column width) 64) height))
          (limit (min (+ top rows) viewheight)))
-    (let loop ((row (max top 0)))
-      (when (< row limit)
-        (let ((texel (truncate (/ (* (- row top) height) rows))))
-          (setf! framebuffer (+ (* (+ row viewtop) screenwidth) viewleft pixx)
-                 (ref shade (ref texels (+ offset texel)))))
-        (loop (+ row 1))))))
+    (let ((start (max top 0)))
+      (let loop ((row start)
+                 (pixel (+ (* (+ start viewtop) screenwidth) viewleft pixx)))
+        (when (< row limit)
+          (setf! framebuffer pixel
+                 (ref shade (ref texels (+ offset (truncate (/ (* (- row top) height) rows))))))
+          (loop (+ row 1) (+ pixel screenwidth)))))))
 
 (define (plus:cache-wall-height! pixx same-hit height)
   (let ((height (if same-hit (ref plus:*wall-height* (- pixx 1)) height)))
