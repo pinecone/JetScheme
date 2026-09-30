@@ -103,24 +103,9 @@
   (when (VW_MarkUpdateBlock x y x y)
     (VH_Plot x y color)))
 
-;; ID_VH.C: copy every marked 16x16 block from the draw page to the display
-;; page, then consume the mark.
 (define (VW_UpdateScreen)
-  (let blocks ((index 0))
-    (when (< index (* UPDATEWIDE UPDATEHIGH))
-      (when (not (= (ref update index) 0))
-        (let ((left (* (remainder index UPDATEWIDE) 16))
-              (top (* (quotient index UPDATEWIDE) 16)))
-          (let rows ((y top))
-            (when (< y (min (+ top 16) screenheight))
-              (let columns ((x left))
-                (when (< x (min (+ left 16) screenwidth))
-                  (setf! displayframebuffer (+ (* y screenwidth) x)
-                         (ref framebuffer (+ (* y screenwidth) x)))
-                  (columns (+ x 1))))
-              (rows (+ y 1))))
-          (setf! update index 0)))
-      (blocks (+ index 1)))))
+  (bytevector-fill! update 0 (bytevector-length update) 0)
+  (begin))
 
 (define (VH_DrawPicAt left y chunknum)
   (let ((pic (ref pictable (- chunknum STARTPICS)))

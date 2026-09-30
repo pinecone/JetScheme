@@ -228,7 +228,6 @@
 
           (set! framebuffer (make-bytevector (* width screenheight) 127))
           (plus:copy-ui! source stride offset)
-          (set! displayframebuffer (bytevector-copy framebuffer 0 (bytevector-length framebuffer)))
           (set! UPDATEWIDE (quotient (+ width 15) 16))
           (set! update (make-bytevector (* UPDATEWIDE UPDATEHIGH) 1))
 
@@ -2216,7 +2215,6 @@
           (set! fizzlein #f)
           (set! lasttimecount 0)
           (set! TimeCount 0))
-        (bytevector-copy! displayframebuffer 0 framebuffer 0 (bytevector-length framebuffer))
         (set! frameon (+ frameon 1))
         (PM_NextFrame))
       (plus:*base-refresh*)))

@@ -193,9 +193,7 @@
   (let ((signon (or (CA_LoadFile "signon.bin")
                     (make-bytevector (* 320 200) 0))))
     (VL_MungePic signon 320 200)
-    (VL_MemToScreen signon 320 200 0 0)
-    (bytevector-copy! displayframebuffer 0 framebuffer 0
-                      (bytevector-length framebuffer))))
+    (VL_MemToScreen signon 320 200 0 0)))
 
 (define (DoJukebox)
   (Message "Jukebox needs music playback.")

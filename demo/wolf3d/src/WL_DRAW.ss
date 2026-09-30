@@ -231,18 +231,6 @@
     (set! TimeCount (- TimeCount (- tics MAXTICS)))
     (set! tics MAXTICS)))
 
-;; WL_DRAW.C: FixOfs restores the displayed view into the draw page before
-;; incremental drawing.  Page offsets become explicit source/destination RAM.
-(define (FixOfs)
-  (let rows ((y 0))
-    (when (< y viewheight)
-      (let columns ((x 0))
-        (when (< x viewwidth)
-          (let ((offset (+ (* (+ viewtop y) screenwidth) viewleft x)))
-            (setf! framebuffer offset (ref displayframebuffer offset)))
-          (columns (+ x 1))))
-      (rows (+ y 1)))))
-
 (define framebuffer (make-bytevector (* screenwidth screenheight) 0))
 (define wallheight (make-vector viewwidth 0))
 (define last-vertical-wall #f)
@@ -675,8 +663,5 @@
       (set! fizzlein #f)
       (set! lasttimecount 0)
       (set! TimeCount 0))
-    ;; ThreeDRefresh presents its completed draw page, corresponding to the
-    ;; reference page flip; the single host image receives an explicit copy.
-    (bytevector-copy! displayframebuffer 0 framebuffer 0 (bytevector-length framebuffer))
     (set! frameon (+ frameon 1))
     (PM_NextFrame)))

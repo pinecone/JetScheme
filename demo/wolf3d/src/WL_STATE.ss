@@ -1666,10 +1666,6 @@
 (define (RemoveObj index)
   (setf! actor-state index #f))
 
-(define (CenterWindow width height)
-  (FixOfs)
-  (US_CenterWindow width height))
-
 ;; WL_PLAY.C:303. The graphical port has no joystick device to poll.
 (define (PollJoystickButtons)
   #f)

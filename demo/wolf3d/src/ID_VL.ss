@@ -5,8 +5,6 @@
 
 (define gamepal 0)
 (define curpal (make-bytevector PALETTEBYTES 0))
-;; The displayed VGA page is separate from the page currently being drawn.
-(define displayframebuffer (make-bytevector (* screenwidth screenheight) 0))
 (define screenfaded #f)
 (define fastpalette #f)
 (define bordercolor 0)
