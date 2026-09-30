@@ -2083,7 +2083,8 @@
     (when (and (> scale 0) (<= scale maxscale))
       (let* ((rows (* scale 2))
              (top (truncate (/ (- viewheight rows) 2)))
-             (shade (ref plus:*shades* (plus:shade 0))))
+             (level (plus:light-level 0 player-x player-y))
+             (shade (ref plus:*shades* (plus:shade level))))
         (plus:draw-shape screenx page height rows top #f shade #f)))))
 
 (define (plus:vis-add screenx height shapenum tilex tiley)
