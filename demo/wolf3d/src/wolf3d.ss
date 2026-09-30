@@ -6,6 +6,7 @@ Start the game, record a demo, or play a recorded demo.
   --help                 Print this help and exit without loading game data.
   --datadir PATH         Game data directory (default: data_shareware beside run).
   --plus                 Enable enhanced graphics and movement.
+  --hardcore             Plus mode without the HUD; the view fills the screen.
   --record-demo FILE     Record level 1 without sound; Escape saves and exits.
   --play-demo FILE       Play a recording without sound, then exit.
   --headless             Play without a window; requires --play-demo.
@@ -45,7 +46,7 @@ Examples:
                (entry (assoc name '(("--datadir" . path) ("--record-demo" . file)
                                     ("--play-demo" . file) ("--turn-speed" . number)
                                     ("--walk-speed" . number) ("--plus" . flag)
-                                    ("--headless" . flag))))
+                                    ("--hardcore" . flag) ("--headless" . flag))))
                (kind (and entry (cdr entry))))
           (cond
             ((string=? name "--help") (print-help) (exit 0))
@@ -80,6 +81,9 @@ Examples:
           (when playback (fail (string-append name " cannot change recorded movement")))
           (unless (assoc "--plus" options) (fail (string-append name " requires --plus")))))
       '("--turn-speed" "--walk-speed"))
+    (when (and (assoc "--hardcore" options)
+               (not (or (assoc "--plus" options) playback)))
+      (fail "--hardcore requires --plus"))
     options))
 
 (define options (parse-options argv))
