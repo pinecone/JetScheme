@@ -399,9 +399,6 @@ enum class ConstTag : uint8_t
 	Lambda
 };
 
-// Serialized constant-pool entry bodies (the tag byte is read separately).
-// Emitter (compiler.cc), loader (vm.cc), and disassembler (debug.cc) must all
-// use these; the pool format is defined by these structs alone.
 #pragma pack(push, 1)
 struct PoolNumber
 {

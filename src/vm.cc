@@ -551,7 +551,8 @@ Code* parse_debug_section(
 
 LoadedProgram load_program(VmState& vm, Code* bytecode, size_t n_bytes)
 {
-	auto&& link_opcode_handlers = [](Code* body, Code* end)
+	LoadedProgram prog;
+	auto&& link_opcode_handlers = [&](Code* body, Code* end)
 	{
 		// The opcode tag stays in place so trace and profile can recover it.
 		Code* code{body};
@@ -559,6 +560,26 @@ LoadedProgram load_program(VmState& vm, Code* bytecode, size_t n_bytes)
 		{
 			uint8_t opcode{code[VM_OP_SLOT_SIZE]};
 			size_t step{opcode_step(opcode, code + OPCODE_SIZE)};
+			uint8_t pool_ref_offset{OPCODE_POOL_REF_OFFSET[opcode]};
+			if (pool_ref_offset != 0xFF)
+			{
+				// Emitted bodies only reference pool entries decoded before them
+				// (constants are interned while a body is emitted, before the
+				// lambda's own pool slot is reserved), so the bounds check below
+				// catches any violation.
+				Code* atom_field{code + OPCODE_SIZE + pool_ref_offset};
+				uint64_t bits;
+				std::memcpy(&bits, atom_field, sizeof(bits));
+				if (is_pool_ref(bits))
+				{
+					uint32_t index{pool_ref_index(bits)};
+					JET_DIE_UNLESS(&vm, index < prog.constants.size(),
+						"constant pool index {} out of range", index);
+					Atom value{prog.constants[index]};
+					std::memcpy(atom_field, &value.bits, sizeof(value.bits));
+				}
+			}
+
 			VmOp handler{dispatch_table[opcode]};
 			if (unboxed_float_kind(static_cast<Opcode>(opcode)) != UnboxedFloatKind::None)
 			{
@@ -566,10 +587,10 @@ LoadedProgram load_program(VmState& vm, Code* bytecode, size_t n_bytes)
 				handler = unboxed_float_handler(static_cast<Opcode>(opcode), operands->mode);
 			}
 			std::memcpy(code, &handler, sizeof(handler));
+
 			code += step;
 		}
 	};
-	LoadedProgram prog;
 	Code* prog_ptr{bytecode};
 	Code* const end{bytecode + n_bytes};
 	std::vector<LambdaDebug> source_maps;
@@ -1348,24 +1369,24 @@ namespace
 				make_field_shape<ContainerAccess<ByteVector>>(bytevector_u8_ref, nullptr);
 		}
 	} shape_table_init;
-} // namespace
+}
 
 static constexpr auto& op_ldk =
 	op_field_impl<FieldAccess::Load, FieldKeySource::Register, FieldMiss::Die, OP_ldk>;
 static constexpr auto& op_stk =
 	op_field_impl<FieldAccess::Store, FieldKeySource::Register, FieldMiss::Die, OP_stk>;
 static constexpr auto& op_ldki =
-	op_field_impl<FieldAccess::Load, FieldKeySource::Constant, FieldMiss::Die, OP_ldki>;
+	op_field_impl<FieldAccess::Load, FieldKeySource::Imm, FieldMiss::Die, OP_ldki>;
 static constexpr auto& op_stki =
-	op_field_impl<FieldAccess::Store, FieldKeySource::Constant, FieldMiss::Die, OP_stki>;
+	op_field_impl<FieldAccess::Store, FieldKeySource::Imm, FieldMiss::Die, OP_stki>;
 static constexpr auto& op_ldkm =
 	op_field_impl<FieldAccess::Load, FieldKeySource::Register, FieldMiss::Hole, OP_ldkm>;
 static constexpr auto& op_ldkmi =
-	op_field_impl<FieldAccess::Load, FieldKeySource::Constant, FieldMiss::Hole, OP_ldkmi>;
+	op_field_impl<FieldAccess::Load, FieldKeySource::Imm, FieldMiss::Hole, OP_ldkmi>;
 static constexpr auto& op_ldkd =
 	op_field_impl<FieldAccess::Load, FieldKeySource::Register, FieldMiss::Default, OP_ldkd>;
 static constexpr auto& op_ldkdi =
-	op_field_impl<FieldAccess::Load, FieldKeySource::Constant, FieldMiss::Default, OP_ldkdi>;
+	op_field_impl<FieldAccess::Load, FieldKeySource::Imm, FieldMiss::Default, OP_ldkdi>;
 
 template <typename Op, int outputs>
 JET_NOINLINE JET_PRESERVE_NONE static void op_iter_coro_slow(VM_OP_PARAMS)
@@ -1634,7 +1655,7 @@ JET_PRESERVE_NONE static void op_ldi(VM_OP_PARAMS)
 {
 	OP_ldi* op{reinterpret_cast<OP_ldi*>(pc)};
 	pc += sizeof(*op);
-	frame_regs[op->dst] = s.constants[op->idx];
+	frame_regs[op->dst] = Atom::from_bits(op->imm);
 	DISPATCH();
 }
 
@@ -1700,7 +1721,7 @@ JET_PRESERVE_NONE static void op_clo(VM_OP_PARAMS)
 	OP_clo* op{reinterpret_cast<OP_clo*>(pc)};
 	pc += sizeof(*op);
 
-	Lambda& tmpl{*unbox<Lambda>(s.constants[op->pool_idx])};
+	Lambda& tmpl{*unbox<Lambda>(Atom::from_bits(op->tmpl))};
 	Atom la_atom{Lambda::alloc(s, tmpl.code, tmpl.arity, tmpl.n_locals, op->n_captures)};
 	Lambda* lambda{unbox<Lambda>(la_atom)};
 	for (uint16_t capture{0}; capture < op->n_captures; ++capture)
@@ -1726,11 +1747,11 @@ JET_PRESERVE_NONE static void op_binop_rr_impl(VM_OP_PARAMS)
 }
 
 template <auto Op, typename Instr>
-JET_PRESERVE_NONE static void op_binop_rk_impl(VM_OP_PARAMS)
+JET_PRESERVE_NONE static void op_binop_ri_impl(VM_OP_PARAMS)
 {
 	auto* op{reinterpret_cast<Instr*>(pc)};
 	pc += sizeof(*op);
-	frame_regs[op->dst] = Op(s, frame_regs[op->a], s.constants[op->b]);
+	frame_regs[op->dst] = Op(s, frame_regs[op->a], Atom::from_bits(op->imm));
 	DISPATCH();
 }
 
@@ -1806,7 +1827,7 @@ JET_PRESERVE_NONE static void op_unboxed_float(VM_OP_PARAMS)
 	{
 		bool left_unboxed{};
 		bool right_unboxed{};
-		bool constant{};
+		bool imm{};
 		bool store{};
 	};
 
@@ -1816,20 +1837,20 @@ JET_PRESERVE_NONE static void op_unboxed_float(VM_OP_PARAMS)
 		{
 			case UnboxedFloatMode::Start:
 				return AddressingMode{};
-			case UnboxedFloatMode::StartConstant:
-				return AddressingMode{.constant = true};
+			case UnboxedFloatMode::StartImm:
+				return AddressingMode{.imm = true};
 			case UnboxedFloatMode::Left:
 				return AddressingMode{.left_unboxed = true};
 			case UnboxedFloatMode::Right:
 				return AddressingMode{.right_unboxed = true};
-			case UnboxedFloatMode::Constant:
-				return AddressingMode{.left_unboxed = true, .constant = true};
+			case UnboxedFloatMode::Imm:
+				return AddressingMode{.left_unboxed = true, .imm = true};
 			case UnboxedFloatMode::StoreLeft:
 				return AddressingMode{.left_unboxed = true, .store = true};
 			case UnboxedFloatMode::StoreRight:
 				return AddressingMode{.right_unboxed = true, .store = true};
-			case UnboxedFloatMode::StoreConstant:
-				return AddressingMode{.left_unboxed = true, .constant = true, .store = true};
+			case UnboxedFloatMode::StoreImm:
+				return AddressingMode{.left_unboxed = true, .imm = true, .store = true};
 			default:
 				JET_DIE(nullptr, "invalid unboxed float mode {}", static_cast<uint8_t>(mode));
 		}
@@ -1844,7 +1865,7 @@ JET_PRESERVE_NONE static void op_unboxed_float(VM_OP_PARAMS)
 	if constexpr (!addressing.right_unboxed && !unboxed_float_unary(op))
 	{
 		unboxed_float_check<op>(
-			s, addressing.constant ? s.constants[operands->b] : frame_regs[operands->b]);
+			s, addressing.imm ? Atom::from_bits(operands->b) : frame_regs[operands->b]);
 	}
 
 	double left{unboxed_float};
@@ -1855,8 +1876,8 @@ JET_PRESERVE_NONE static void op_unboxed_float(VM_OP_PARAMS)
 	}
 	if constexpr (!addressing.right_unboxed && !unboxed_float_unary(op))
 	{
-		const Atom* value{addressing.constant ? &s.constants[operands->b] : &frame_regs[operands->b]};
-		right = load_float_volatile(&value->bits);
+		Atom rhs{addressing.imm ? Atom::from_bits(operands->b) : frame_regs[operands->b]};
+		right = load_float_volatile(&rhs.bits);
 	}
 
 	if constexpr (unboxed_float_kind(op) == UnboxedFloatKind::Comparison)
@@ -1975,20 +1996,20 @@ static VmOp unboxed_float_handler(UnboxedFloatMode mode)
 	{
 		case UnboxedFloatMode::Start:
 			return unboxed_float_handler<op, UnboxedFloatMode::Start>();
-		case UnboxedFloatMode::StartConstant:
-			return unboxed_float_handler<op, UnboxedFloatMode::StartConstant>();
+		case UnboxedFloatMode::StartImm:
+			return unboxed_float_handler<op, UnboxedFloatMode::StartImm>();
 		case UnboxedFloatMode::Left:
 			return unboxed_float_handler<op, UnboxedFloatMode::Left>();
 		case UnboxedFloatMode::Right:
 			return unboxed_float_handler<op, UnboxedFloatMode::Right>();
-		case UnboxedFloatMode::Constant:
-			return unboxed_float_handler<op, UnboxedFloatMode::Constant>();
+		case UnboxedFloatMode::Imm:
+			return unboxed_float_handler<op, UnboxedFloatMode::Imm>();
 		case UnboxedFloatMode::StoreLeft:
 			return unboxed_float_handler<op, UnboxedFloatMode::StoreLeft>();
 		case UnboxedFloatMode::StoreRight:
 			return unboxed_float_handler<op, UnboxedFloatMode::StoreRight>();
-		case UnboxedFloatMode::StoreConstant:
-			return unboxed_float_handler<op, UnboxedFloatMode::StoreConstant>();
+		case UnboxedFloatMode::StoreImm:
+			return unboxed_float_handler<op, UnboxedFloatMode::StoreImm>();
 	}
 	JET_DIE(nullptr, "invalid unboxed float mode {}", static_cast<uint8_t>(mode));
 }
@@ -2063,15 +2084,15 @@ static constexpr auto& op_lt = op_binop_rr_impl<lt_atoms, OP_lt>;
 static constexpr auto& op_le = op_binop_rr_impl<le_atoms, OP_le>;
 static constexpr auto& op_gt = op_binop_rr_impl<gt_atoms, OP_gt>;
 static constexpr auto& op_ge = op_binop_rr_impl<ge_atoms, OP_ge>;
-static constexpr auto& op_addi = op_binop_rk_impl<add_atoms, OP_addi>;
-static constexpr auto& op_subi = op_binop_rk_impl<sub_atoms, OP_subi>;
-static constexpr auto& op_muli = op_binop_rk_impl<mul_atoms, OP_muli>;
-static constexpr auto& op_divi = op_binop_rk_impl<div_atoms, OP_divi>;
-static constexpr auto& op_mini = op_binop_rk_impl<min_atoms, OP_mini>;
-static constexpr auto& op_maxi = op_binop_rk_impl<max_atoms, OP_maxi>;
-static constexpr auto& op_cmpi = op_binop_rk_impl<numeq_atoms, OP_cmpi>;
-static constexpr auto& op_eqi = op_binop_rk_impl<eq_atoms, OP_eqi>;
-static constexpr auto& op_lti = op_binop_rk_impl<lt_atoms, OP_lti>;
+static constexpr auto& op_addi = op_binop_ri_impl<add_atoms, OP_addi>;
+static constexpr auto& op_subi = op_binop_ri_impl<sub_atoms, OP_subi>;
+static constexpr auto& op_muli = op_binop_ri_impl<mul_atoms, OP_muli>;
+static constexpr auto& op_divi = op_binop_ri_impl<div_atoms, OP_divi>;
+static constexpr auto& op_mini = op_binop_ri_impl<min_atoms, OP_mini>;
+static constexpr auto& op_maxi = op_binop_ri_impl<max_atoms, OP_maxi>;
+static constexpr auto& op_cmpi = op_binop_ri_impl<numeq_atoms, OP_cmpi>;
+static constexpr auto& op_eqi = op_binop_ri_impl<eq_atoms, OP_eqi>;
+static constexpr auto& op_lti = op_binop_ri_impl<lt_atoms, OP_lti>;
 
 enum class IfMode
 {
@@ -2091,7 +2112,15 @@ JET_PRESERVE_NONE static void op_if_impl(VM_OP_PARAMS)
 	}
 	else
 	{
-		Atom rhs{Mode == IfMode::CompareConstant ? s.constants[op->b] : frame_regs[op->b]};
+		Atom rhs;
+		if constexpr (Mode == IfMode::CompareConstant)
+		{
+			rhs = Atom::from_bits(op->imm);
+		}
+		else
+		{
+			rhs = frame_regs[op->b];
+		}
 		branch_taken = !is_true(Op(s, frame_regs[op->a], rhs));
 	}
 	pc += sizeof(*op) + (branch_taken ? op->size : 0);
@@ -2711,4 +2740,4 @@ namespace
 			build_return_code(g_return_to_host_code, Opcode::reth);
 		}
 	} dispatch_init;
-} // namespace
+}

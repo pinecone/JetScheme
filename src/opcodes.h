@@ -16,13 +16,13 @@ struct Struct;
 enum class UnboxedFloatMode : uint8_t
 {
 	Start,
-	StartConstant,
+	StartImm,
 	Left,
 	Right,
-	Constant,
+	Imm,
 	StoreLeft,
 	StoreRight,
-	StoreConstant,
+	StoreImm,
 };
 
 #pragma pack(push, 1)
@@ -30,7 +30,8 @@ struct OP_unboxed_float
 {
 	uint16_t dst;
 	uint16_t a;
-	uint16_t b;
+	// Register number for register modes; baked atom for constant modes.
+	uint64_t b;
 	UnboxedFloatMode mode;
 };
 #pragma pack(pop)
@@ -88,14 +89,14 @@ constexpr bool unboxed_float_valid(Opcode opcode, UnboxedFloatMode mode)
 		case UnboxedFloatMode::Start:
 		case UnboxedFloatMode::Left:
 			return kind != UnboxedFloatKind::Comparison;
-		case UnboxedFloatMode::StartConstant:
+		case UnboxedFloatMode::StartImm:
 		case UnboxedFloatMode::Right:
-		case UnboxedFloatMode::Constant:
+		case UnboxedFloatMode::Imm:
 			return kind == UnboxedFloatKind::Binary;
 		case UnboxedFloatMode::StoreLeft:
 			return true;
 		case UnboxedFloatMode::StoreRight:
-		case UnboxedFloatMode::StoreConstant:
+		case UnboxedFloatMode::StoreImm:
 			return kind != UnboxedFloatKind::Unary;
 	}
 	return false;
@@ -127,4 +128,25 @@ inline size_t opcode_step(uint8_t op, const uint8_t* operands)
 
 	JET_DIE_UNLESS(nullptr, op < OPCODE_COUNT, "unknown opcode {}", op);
 	return OPCODE_SIZE + OPCODE_INFO[op].operand_size;
+}
+
+// A serialized 64-bit atom operand holds immediate atom bits, or — when it is
+// tag-none with the top payload bit set, a pattern unreachable for real atoms
+// (see the boxing layout in atom.h) — a constant-pool index that load_program
+// replaces with the decoded atom. Nothing reads the pool at runtime.
+constexpr uint64_t POOL_REF_FLAG = 0x0000'8000'0000'0000ULL;
+
+constexpr bool is_pool_ref(uint64_t bits)
+{
+	return (bits >> 48) == 0x7FF8 && (bits & POOL_REF_FLAG) != 0;
+}
+
+constexpr uint32_t pool_ref_index(uint64_t bits)
+{
+	return static_cast<uint32_t>(bits & 0xFFFF'FFFFULL);
+}
+
+constexpr uint64_t pool_ref_bits(uint32_t index)
+{
+	return 0x7FF8'0000'0000'0000ULL | POOL_REF_FLAG | index;
 }

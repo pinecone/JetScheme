@@ -1795,7 +1795,7 @@ JET_ALWAYS_INLINE static bool cache_field_index(Struct* instance, Atom key, Inst
 template <FieldKeySource key_source, typename Instr>
 JET_ALWAYS_INLINE static bool scheme_field_matches(Atom key, const Instr& op)
 {
-	if constexpr (key_source == FieldKeySource::Constant)
+	if constexpr (key_source == FieldKeySource::Imm)
 	{
 		return op.cached_index != FIELD_IC_NONE;
 	}

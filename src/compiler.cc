@@ -425,7 +425,6 @@ struct Expr
 			Expr* test;
 			Slice<Expr*> body;
 		} unless;
-		// clauses are flat (test, expr) pairs.
 		struct
 		{
 			Slice<Expr*> clauses;
@@ -679,7 +678,7 @@ struct Compiler
 		enum class Kind { None, Unary, Arith, Ref };
 		Kind kind{};
 		Opcode op{};
-		Opcode op_k{};
+		Opcode op_imm{};
 	};
 	PrimLowering prim_call_lowering(Expr* call);
 	void record_ref(ResolvedBinding binding);
@@ -715,8 +714,7 @@ struct Compiler
 	void select_call_op(Expr* expr, Expr* current);
 	void collect_branch_fusion_facts(Program& program);
 	void select_branch_fusions();
-	void select_field_op(Expr* expr, Expr* current, Expr* receiver, Expr* key, Opcode reg_op,
-											 Opcode const_op);
+	void select_field_op(Expr* expr, Expr* current, Expr* receiver, Expr* key, Opcode reg_op, Opcode imm_op);
 	void select_var_op(Expr* expr, Expr* current, bool is_set);
 
 	void run_anf_inline(Program& program);
@@ -1238,7 +1236,6 @@ namespace
 
 		std::string_view process_string_escapes(SourceLoc loc, std::string_view raw)
 		{
-			// `raw` is the lexer slice including surrounding quotes.
 			std::string_view inner = raw.substr(1, raw.size() - 2);
 
 			if (inner.find('\\') == std::string_view::npos)
@@ -2514,7 +2511,7 @@ namespace
 
 	};
 
-} // namespace
+}
 
 static std::vector<Token> lex(Compiler& db, IPort* port, uint32_t file_id)
 {
@@ -3795,7 +3792,7 @@ namespace
 		return std::nullopt;
 	}
 
-} // namespace
+}
 
 void Compiler::run_op_selection(Program& program)
 {
@@ -4056,14 +4053,15 @@ void Compiler::select_call_op(Expr* expr, Expr* current)
 		return;
 	}
 
-	// Two-arg arithmetic: rr, or rk when the rhs is a number literal.
+	// Two-arg arithmetic: rr, or imm when the rhs is a number literal (or, for
+	// eq, any literal key; non-immediates serialize as pool refs).
 	if (pl.kind == PrimLowering::Kind::Arith)
 	{
 		Opcode op = pl.op;
 		if (expr->call.args[1]->kind == ExprKind::NumberLit
 				|| (op == Opcode::eq && is_literal_key(expr->call.args[1])))
 		{
-			op = OPCODE_INFO[static_cast<size_t>(op)].k_variant;
+			op = OPCODE_INFO[static_cast<size_t>(op)].i_variant;
 		}
 		sel.op = op;
 		return;
@@ -4071,7 +4069,7 @@ void Compiler::select_call_op(Expr* expr, Expr* current)
 
 	if (pl.kind == PrimLowering::Kind::Ref)
 	{
-		select_field_op(expr, current, expr->call.args[0], expr->call.args[1], pl.op, pl.op_k);
+		select_field_op(expr, current, expr->call.args[0], expr->call.args[1], pl.op, pl.op_imm);
 		return;
 	}
 
@@ -4093,7 +4091,6 @@ void Compiler::select_call_op(Expr* expr, Expr* current)
 
 	bool slot = needs_slot(proc_binding.lambda, static_cast<uint32_t>(proc_binding.breadth));
 
-	// Callee in a boxed binding: slot IC.
 	if (proc_binding.lambda != current && slot)
 	{
 		std::optional<uint16_t> found = find_upvalue(current, proc_binding.lambda,
@@ -4104,7 +4101,6 @@ void Compiler::select_call_op(Expr* expr, Expr* current)
 		return;
 	}
 
-	// Callee in an unboxed binding: direct IC.
 	if (!slot)
 	{
 		if (proc_binding.lambda == current)
@@ -4225,7 +4221,7 @@ void Compiler::select_field_op(
 	Expr* receiver,
 	Expr* key,
 	Opcode reg_op,
-	Opcode const_op)
+	Opcode imm_op)
 {
 	OpSelection& sel = selected_ops_[expr->id].emplace();
 
@@ -4235,7 +4231,7 @@ void Compiler::select_field_op(
 		return;
 	}
 
-	sel.op = is_literal_key(key) ? const_op : reg_op;
+	sel.op = is_literal_key(key) ? imm_op : reg_op;
 }
 
 void Compiler::select_var_op(Expr* expr, Expr* current, bool is_set)
@@ -4689,7 +4685,7 @@ namespace
 		}
 	};
 
-} // namespace
+}
 
 void Compiler::run_anf_inline(Program& program)
 {
@@ -4782,7 +4778,7 @@ namespace
 		}
 	};
 
-} // namespace
+}
 
 void Compiler::run_binarize(Program& program)
 {
@@ -5095,7 +5091,6 @@ namespace
 			}
 
 			std::vector<Capture> captures = collect_captures(lambda, name);
-			// lift lambdas while retaining mutated outer bindings as captures
 			std::erase_if(captures, [&](const Capture& capture)
 			{
 				Compiler::LambdaBindings& owner = db.lambda_bindings_[capture.binding.lambda];
@@ -5150,7 +5145,7 @@ namespace
 		}
 	};
 
-} // namespace
+}
 
 void Compiler::run_lambda_lift(Program& program)
 {
@@ -5166,30 +5161,36 @@ namespace
 
 	struct LirInst
 	{
-		Opcode op;	 // base opcode only: no _1.._7 replicas; label is IR-only
+		Opcode op;
 		UnboxedFloatMode unboxed_float_mode{UnboxedFloatMode::Start};
 		union
 		{
-			struct { uint16_t dst; uint16_t src; } mov;							 // mov
+			struct { uint16_t dst; uint16_t src; } mov;
 			struct { uint16_t dst0; uint16_t src0; uint16_t dst1; uint16_t src1; } mov2;
-			struct { uint16_t dst; uint16_t idx; } load;						 // ldi ldc ldcb ldb
-			struct { uint16_t idx; uint16_t src; } store;						 // stcb stb
-			struct { uint16_t reg; } box;														 // box
-			struct { uint16_t src; } ret;														 // ret
-			struct { uint32_t id; uint16_t src; } label;						 // loc; bn/skp target
+			struct { uint16_t dst; uint16_t idx; } load;
+			struct { uint16_t idx; uint16_t src; } store;
+			struct { uint16_t dst; uint64_t imm; } ldi;
+			struct { uint16_t reg; } box;
+			struct { uint16_t src; } ret;
+			struct { uint32_t id; uint16_t src; } label;
 			struct
 			{
 				uint32_t id;
 				uint16_t lhs;
 				uint16_t rhs;
-			} if_cmp; // beq..blti; pool index in rhs
-			// One payload for every call op: c/ct read callee, ccb
-			// reads upvalue_idx, cl/cc read idx, the rest only w+nargs.
+			} if_cmp;
+			struct
+			{
+				uint32_t id;
+				uint16_t lhs;
+				uint64_t imm;
+			} if_cmp_imm;
 			struct { uint16_t width; uint16_t nargs; uint16_t callee; uint16_t upvalue_idx; uint16_t idx; } call;
 			struct { uint16_t dst; uint16_t pool_idx; uint16_t first_capture; uint16_t n_captures; } closure;
-			struct { uint16_t dst; uint16_t lhs; uint16_t rhs; } arith;	 // rr; *i holds the pool idx in rhs
+			struct { uint16_t dst; uint16_t lhs; uint16_t rhs; } arith;
+			struct { uint16_t dst; uint16_t lhs; uint64_t imm; } arith_imm;
 			struct { uint16_t dst; uint16_t obj; uint16_t key; uint16_t val; } field;
-			// ldk stk; *i holds the pool idx in key
+			struct { uint16_t dst; uint16_t obj; uint64_t key; uint16_t val; } field_imm;
 			struct { uint32_t id; uint16_t cursor; uint16_t dst0; uint16_t dst1; } iter;
 		} u;
 		// Stamped from the SourceLoc passed to LirEmitter::emit; line 0 means
@@ -5329,9 +5330,9 @@ namespace
 								 || (lambda.chain.binding && argument->kind == ExprKind::VarRef
 										 && binding_key(db.binding(argument)) == *lambda.chain.binding);
 				};
-				bool constant{is_kform(inst.op)};
+				bool imm{is_iform(inst.op)};
 				bool lhs{matches(0) && inst.u.arith.lhs == previous.u.arith.dst};
-				bool rhs{expression->call.args.size() == 2 && !constant && matches(1)
+				bool rhs{expression->call.args.size() == 2 && !imm && matches(1)
 								 && inst.u.arith.rhs == previous.u.arith.dst};
 				if (lhs || rhs)
 				{
@@ -5339,8 +5340,8 @@ namespace
 					switch (previous.unboxed_float_mode)
 					{
 						case UnboxedFloatMode::Start:
-							mode = is_kform(previous.op)
-										 ? UnboxedFloatMode::StartConstant : UnboxedFloatMode::Start;
+							mode = is_iform(previous.op)
+										 ? UnboxedFloatMode::StartImm : UnboxedFloatMode::Start;
 							break;
 						case UnboxedFloatMode::StoreLeft:
 							mode = UnboxedFloatMode::Left;
@@ -5348,8 +5349,8 @@ namespace
 						case UnboxedFloatMode::StoreRight:
 							mode = UnboxedFloatMode::Right;
 							break;
-						case UnboxedFloatMode::StoreConstant:
-							mode = UnboxedFloatMode::Constant;
+						case UnboxedFloatMode::StoreImm:
+							mode = UnboxedFloatMode::Imm;
 							break;
 						default:
 							JETC_DIE(db, expression->loc, "codegen: unfinished unboxed float chain");
@@ -5359,11 +5360,11 @@ namespace
 						expression->loc,
 						inst,
 						*opcode,
-						constant
-							? UnboxedFloatMode::StoreConstant
-							: lhs
-								? UnboxedFloatMode::StoreLeft
-								: UnboxedFloatMode::StoreRight);
+						imm
+						? UnboxedFloatMode::StoreImm
+						: lhs
+							? UnboxedFloatMode::StoreLeft
+							: UnboxedFloatMode::StoreRight);
 				}
 			}
 			emit(expression->loc, inst);
@@ -5512,9 +5513,38 @@ namespace
 			emit(loc, i);
 		}
 
-		void emit_ldk(SourceLoc loc, uint16_t dst, uint16_t idx)
+		void emit_ldi_pool(SourceLoc loc, uint16_t dst, uint16_t idx)
 		{
-			emit_load(loc, Opcode::ldi, dst, idx);
+			emit_ldi(loc, dst, pool_ref_bits(idx));
+		}
+
+		void emit_ldi(SourceLoc loc, uint16_t dst, uint64_t imm)
+		{
+			LirInst i = inst(Opcode::ldi);
+			i.u.ldi.dst = dst;
+			i.u.ldi.imm = imm;
+			emit(loc, i);
+		}
+
+		// Serialized immediate operand for a literal: immediate atoms bake their
+		// bits; symbols and strings serialize as pool refs.
+		uint64_t literal_imm(Expr* expr)
+		{
+			switch (expr->kind)
+			{
+				case ExprKind::NumberLit:
+					return box(Number::from_ieee(number_lit_value(expr->number_lit.text))).bits;
+				case ExprKind::BooleanLit:
+					return box(expr->boolean_lit.value).bits;
+				case ExprKind::CharacterLit:
+					return box(static_cast<Character>(expr->character_lit.value)).bits;
+				case ExprKind::SymbolLit:
+					return pool_ref_bits(intern_name(ConstTag::Symbol, expr->symbol_lit.name));
+				case ExprKind::StringLit:
+					return pool_ref_bits(intern_text(expr->loc, expr->string_lit.value));
+				default:
+					JETC_DIE(db, expr->loc, "codegen: not a literal (kind {})", expr->kind);
+			}
 		}
 
 		uint16_t intern_constant(std::string& serialized)
@@ -5528,15 +5558,6 @@ namespace
 			prog.pool_to_lambda.push_back(-1);
 			pool_idx[serialized] = idx;
 			return idx;
-		}
-
-		template <typename T>
-		uint16_t intern_typed(ConstTag t, T& payload)
-		{
-			std::string serialized;
-			serialized.push_back(static_cast<char>(t));
-			serialized.append(reinterpret_cast<char*>(&payload), sizeof(T));
-			return intern_constant(serialized);
 		}
 
 		uint16_t intern_name(ConstTag t, std::string_view payload)
@@ -5560,45 +5581,9 @@ namespace
 			return intern_constant(serialized);
 		}
 
-		uint16_t intern_empty(ConstTag t)
-		{
-			std::string serialized;
-			serialized.push_back(static_cast<char>(t));
-			return intern_constant(serialized);
-		}
-
 		uint16_t intern_global_name(std::string_view name)
 		{
 			return intern_name(ConstTag::GlobalName, name);
-		}
-
-		uint16_t intern_literal_key(Expr* e)
-		{
-			switch (e->kind)
-			{
-				case ExprKind::NumberLit:
-				{
-					double val = number_lit_value(e->number_lit.text);
-					Number number = Number::from_ieee(val);
-					return intern_typed(ConstTag::Number, number);
-				}
-				case ExprKind::SymbolLit:
-					return intern_name(ConstTag::Symbol, e->symbol_lit.name);
-				case ExprKind::CharacterLit:
-				{
-					Character c = static_cast<Character>(e->character_lit.value);
-					return intern_typed(ConstTag::Character, c);
-				}
-				case ExprKind::BooleanLit:
-				{
-					bool val = e->boolean_lit.value;
-					return intern_typed(ConstTag::Boolean, val);
-				}
-				case ExprKind::StringLit:
-					return intern_text(e->loc, e->string_lit.value);
-				default:
-					JETC_DIE(db, e->loc, "intern_literal_key: not a literal Expr (kind {})", e->kind);
-			}
 		}
 
 		void emit_ret(SourceLoc loc, uint16_t src)
@@ -5614,7 +5599,7 @@ namespace
 			if (form_count == 0)
 			{
 				uint16_t result_reg = alloc_reg(empty_loc);
-				emit_ldk(empty_loc, result_reg, intern_empty(ConstTag::Unknown));
+				emit_ldi(empty_loc, result_reg, Atom{}.bits);
 				return result_reg;
 			}
 			for (uint32_t i = 0; i + 1 < form_count; ++i)
@@ -5629,7 +5614,7 @@ namespace
 			uint32_t form_count = forms.size();
 			if (form_count == 0)
 			{
-				emit_ldk(loc, dst, intern_empty(ConstTag::Unknown));
+				emit_ldi(loc, dst, Atom{}.bits);
 				return;
 			}
 			for (uint32_t i = 0; i + 1 < form_count; ++i)
@@ -5734,7 +5719,7 @@ namespace
 			uint16_t pool_index = emit_lifted_lambda(expr);
 			if (expr->lambda.upvalues.empty())
 			{
-				emit_ldk(expr->loc, dst, pool_index);
+				emit_ldi_pool(expr->loc, dst, pool_index);
 				return;
 			}
 			LirInst i = inst(Opcode::clo);
@@ -5799,9 +5784,15 @@ namespace
 			Compiler::OpSelection sel = selection(expr, "SetRef");
 			LirInst i = inst(sel.op);
 			i.u.field.obj = emit_to_any_reg(expr->set_ref.obj);
-			bool literal_key = is_kform(sel.op);
-			i.u.field.key = literal_key ? intern_literal_key(expr->set_ref.key)
-											: emit_to_any_reg(expr->set_ref.key);
+			bool literal_key{is_iform(sel.op)};
+			if (literal_key)
+			{
+				i.u.field_imm.key = literal_imm(expr->set_ref.key);
+			}
+			else
+			{
+				i.u.field.key = emit_to_any_reg(expr->set_ref.key);
+			}
 			uint16_t v = emit_to_any_reg(expr->set_ref.value);
 			i.u.field.val = v;
 			emit(expr->loc, i);
@@ -5819,8 +5810,15 @@ namespace
 			LirInst i = inst(sel.op);
 			i.u.field.dst = dst;
 			i.u.field.obj = emit_to_any_reg(receiver);
-			bool literal_key = is_kform(sel.op);
-			i.u.field.key = literal_key ? intern_literal_key(key) : emit_to_any_reg(key);
+			bool literal_key{is_iform(sel.op)};
+			if (literal_key)
+			{
+				i.u.field_imm.key = literal_imm(key);
+			}
+			else
+			{
+				i.u.field.key = emit_to_any_reg(key);
+			}
 			if (fallback)
 			{
 				i.u.field.val = emit_to_any_reg(fallback);
@@ -6205,7 +6203,7 @@ namespace
 			}
 			else
 			{
-				emit_ldk(expr->loc, dst, intern_empty(ConstTag::Unknown));
+				emit_ldi(expr->loc, dst, Atom{}.bits);
 			}
 			emit_label(expr->loc, Opcode::loc, l_end);
 			for (size_t n = 0; n < expr->iter_next.names.size(); ++n)
@@ -6246,9 +6244,9 @@ namespace
 			return OPCODE_INFO[static_cast<size_t>(op)].is_call_shaped;
 		}
 
-		bool is_kform(Opcode op)
+		bool is_iform(Opcode op)
 		{
-			return OPCODE_INFO[static_cast<size_t>(op)].is_kform;
+			return OPCODE_INFO[static_cast<size_t>(op)].is_iform;
 		}
 
 		bool is_if_cmp(Opcode op)
@@ -6308,41 +6306,25 @@ namespace
 			switch (expr->kind)
 			{
 				case ExprKind::NumberLit:
-				{
-					double val = number_lit_value(expr->number_lit.text);
-					Number n = Number::from_ieee(val);
-					emit_ldk(expr->loc, dst, intern_typed(ConstTag::Number, n));
-					break;
-				}
-
 				case ExprKind::BooleanLit:
-				{
-					bool val = expr->boolean_lit.value;
-					emit_ldk(expr->loc, dst, intern_typed(ConstTag::Boolean, val));
-					break;
-				}
-
 				case ExprKind::CharacterLit:
-				{
-					Character c = static_cast<Character>(expr->character_lit.value);
-					emit_ldk(expr->loc, dst, intern_typed(ConstTag::Character, c));
+					emit_ldi(expr->loc, dst, literal_imm(expr));
 					break;
-				}
 
 				case ExprKind::StringLit:
-					emit_ldk(expr->loc, dst, intern_text(expr->loc, expr->string_lit.value));
+					emit_ldi_pool(expr->loc, dst, intern_text(expr->loc, expr->string_lit.value));
 					break;
 
 				case ExprKind::SymbolLit:
-					emit_ldk(expr->loc, dst, intern_name(ConstTag::Symbol, expr->symbol_lit.name));
+					emit_ldi_pool(expr->loc, dst, intern_name(ConstTag::Symbol, expr->symbol_lit.name));
 					break;
 
 				case ExprKind::UnknownLit:
-					emit_ldk(expr->loc, dst, intern_empty(ConstTag::Unknown));
+					emit_ldi(expr->loc, dst, Atom{}.bits);
 					break;
 
 				case ExprKind::PrimRef:
-					emit_ldk(expr->loc, dst, intern_global_name(expr->prim_ref.name));
+					emit_ldi_pool(expr->loc, dst, intern_global_name(expr->prim_ref.name));
 					break;
 
 				case ExprKind::VarRef:
@@ -6405,16 +6387,21 @@ namespace
 						case Opcode::eqi:
 						case Opcode::lti:
 						{
-							bool takes_key = is_kform(sel.op);
+							bool takes_imm{is_iform(sel.op)};
 							LirInst i = inst(sel.op);
 							i.u.arith.dst = dst;
 							i.u.arith.lhs = emit_to_any_reg(expr->call.args[0]);
-							i.u.arith.rhs = takes_key
-														? intern_literal_key(expr->call.args[1])
-														: emit_to_any_reg(expr->call.args[1]);
+							if (takes_imm)
+							{
+								i.u.arith_imm.imm = literal_imm(expr->call.args[1]);
+							}
+							else
+							{
+								i.u.arith.rhs = emit_to_any_reg(expr->call.args[1]);
+							}
 							emit_arithmetic(expr, i);
 							release_if_temp(i.u.arith.lhs);
-							if (!takes_key)
+							if (!takes_imm)
 							{
 								release_if_temp(i.u.arith.rhs);
 							}
@@ -6495,12 +6482,18 @@ namespace
 						LirInst i = inst(sel.op);
 						i.u.if_cmp.id = l_alt;
 						i.u.if_cmp.lhs = emit_to_any_reg(cmp->call.args[0]);
-						bool cmp_k = is_kform(sel.op);
-						i.u.if_cmp.rhs = cmp_k ? intern_literal_key(cmp->call.args[1])
-													 : emit_to_any_reg(cmp->call.args[1]);
+						bool cmp_imm{is_iform(sel.op)};
+						if (cmp_imm)
+						{
+							i.u.if_cmp_imm.imm = literal_imm(cmp->call.args[1]);
+						}
+						else
+						{
+							i.u.if_cmp.rhs = emit_to_any_reg(cmp->call.args[1]);
+						}
 						emit(expr->loc, i);
 						release_if_temp(i.u.if_cmp.lhs);
-						if (!cmp_k)
+						if (!cmp_imm)
 						{
 							release_if_temp(i.u.if_cmp.rhs);
 						}
@@ -6520,7 +6513,7 @@ namespace
 					}
 					else
 					{
-						emit_ldk(expr->loc, dst, intern_empty(ConstTag::Unknown));
+						emit_ldi(expr->loc, dst, Atom{}.bits);
 					}
 					emit_label(expr->loc, Opcode::loc, l_end);
 					break;
@@ -6597,8 +6590,6 @@ namespace
 				file_ids.push_back(file);
 				return static_cast<uint32_t>(file_ids.size() - 1);
 			};
-			// Single pass: resolve each record's file id in place (first occurrence order,
-			// die on invalid id).
 			for (std::vector<LambdaDebug::Line>& lines : source_maps)
 			{
 				for (LambdaDebug::Line& e : lines)
@@ -6768,11 +6759,24 @@ namespace
 				Instr op{i.u.arith.dst, i.u.arith.lhs, i.u.arith.rhs};
 				emit_operand(bc, op);
 			};
+			auto&& emit_binary_imm = [&]<typename Instr>()
+			{
+				emit_opcode(bc, i.op);
+				Instr op{i.u.arith.dst, i.u.arith.lhs, i.u.arith_imm.imm};
+				emit_operand(bc, op);
+			};
 			auto&& emit_comparison = [&]<typename Instr>()
 			{
 				emit_opcode(bc, i.op);
 				Instr op{i.u.if_cmp.lhs, i.u.if_cmp.rhs, narrow_or_die<uint32_t>(db, i.loc,
 					label_target(i.loc, label_pos, i.u.if_cmp.id) - (bc.size() + sizeof(Instr)))};
+				emit_operand(bc, op);
+			};
+			auto&& emit_comparison_imm = [&]<typename Instr>()
+			{
+				emit_opcode(bc, i.op);
+				Instr op{i.u.if_cmp_imm.lhs, i.u.if_cmp_imm.imm, narrow_or_die<uint32_t>(db, i.loc,
+					label_target(i.loc, label_pos, i.u.if_cmp_imm.id) - (bc.size() + sizeof(Instr)))};
 				emit_operand(bc, op);
 			};
 			auto&& emit_call_slot = [&]<typename Instr>(size_t& counter)
@@ -6826,7 +6830,15 @@ namespace
 					break;
 				}
 
-				case Opcode::ldi: emit_load.template operator()<OP_ldi>(); break;
+				case Opcode::ldi:
+				{
+					emit_opcode(bc, Opcode::ldi);
+					OP_ldi op{};
+					op.dst = i.u.ldi.dst;
+					op.imm = i.u.ldi.imm;
+					emit_operand(bc, op);
+					break;
+				}
 				case Opcode::ldc: emit_load.template operator()<OP_ldc>(); break;
 				case Opcode::ldcb: emit_load.template operator()<OP_ldcb>(); break;
 				case Opcode::ldb: emit_load.template operator()<OP_ldb>(); break;
@@ -6847,7 +6859,7 @@ namespace
 					emit_opcode(bc, Opcode::clo);
 					OP_clo op{};
 					op.dst = i.u.closure.dst;
-					op.pool_idx = i.u.closure.pool_idx;
+					op.tmpl = pool_ref_bits(i.u.closure.pool_idx);
 					op.n_captures = i.u.closure.n_captures;
 					emit_operand(bc, op);
 					for (uint16_t c = 0; c < i.u.closure.n_captures; ++c)
@@ -6869,15 +6881,15 @@ namespace
 				case Opcode::le: emit_binary.template operator()<OP_le>(); break;
 				case Opcode::gt: emit_binary.template operator()<OP_gt>(); break;
 				case Opcode::ge: emit_binary.template operator()<OP_ge>(); break;
-				case Opcode::addi: emit_binary.template operator()<OP_addi>(); break;
-				case Opcode::subi: emit_binary.template operator()<OP_subi>(); break;
-				case Opcode::muli: emit_binary.template operator()<OP_muli>(); break;
-				case Opcode::divi: emit_binary.template operator()<OP_divi>(); break;
-				case Opcode::mini: emit_binary.template operator()<OP_mini>(); break;
-				case Opcode::maxi: emit_binary.template operator()<OP_maxi>(); break;
-				case Opcode::cmpi: emit_binary.template operator()<OP_cmpi>(); break;
-				case Opcode::eqi: emit_binary.template operator()<OP_eqi>(); break;
-				case Opcode::lti: emit_binary.template operator()<OP_lti>(); break;
+				case Opcode::addi: emit_binary_imm.template operator()<OP_addi>(); break;
+				case Opcode::subi: emit_binary_imm.template operator()<OP_subi>(); break;
+				case Opcode::muli: emit_binary_imm.template operator()<OP_muli>(); break;
+				case Opcode::divi: emit_binary_imm.template operator()<OP_divi>(); break;
+				case Opcode::mini: emit_binary_imm.template operator()<OP_mini>(); break;
+				case Opcode::maxi: emit_binary_imm.template operator()<OP_maxi>(); break;
+				case Opcode::cmpi: emit_binary_imm.template operator()<OP_cmpi>(); break;
+				case Opcode::eqi: emit_binary_imm.template operator()<OP_eqi>(); break;
+				case Opcode::lti: emit_binary_imm.template operator()<OP_lti>(); break;
 
 				case Opcode::addf:
 				case Opcode::subf:
@@ -6899,7 +6911,12 @@ namespace
 					emit_opcode(bc, i.op);
 					JETC_DIE_UNLESS(db, i.loc, unboxed_float_valid(i.op, i.unboxed_float_mode),
 												 "codegen: invalid unboxed float instruction");
-					OP_unboxed_float operands{i.u.arith.dst, i.u.arith.lhs, i.u.arith.rhs, i.unboxed_float_mode};
+					uint64_t rhs = i.unboxed_float_mode == UnboxedFloatMode::StartImm
+					               || i.unboxed_float_mode == UnboxedFloatMode::Imm
+					               || i.unboxed_float_mode == UnboxedFloatMode::StoreImm
+					               ? i.u.arith_imm.imm
+					               : i.u.arith.rhs;
+					OP_unboxed_float operands{i.u.arith.dst, i.u.arith.lhs, rhs, i.unboxed_float_mode};
 					emit_operand(bc, operands);
 					break;
 				}
@@ -6921,9 +6938,9 @@ namespace
 				case Opcode::ble: emit_comparison.template operator()<OP_ble>(); break;
 				case Opcode::bgt: emit_comparison.template operator()<OP_bgt>(); break;
 				case Opcode::bge: emit_comparison.template operator()<OP_bge>(); break;
-				case Opcode::bcmpi: emit_comparison.template operator()<OP_bcmpi>(); break;
-				case Opcode::beqi: emit_comparison.template operator()<OP_beqi>(); break;
-				case Opcode::blti: emit_comparison.template operator()<OP_blti>(); break;
+				case Opcode::bcmpi: emit_comparison_imm.template operator()<OP_bcmpi>(); break;
+				case Opcode::beqi: emit_comparison_imm.template operator()<OP_beqi>(); break;
+				case Opcode::blti: emit_comparison_imm.template operator()<OP_blti>(); break;
 
 				case Opcode::skp:
 				{
@@ -7051,7 +7068,7 @@ namespace
 					OP_ldki op{};
 					op.dst = i.u.field.dst;
 					op.obj = i.u.field.obj;
-					op.key = i.u.field.key;
+					op.key = i.u.field_imm.key;
 					emit_operand(bc, op);
 					break;
 				}
@@ -7061,7 +7078,7 @@ namespace
 					emit_opcode(bc, Opcode::stki);
 					OP_stki op{};
 					op.obj = i.u.field.obj;
-					op.key = i.u.field.key;
+					op.key = i.u.field_imm.key;
 					op.val = i.u.field.val;
 					emit_operand(bc, op);
 					break;
@@ -7084,7 +7101,7 @@ namespace
 					OP_ldkmi op{};
 					op.dst = i.u.field.dst;
 					op.obj = i.u.field.obj;
-					op.key = i.u.field.key;
+					op.key = i.u.field_imm.key;
 					emit_operand(bc, op);
 					break;
 				}
@@ -7107,7 +7124,7 @@ namespace
 					OP_ldkdi op{};
 					op.dst = i.u.field.dst;
 					op.obj = i.u.field.obj;
-					op.key = i.u.field.key;
+					op.key = i.u.field_imm.key;
 					op.dfl = i.u.field.val;
 					emit_operand(bc, op);
 					break;
@@ -7150,7 +7167,7 @@ namespace
 		}
 	};
 
-} // namespace
+}
 
 Bytecode Compiler::compile()
 {
@@ -7284,7 +7301,7 @@ namespace
 		return datum_to_atom(vm, datum);
 	}
 
-} // namespace
+}
 
 void init_reader(VmState& vm)
 {

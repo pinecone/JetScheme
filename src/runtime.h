@@ -945,7 +945,7 @@ enum class FieldAccess : uint8_t
 enum class FieldKeySource : uint8_t
 {
 	Register,
-	Constant,
+	Imm,
 };
 
 enum class FieldMiss
@@ -958,10 +958,10 @@ enum class FieldMiss
 template <FieldAccess access, FieldKeySource key_source, FieldMiss miss = FieldMiss::Die>
 constexpr Opcode field_opcode =
 	access == FieldAccess::Store
-	? (key_source == FieldKeySource::Constant ? Opcode::stki : Opcode::stk)
-	: miss == FieldMiss::Hole ? (key_source == FieldKeySource::Constant ? Opcode::ldkmi : Opcode::ldkm)
-	: miss == FieldMiss::Default ? (key_source == FieldKeySource::Constant ? Opcode::ldkdi : Opcode::ldkd)
-	: (key_source == FieldKeySource::Constant ? Opcode::ldki : Opcode::ldk);
+	? (key_source == FieldKeySource::Imm ? Opcode::stki : Opcode::stk)
+	: miss == FieldMiss::Hole ? (key_source == FieldKeySource::Imm ? Opcode::ldkmi : Opcode::ldkm)
+	: miss == FieldMiss::Default ? (key_source == FieldKeySource::Imm ? Opcode::ldkdi : Opcode::ldkd)
+	: (key_source == FieldKeySource::Imm ? Opcode::ldki : Opcode::ldk);
 
 template <FieldMiss miss, typename Instr>
 JET_ALWAYS_INLINE Atom field_miss_value(Instr* op, Atom* frame_regs)
@@ -979,9 +979,9 @@ JET_ALWAYS_INLINE Atom field_miss_value(Instr* op, Atom* frame_regs)
 template <FieldKeySource key_source, typename Op>
 JET_ALWAYS_INLINE Atom field_key(VmState& s, const Op* op, Atom* frame_regs)
 {
-	if constexpr (key_source == FieldKeySource::Constant)
+	if constexpr (key_source == FieldKeySource::Imm)
 	{
-		return s.constants[op->key];
+		return Atom::from_bits(op->key);
 	}
 	else
 	{
@@ -1008,7 +1008,7 @@ template <FieldAccess access>
 template <FieldKeySource key_source, typename Instr>
 JET_ALWAYS_INLINE bool index_of_key(size_t size, Atom key, Instr& op, size_t& index)
 {
-	if constexpr (key_source == FieldKeySource::Constant)
+	if constexpr (key_source == FieldKeySource::Imm)
 	{
 		if (op.cached_index < size) [[likely]]
 		{
@@ -1027,7 +1027,7 @@ JET_ALWAYS_INLINE bool index_of_key(size_t size, Atom key, Instr& op, size_t& in
 		return false;
 	}
 	index = value;
-	if constexpr (key_source == FieldKeySource::Constant)
+	if constexpr (key_source == FieldKeySource::Imm)
 	{
 		op.cached_index = index;
 	}
@@ -1218,19 +1218,19 @@ JET_PRESERVE_NONE void op_field_impl(VM_OP_PARAMS)
 	{
 		if constexpr (access == FieldAccess::Store)
 		{
-			handler = key_source == FieldKeySource::Constant ? shape->stfk_handler : shape->stf_handler;
+			handler = key_source == FieldKeySource::Imm ? shape->stfk_handler : shape->stf_handler;
 		}
 		else if constexpr (miss == FieldMiss::Die)
 		{
-			handler = key_source == FieldKeySource::Constant ? shape->ldfk_handler : shape->ldf_handler;
+			handler = key_source == FieldKeySource::Imm ? shape->ldfk_handler : shape->ldf_handler;
 		}
 		else if constexpr (miss == FieldMiss::Hole)
 		{
-			handler = key_source == FieldKeySource::Constant ? shape->ldfkh_handler : shape->ldfh_handler;
+			handler = key_source == FieldKeySource::Imm ? shape->ldfkh_handler : shape->ldfh_handler;
 		}
 		else
 		{
-			handler = key_source == FieldKeySource::Constant ? shape->ldfko_handler : shape->ldfo_handler;
+			handler = key_source == FieldKeySource::Imm ? shape->ldfko_handler : shape->ldfo_handler;
 		}
 	}
 	if (!handler) [[unlikely]]
@@ -1302,12 +1302,12 @@ constexpr ObjShape make_field_shape(Atom (*ref_or_die)(VmState&, Atom, Atom),
 {
 	return {op_field_load_fast<Access, FieldKeySource::Register, FieldMiss::Die, OP_ldk>,
 	        op_field_store_fast<Access, FieldKeySource::Register, OP_stk>,
-	        op_field_load_fast<Access, FieldKeySource::Constant, FieldMiss::Die, OP_ldki>,
-	        op_field_store_fast<Access, FieldKeySource::Constant, OP_stki>,
+	        op_field_load_fast<Access, FieldKeySource::Imm, FieldMiss::Die, OP_ldki>,
+	        op_field_store_fast<Access, FieldKeySource::Imm, OP_stki>,
 	        op_field_load_fast<Access, FieldKeySource::Register, FieldMiss::Hole, OP_ldkm>,
-	        op_field_load_fast<Access, FieldKeySource::Constant, FieldMiss::Hole, OP_ldkmi>,
+	        op_field_load_fast<Access, FieldKeySource::Imm, FieldMiss::Hole, OP_ldkmi>,
 	        op_field_load_fast<Access, FieldKeySource::Register, FieldMiss::Default, OP_ldkd>,
-	        op_field_load_fast<Access, FieldKeySource::Constant, FieldMiss::Default, OP_ldkdi>,
+	        op_field_load_fast<Access, FieldKeySource::Imm, FieldMiss::Default, OP_ldkdi>,
 	        ref_or_die, Access::load_or_hole, iter};
 }
 

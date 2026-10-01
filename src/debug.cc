@@ -580,6 +580,10 @@ void disasm_fields(FILE* out, Code* operands)
 	FIELD(upvalue_idx)
 	FIELD(nargs)
 	FIELD(pool_idx)
+	if constexpr (requires { op->tmpl; })
+	{
+		print(out, " tmpl={:#x}", op->tmpl);
+	}
 	FIELD(n_captures)
 	FIELD(cursor)
 	FIELD(obj)
@@ -587,6 +591,10 @@ void disasm_fields(FILE* out, Code* operands)
 	FIELD(val)
 	FIELD(dfl)
 	FIELD(size)
+	if constexpr (requires { op->imm; })
+	{
+		print(out, " imm={:#x}", op->imm);
+	}
 	if constexpr (requires { op->mode; })
 	{
 		print(out, " mode={}", static_cast<uint8_t>(op->mode));
@@ -781,7 +789,7 @@ namespace
 		return p;
 	}
 
-} // anon
+}
 
 void disassemble(FILE* out, Code* bc, size_t bc_size)
 {

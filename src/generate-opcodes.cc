@@ -1,758 +1,539 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Kirill Zorin
+
+// Opcode table generator. One declaration per emitted opcode; every trait is
+// stated on the row itself. After parsing, one fixup pass resolves the three
+// name references (i_of, float_of, fuses) into the base rows' metadata, and
+// everything downstream (enum, operand structs, OpcodeInfo, handler and
+// disassembly tables, pool-ref offsets) is a straight loop over the rows.
+
 #include <cstdio>
+#include <cstdlib>
+#include <format>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
 
-static constexpr int N_REPLICAS = 4;
-
-struct Operand
+template <typename... Args>
+static void print(std::format_string<Args...> fmt, Args&&... args)
 {
-	const char* type;
-	const char* name;
-};
+	std::string text = std::format(fmt, std::forward<Args>(args)...);
+	fwrite(text.data(), 1, text.size(), stdout);
+}
 
-struct IcField
-{
-	const char* type;
-	const char* name;
-};
-
-struct Metadata
+struct Field
 {
 	std::string type;
 	std::string name;
-	std::string value;
+	size_t offset{}; // byte offset within the packed operand block
 };
 
-struct VariantMetadata
+static Field u16(const char* name)
 {
-	std::string variant;
-	Metadata field;
-};
-
-static std::string operand_size_expr(const std::string& name)
-{
-	return "sizeof(OP_" + name + ") - std::is_empty_v<OP_" + name + ">";
+	return {"uint16_t", name};
 }
 
-struct Opcode
+static Field u32(const char* name)
 {
-	std::string name;
-	std::vector<Operand> operands;
-	std::vector<IcField> icfields;
-	bool op_variants[256]{};
-	bool is_replicated{false};
-	std::vector<Metadata> metadata_values;
-	std::vector<VariantMetadata> variant_metadata_values;
+	return {"uint32_t", name};
+}
 
-	Opcode& operand(const char* type, const char* name)
+static Field u64(const char* name)
+{
+	return {"uint64_t", name};
+}
+
+static Field ptr(const char* name)
+{
+	return {"Struct*", name};
+}
+
+static size_t field_size(const std::string& type)
+{
+	if (type == "uint8_t")
 	{
-		operands.push_back(Operand{type, name});
+		return sizeof(uint8_t);
+	}
+	if (type == "uint16_t")
+	{
+		return sizeof(uint16_t);
+	}
+	if (type == "uint32_t")
+	{
+		return sizeof(uint32_t);
+	}
+	if (type == "uint64_t")
+	{
+		return sizeof(uint64_t);
+	}
+	if (type == "Struct*")
+	{
+		return sizeof(void*);
+	}
+	print("unknown field type {}", type);
+	std::exit(1);
+}
+
+struct Gen;
+
+struct Op
+{
+	std::string name;        // emitted name (replica-suffixed)
+	std::string struct_name; // replica rows alias the struct of their base name
+	std::vector<Field> fields;
+	std::vector<Field> ic_fields;
+	bool is_iform{false};
+	std::string i_base;      // iform rows: base op name
+	std::string float_base;  // unboxed-float rows: base op name
+	std::string float_kind;  // unboxed-float rows only
+	std::string fuses_target;
+	bool is_if_cmp{false};
+	bool is_call_shaped{false};
+	std::optional<size_t> pool_ref_index; // index into fields of the pool-ref operand
+	size_t operand_size{};                // packed size of fields + ic
+	int replica_count{1};   // >1: row expands into name0..name{n-1} sharing one struct
+	std::string i_variant;                  // resolved op name (default: self)
+	std::string unboxed_float_opcode{"std::nullopt"};
+	std::string branch_fusion{"std::nullopt"};
+
+	Op& args(Field field)
+	{
+		fields.push_back(std::move(field));
 		return *this;
 	}
 
-	Opcode& icfield(const char* type, const char* name)
+	template <typename... Rest>
+	Op& args(Field first, Rest... rest)
 	{
-		icfields.push_back(IcField{type, name});
+		return args(std::move(first)).args(std::move(rest)...);
+	}
+
+	Op& ic(Field field)
+	{
+		ic_fields.push_back(std::move(field));
 		return *this;
 	}
 
-	Opcode& variants(const char* vs)
+	template <typename... Rest>
+	Op& ic(Field first, Rest... rest)
 	{
-		for (const char* v = vs; *v; ++v)
+		return ic(std::move(first)).ic(std::move(rest)...);
+	}
+
+	// This row is the immediate-operand form of the base op named in i_base.
+	Op& iform()
+	{
+		is_iform = true;
+		return *this;
+	}
+
+	Op& i_of(const char* base)
+	{
+		i_base = base;
+		return iform();
+	}
+
+	// This row is the unboxed-float form of the base op; it aliases the
+	// hand-written OP_unboxed_float.
+	Op& float_of(const char* base, const char* kind)
+	{
+		float_base = base;
+		float_kind = kind;
+		return *this;
+	}
+
+	Op& fuses(const char* target)
+	{
+		fuses_target = target;
+		return *this;
+	}
+
+	// The named wire operand may hold a pool reference; load_program
+	// substitutes the decoded atom.
+	Op& pool_ref(const char* field_name)
+	{
+		for (size_t i = 0; i < fields.size(); ++i)
 		{
-			op_variants[static_cast<unsigned char>(*v)] = true;
-		}
-		apply(
-			[&](const std::string& variant, const std::string& variant_name, const std::string&)
+			if (fields[i].name == field_name)
 			{
-				if (!variant.empty())
-				{
-					variant_metadata(variant.c_str(), "Opcode", "k_variant", ("Opcode::" + variant_name).c_str());
-					variant_metadata(variant.c_str(), "const char*", "name", ("\"" + variant_name + "\"").c_str());
-					variant_metadata(
-						variant.c_str(), "size_t", "operand_size", operand_size_expr(variant_name).c_str());
-				}
-			});
-		if (op_variants['k'])
-		{
-			base_metadata("Opcode", "k_variant", ("Opcode::" + name + "i").c_str());
-			variant_metadata("k", "bool", "is_kform", "true");
-			if (op_variants['h'])
-			{
-				variant_metadata("kh", "bool", "is_kform", "true");
+				pool_ref_index = i;
+				return *this;
 			}
 		}
-		if (op_variants['f'])
-		{
-			metadata("std::optional<Opcode>", "unboxed_float_opcode", ("Opcode::" + name + "f").c_str());
-		}
+		print("pool_ref: no field named {}", field_name);
+		std::exit(1);
+	}
+
+	Op& if_cmp()
+	{
+		is_if_cmp = true;
 		return *this;
 	}
 
-	Opcode& replicated()
+	Op& call_shaped()
 	{
-		is_replicated = true;
-		foreach_variant(
-			[&](const std::string&, const std::string&, const std::string&) {},
-			[&](const std::string&, const std::string& replica, const std::string&)
-			{
-				variant_metadata(replica.c_str(), "Opcode", "k_variant", ("Opcode::" + replica).c_str());
-				variant_metadata(replica.c_str(), "const char*", "name", ("\"" + replica + "\"").c_str());
-				variant_metadata(replica.c_str(), "size_t", "operand_size", operand_size_expr(replica).c_str());
-			});
+		is_call_shaped = true;
 		return *this;
 	}
 
-	Opcode& metadata(const char* type, const char* name, const char* value)
+	// Marks the row to expand into name0..name{n-1} sharing one operand
+	// struct; expansion happens after parsing (see Gen::expand_replicas).
+	Op& replicas(int n)
 	{
-		metadata_values.push_back(Metadata{type, name, value});
+		replica_count = n;
 		return *this;
-	}
-
-	Opcode& variant_metadata(const char* variant, const char* type, const char* name, const char* value)
-	{
-		variant_metadata_values.push_back(VariantMetadata{variant, Metadata{type, name, value}});
-		return *this;
-	}
-
-	Opcode& base_metadata(const char* type, const char* name, const char* value)
-	{
-		return variant_metadata("", type, name, value);
-	}
-
-	Opcode& if_comparison()
-	{
-		return metadata("bool", "is_if_cmp", "true");
-	}
-
-	Opcode& call_shaped()
-	{
-		return metadata("bool", "is_call_shaped", "true");
-	}
-
-	Opcode& branch_fusion()
-	{
-		base_metadata("std::optional<Opcode>", "branch_fusion", ("Opcode::b" + name).c_str());
-		if (op_variants['k'])
-		{
-			variant_metadata("k", "std::optional<Opcode>", "branch_fusion", ("Opcode::b" + name + "i").c_str());
-		}
-		return *this;
-	}
-
-	Opcode& unboxed_float_kind(const char* kind)
-	{
-		std::string value{"UnboxedFloatKind::"};
-		value += kind;
-		return variant_metadata("f", "UnboxedFloatKind", "unboxed_float_kind", value.c_str());
-	}
-
-	template <typename Func>
-	void apply(Func&& f)
-	{
-		const std::string& shown = name;
-		f("", name, shown);
-		if (op_variants['h'])
-		{
-			f("h", name + "m", shown + "m");
-		}
-		if (op_variants['k'])
-		{
-			f("k", name + "i", shown + "i");
-			if (op_variants['h'])
-			{
-				f("kh", name + "mi", shown + "mi");
-			}
-		}
-		if (op_variants['f'])
-		{
-			f("f", name + "f", shown + "f");
-		}
-	}
-
-	template <typename Func, typename FuncRep>
-	void foreach_variant(Func&& f, FuncRep&& fr)
-	{
-		apply(f);
-
-		if (is_replicated)
-		{
-			for (int i = 0; i < N_REPLICAS; ++i)
-			{
-				std::string suffix = std::to_string(i);
-				apply(
-					[&](const std::string& variant, const std::string& name, const std::string&)
-					{
-						fr(name, name + suffix, variant);
-					});
-			}
-		}
 	}
 };
 
 struct Gen
 {
-	std::vector<Opcode> opcodes;
-	std::vector<Metadata> metadata_fields;
+	std::vector<Op> ops;
 
-	Gen& metadata(const char* type, const char* name, const char* default_value)
+	Op& op(const char* name)
 	{
-		metadata_fields.push_back(Metadata{type, name, default_value});
-		return *this;
+		Op o;
+		o.name = name;
+		ops.push_back(std::move(o));
+		return ops.back();
 	}
 
-	Opcode& opcode(const char* name)
+	Op& find(const std::string& name)
 	{
-		opcodes.emplace_back();
-		Opcode& op = opcodes.back();
-		op.name = name;
-		op.metadata("const char*", "name", ("\"" + op.name + "\"").c_str());
-		op.metadata("size_t", "operand_size", operand_size_expr(op.name).c_str());
-		op.base_metadata("Opcode", "k_variant", ("Opcode::" + op.name).c_str());
-		return op;
-	}
-
-	void print_struct(Opcode& op)
-	{
-		auto&& p = [&](const std::string& variant, const std::string& name, const std::string&)
+		for (Op& o : ops)
 		{
-			if (variant == "f")
+			if (o.name == name)
 			{
-				printf("using OP_%s = OP_unboxed_float;\n", name.c_str());
-				return;
+				return o;
 			}
+		}
+		print("no opcode named {}", name);
+		std::exit(1);
+	}
 
-			printf("struct OP_%s {\n", name.c_str());
-			for (Operand& operand : op.operands)
+	void expand_replicas()
+	{
+		std::vector<Op> expanded;
+		for (Op& o : ops)
+		{
+			if (o.replica_count <= 1)
 			{
-				printf("\t%s %s;\n", operand.type, operand.name);
+				expanded.push_back(std::move(o));
+				continue;
 			}
-			for (IcField& field : op.icfields)
+			for (int i = 0; i < o.replica_count; ++i)
 			{
-				printf("\t%s %s;\n", field.type, field.name);
+				Op replica = o;
+				replica.name = o.name + std::to_string(i);
+				replica.struct_name = o.name;
+				expanded.push_back(std::move(replica));
 			}
-			printf("};\n");
-		};
-
-		auto&& pr = [&](const std::string& name, const std::string& rname, const std::string&)
-		{
-			printf("using OP_%s = OP_%s;\n", rname.c_str(), name.c_str());
-		};
-
-		op.foreach_variant(p, pr);
+		}
+		ops = std::move(expanded);
 	}
 
-	void print()
+	void fixup()
 	{
-		printf("enum class Opcode : uint8_t\n{\n");
-		size_t count = 0;
-		for (Opcode& op : opcodes)
+		for (Op& o : ops)
 		{
-			auto&& emit = [&](const std::string& name)
+			o.i_variant = o.name;
+			size_t offset = 0;
+			for (Field& field : o.fields)
 			{
-				printf("\t%s,\n", name.c_str());
-				++count;
-			};
-			op.foreach_variant(
-				[&](const std::string&, const std::string& name, const std::string&)
-				{
-					if (!op.is_replicated)
-					{
-						emit(name);
-					}
-				},
-				[&](const std::string&, const std::string& name, const std::string&)
-				{
-					emit(name);
-				});
-		}
-		printf("};\n\nconstexpr int OPCODE_COUNT = %zu;\n\n", count);
-		printf("#pragma pack(push, 1)\n");
-		for (Opcode& op : opcodes)
-		{
-			print_struct(op);
-		}
-		printf("#pragma pack(pop)\n\n");
-
-		printf("struct OpcodeInfo\n{\n");
-		for (const Metadata& field : metadata_fields)
-		{
-			printf("\t%s %s;\n", field.type.c_str(), field.name.c_str());
-		}
-		printf("};\n\nconstexpr OpcodeInfo OPCODE_INFO[]{\n");
-		for (Opcode& op : opcodes)
-		{
-			auto&& emit = [&](const std::string& variant, const std::string& name)
+				field.offset = offset;
+				offset += field_size(field.type);
+			}
+			for (Field& field : o.ic_fields)
 			{
-				printf("\t{");
-				for (size_t i = 0; i < metadata_fields.size(); ++i)
-				{
-					const Metadata& field = metadata_fields[i];
-					std::string value = field.value;
-					for (const Metadata& override : op.metadata_values)
-					{
-						if (override.type == field.type && override.name == field.name)
-						{
-							value = override.value;
-						}
-					}
-					for (const VariantMetadata& override : op.variant_metadata_values)
-					{
-						if ((override.variant == variant || override.variant == name)
-						    && override.field.type == field.type && override.field.name == field.name)
-						{
-							value = override.field.value;
-						}
-					}
-					printf("%s%s", i ? ", " : "", value.c_str());
-				}
-				printf("},\n");
-			};
-			op.foreach_variant(
-				[&](const std::string& variant, const std::string& name, const std::string&)
-				{
-					if (!op.is_replicated)
-					{
-						emit(variant, name);
-					}
-				},
-				[&](const std::string&, const std::string& name, const std::string& variant)
-				{
-					emit(variant, name);
-				});
+				field.offset = offset;
+				offset += field_size(field.type);
+			}
+			o.operand_size = offset;
 		}
-		printf("};\n\n");
-	}
-
-	void print_disasm()
-	{
-		for (Opcode& op : opcodes)
+		for (Op& o : ops)
 		{
-			auto&& emit = [&](const std::string& name)
+			if (!o.i_base.empty())
 			{
-				printf("\tdisasm_fields<OP_%s>,\n", name.c_str());
-			};
-			op.foreach_variant(
-				[&](const std::string&, const std::string& name, const std::string&)
-				{
-					if (!op.is_replicated)
-					{
-						emit(name);
-					}
-				},
-				[&](const std::string&, const std::string& name, const std::string&)
-				{
-					emit(name);
-				});
+				find(o.i_base).i_variant = o.name;
+			}
+			if (!o.float_base.empty())
+			{
+				Op& base = find(o.float_base);
+				base.unboxed_float_opcode = std::format("Opcode::{}", o.name);
+				o.unboxed_float_opcode = base.unboxed_float_opcode;
+			}
+			if (!o.fuses_target.empty())
+			{
+				find(o.fuses_target);
+				o.branch_fusion = std::format("Opcode::{}", o.fuses_target);
+			}
 		}
-	}
-
-	void print_handlers()
-	{
-		for (Opcode& op : opcodes)
+		// iform rows inherit their base's float variant, if it has one.
+		for (Op& o : ops)
 		{
-			auto&& emit = [&](const std::string& name)
+			if (!o.i_base.empty())
 			{
-				printf("\top_%s,\n", name.c_str());
-			};
-			op.foreach_variant(
-				[&](const std::string&, const std::string& name, const std::string&)
-				{
-					if (!op.is_replicated)
-					{
-						emit(name);
-					}
-				},
-				[&](const std::string&, const std::string& name, const std::string&)
-				{
-					emit(name);
-				});
+				o.unboxed_float_opcode = find(o.i_base).unboxed_float_opcode;
+			}
 		}
 	}
 };
 
+static void print_enum(const Gen& gen)
+{
+	print("enum class Opcode : uint8_t\n{{\n");
+	for (const Op& o : gen.ops)
+	{
+		print("\t{},\n", o.name);
+	}
+	print("}};\n\nconstexpr int OPCODE_COUNT = {};\n\n", gen.ops.size());
+}
+
+static void print_fields(const Op& o)
+{
+	for (const Field& field : o.fields)
+	{
+		print("\t{} {};\n", field.type, field.name);
+	}
+	for (const Field& field : o.ic_fields)
+	{
+		print("\t{} {};\n", field.type, field.name);
+	}
+}
+
+static void print_structs(const Gen& gen)
+{
+	print("#pragma pack(push, 1)\n");
+	for (const Op& o : gen.ops)
+	{
+		if (!o.float_base.empty())
+		{
+			print("using OP_{} = OP_unboxed_float;\n", o.name);
+			continue;
+		}
+		if (o.struct_name.empty())
+		{
+			print("struct OP_{} {{\n", o.name);
+			print_fields(o);
+			print("}};\n");
+			continue;
+		}
+		// Replica rows share their base name's struct.
+		if (o.name == o.struct_name + "0")
+		{
+			print("struct OP_{} {{\n", o.struct_name);
+			print_fields(o);
+			print("}};\n");
+		}
+		print("using OP_{} = OP_{};\n", o.name, o.struct_name);
+	}
+	print("#pragma pack(pop)\n\n");
+}
+
+static void print_info(const Gen& gen)
+{
+	print("struct OpcodeInfo\n{{\n");
+	print("\tconst char* name;\n");
+	print("\tbool is_if_cmp;\n");
+	print("\tbool is_call_shaped;\n");
+	print("\tbool is_iform;\n");
+	print("\tOpcode i_variant;\n");
+	print("\tstd::optional<Opcode> unboxed_float_opcode;\n");
+	print("\tstd::optional<Opcode> branch_fusion;\n");
+	print("\tsize_t operand_size;\n");
+	print("\tUnboxedFloatKind unboxed_float_kind;\n");
+	print("}};\n\nconstexpr OpcodeInfo OPCODE_INFO[]{{\n");
+	for (const Op& o : gen.ops)
+	{
+		std::string size_expr = o.float_base.empty()
+		                    ? std::to_string(o.operand_size)
+		                    : "sizeof(OP_unboxed_float) - std::is_empty_v<OP_unboxed_float>";
+		print(
+			"\t{{\"{}\", {}, {}, {}, Opcode::{}, {}, {}, {}, UnboxedFloatKind::{}}},\n",
+			o.name,
+			o.is_if_cmp,
+			o.is_call_shaped,
+			o.is_iform,
+			o.i_variant,
+			o.unboxed_float_opcode,
+			o.branch_fusion,
+			size_expr,
+			o.float_kind.empty() ? "None" : o.float_kind);
+	}
+	print("}};\n\nconstexpr uint8_t OPCODE_POOL_REF_OFFSET[]{{\n");
+	for (const Op& o : gen.ops)
+	{
+		unsigned offset = o.pool_ref_index
+			? static_cast<unsigned>(o.fields[*o.pool_ref_index].offset)
+			: 255;
+		print("\t{},\n", offset);
+	}
+	print("}};\n\n");
+}
+
+static void print_handlers(const Gen& gen)
+{
+	for (const Op& o : gen.ops)
+	{
+		print("\top_{},\n", o.name);
+	}
+}
+
+static void print_disasm(const Gen& gen)
+{
+	for (const Op& o : gen.ops)
+	{
+		print("\tdisasm_fields<OP_{}>,\n", o.name);
+	}
+}
+
 int main(int argc, char* argv[])
 {
-	Gen g;
-	g.metadata("const char*", "name", "nullptr")
-		.metadata("bool", "is_if_cmp", "false")
-		.metadata("bool", "is_call_shaped", "false")
-		.metadata("bool", "is_kform", "false")
-		.metadata("Opcode", "k_variant", "Opcode::hlt")
-		.metadata("std::optional<Opcode>", "unboxed_float_opcode", "std::nullopt")
-		.metadata("std::optional<Opcode>", "branch_fusion", "std::nullopt")
-		.metadata("size_t", "operand_size", "0")
-		.metadata("UnboxedFloatKind", "unboxed_float_kind", "UnboxedFloatKind::None");
+	Gen gen;
 
-	g.opcode("hlt");
+	gen.op("hlt");
+	gen.op("skp").args(u32("size"));
+	gen.op("loc");
+	gen.op("mov").args(u16("dst"), u16("src"));
+	gen.op("mov2").args(u16("dst0"), u16("src0"), u16("dst1"), u16("src1"));
+	gen.op("ldi").args(u16("dst"), u64("imm")).pool_ref("imm");
+	gen.op("ldc").args(u16("dst"), u16("idx"));
+	gen.op("ldcb").args(u16("dst"), u16("idx"));
+	gen.op("stcb").args(u16("idx"), u16("src"));
+	gen.op("ldb").args(u16("dst"), u16("idx"));
+	gen.op("stb").args(u16("idx"), u16("src"));
+	gen.op("box").args(u16("reg"));
+	gen.op("clo").args(u16("dst"), u64("tmpl"), u16("n_captures")).pool_ref("tmpl");
 
-	g.opcode("skp")
-		.operand("uint32_t", "size");
+	gen.op("add").args(u16("dst"), u16("a"), u16("b"));
+	gen.op("addi").args(u16("dst"), u16("a"), u64("imm")).i_of("add");
+	gen.op("addf").float_of("add", "Binary");
+	gen.op("sub").args(u16("dst"), u16("a"), u16("b"));
+	gen.op("subi").args(u16("dst"), u16("a"), u64("imm")).i_of("sub");
+	gen.op("subf").float_of("sub", "Binary");
+	gen.op("mul").args(u16("dst"), u16("a"), u16("b"));
+	gen.op("muli").args(u16("dst"), u16("a"), u64("imm")).i_of("mul");
+	gen.op("mulf").float_of("mul", "Binary");
+	gen.op("div").args(u16("dst"), u16("a"), u16("b"));
+	gen.op("divi").args(u16("dst"), u16("a"), u64("imm")).i_of("div");
+	gen.op("divf").float_of("div", "Binary");
 
-	g.opcode("loc");
+	gen.op("cmp").args(u16("dst"), u16("a"), u16("b")).fuses("bcmp");
+	gen.op("cmpi").args(u16("dst"), u16("a"), u64("imm")).i_of("cmp").fuses("bcmpi");
+	gen.op("cmpf").float_of("cmp", "Comparison");
+	gen.op("eq").args(u16("dst"), u16("a"), u16("b")).fuses("beq");
+	gen.op("eqi").args(u16("dst"), u16("a"), u64("imm")).i_of("eq").pool_ref("imm").fuses("beqi");
+	gen.op("lt").args(u16("dst"), u16("a"), u16("b")).fuses("blt");
+	gen.op("lti").args(u16("dst"), u16("a"), u64("imm")).i_of("lt").fuses("blti");
+	gen.op("ltf").float_of("lt", "Comparison");
+	gen.op("le").args(u16("dst"), u16("a"), u16("b")).fuses("ble");
+	gen.op("lef").float_of("le", "Comparison");
+	gen.op("gt").args(u16("dst"), u16("a"), u16("b")).fuses("bgt");
+	gen.op("gtf").float_of("gt", "Comparison");
+	gen.op("ge").args(u16("dst"), u16("a"), u16("b")).fuses("bge");
+	gen.op("gef").float_of("ge", "Comparison");
 
-	g.opcode("mov")
-		.operand("uint16_t", "dst")
-		.operand("uint16_t", "src");
-	g.opcode("mov2")
-		.operand("uint16_t", "dst0")
-		.operand("uint16_t", "src0")
-		.operand("uint16_t", "dst1")
-		.operand("uint16_t", "src1");
+	gen.op("bn").args(u16("src"), u32("size"));
+	gen.op("bcmp").if_cmp().args(u16("a"), u16("b"), u32("size"));
+	gen.op("bcmpi").if_cmp().args(u16("a"), u64("imm"), u32("size")).i_of("bcmp").pool_ref("imm");
+	gen.op("beq").if_cmp().args(u16("a"), u16("b"), u32("size"));
+	gen.op("beqi").if_cmp().args(u16("a"), u64("imm"), u32("size")).i_of("beq").pool_ref("imm");
+	gen.op("blt").if_cmp().args(u16("a"), u16("b"), u32("size"));
+	gen.op("blti").if_cmp().args(u16("a"), u64("imm"), u32("size")).i_of("blt").pool_ref("imm");
+	gen.op("ble").if_cmp().args(u16("a"), u16("b"), u32("size"));
+	gen.op("bgt").if_cmp().args(u16("a"), u16("b"), u32("size"));
+	gen.op("bge").if_cmp().args(u16("a"), u16("b"), u32("size"));
 
-	g.opcode("ldi")
-		.operand("uint16_t", "dst")
-		.operand("uint16_t", "idx");
-	g.opcode("ldc")
-		.operand("uint16_t", "dst")
-		.operand("uint16_t", "idx");
-	g.opcode("ldcb")
-		.operand("uint16_t", "dst")
-		.operand("uint16_t", "idx");
-	g.opcode("stcb")
-		.operand("uint16_t", "idx")
-		.operand("uint16_t", "src");
+	gen.op("ret").args(u16("src"));
+	gen.op("c").call_shaped().args(u16("w"), u16("callee"), u16("nargs"));
+	gen.op("ct").args(u16("w"), u16("callee"), u16("nargs"));
+	gen.op("cst").call_shaped().args(u16("w"), u16("nargs"));
+	gen.op("cs").call_shaped().args(u16("w"), u16("nargs")).replicas(4);
+	gen.op("app").args(u16("w"));
+	gen.op("itn1").args(u16("cursor"), u16("dst"), u32("size")).ic(u64("dispatch_key"));
+	gen.op("itn2").args(u16("cursor"), u16("dst0"), u16("dst1"), u32("size")).ic(u64("dispatch_key"));
+	gen.op("cl").call_shaped()
+		.args(u16("w"), u16("idx"), u16("nargs"))
+		.ic(u16("ic_n_locals"), u32("ic_epoch"), u64("ic_atom"), u64("ic_code"))
+		.replicas(4);
+	gen.op("clt")
+		.args(u16("w"), u16("idx"), u16("nargs"))
+		.ic(u16("ic_n_locals"), u32("ic_epoch"), u64("ic_atom"), u64("ic_code"))
+		.replicas(4);
+	gen.op("cc").call_shaped()
+		.args(u16("w"), u16("idx"), u16("nargs"))
+		.ic(u16("ic_n_locals"), u32("ic_epoch"), u64("ic_atom"), u64("ic_code"))
+		.replicas(4);
+	gen.op("cct")
+		.args(u16("w"), u16("idx"), u16("nargs"))
+		.ic(u16("ic_n_locals"), u32("ic_epoch"), u64("ic_atom"), u64("ic_code"))
+		.replicas(4);
+	gen.op("ccb").call_shaped()
+		.args(u16("w"), u16("upvalue_idx"), u16("nargs"))
+		.ic(u16("ic_n_locals"), u32("ic_epoch"), u64("ic_slot"), u64("ic_atom"), u64("ic_code"), u64("ic_version"))
+		.replicas(4);
+	gen.op("ccbt")
+		.args(u16("w"), u16("upvalue_idx"), u16("nargs"))
+		.ic(u16("ic_n_locals"), u32("ic_epoch"), u64("ic_slot"), u64("ic_atom"), u64("ic_code"), u64("ic_version"))
+		.replicas(4);
+	gen.op("ldk").args(u16("dst"), u16("obj"), u16("key"))
+		.ic(u64("dispatch_key"), u64("cached_index"), u64("cached_key"));
+	gen.op("ldkm").args(u16("dst"), u16("obj"), u16("key"))
+		.ic(u64("dispatch_key"), u64("cached_index"), u64("cached_key"));
+	gen.op("ldki").args(u16("dst"), u16("obj"), u64("key")).i_of("ldk").pool_ref("key")
+		.ic(u64("dispatch_key"), u64("cached_index"), u64("cached_key"));
+	gen.op("ldkmi").args(u16("dst"), u16("obj"), u64("key")).i_of("ldkm").pool_ref("key")
+		.ic(u64("dispatch_key"), u64("cached_index"), u64("cached_key"));
+	gen.op("stk").args(u16("obj"), u16("key"), u16("val"))
+		.ic(u64("dispatch_key"), u64("cached_index"), u64("cached_key"));
+	gen.op("stki").args(u16("obj"), u64("key"), u16("val")).i_of("stk").pool_ref("key")
+		.ic(u64("dispatch_key"), u64("cached_index"), u64("cached_key"));
+	gen.op("ldkd").args(u16("dst"), u16("obj"), u16("key"), u16("dfl"))
+		.ic(u64("dispatch_key"), u64("cached_index"), u64("cached_key"));
+	gen.op("ldkdi").args(u16("dst"), u16("obj"), u64("key"), u16("dfl")).i_of("ldkd").pool_ref("key")
+		.ic(u64("dispatch_key"), u64("cached_index"), u64("cached_key"));
 
-	g.opcode("ldb")
-		.operand("uint16_t", "dst")
-		.operand("uint16_t", "idx");
-	g.opcode("stb")
-		.operand("uint16_t", "idx")
-		.operand("uint16_t", "src");
+	gen.op("rst").call_shaped().args(u16("w"));
+	gen.op("retx").args(ptr("escape"));
+	gen.op("coro").call_shaped().args(u16("w"));
+	gen.op("retr");
+	gen.op("retn");
+	gen.op("reth");
 
-	g.opcode("box")
-		.operand("uint16_t", "reg");
+	gen.op("trunc").args(u16("dst"), u16("src"));
+	gen.op("truncf").float_of("trunc", "Unary");
+	gen.op("sqrt").args(u16("dst"), u16("src"));
+	gen.op("sqrtf").float_of("sqrt", "Unary");
+	gen.op("floor").args(u16("dst"), u16("src"));
+	gen.op("floorf").float_of("floor", "Unary");
+	gen.op("round").args(u16("dst"), u16("src"));
+	gen.op("roundf").float_of("round", "Unary");
+	gen.op("ceil").args(u16("dst"), u16("src"));
+	gen.op("ceilf").float_of("ceil", "Unary");
 
-	g.opcode("clo")
-		.operand("uint16_t", "dst")
-		.operand("uint16_t", "pool_idx")
-		.operand("uint16_t", "n_captures");
+	gen.op("min").args(u16("dst"), u16("a"), u16("b"));
+	gen.op("mini").args(u16("dst"), u16("a"), u64("imm")).i_of("min");
+	gen.op("minf").float_of("min", "Binary");
+	gen.op("max").args(u16("dst"), u16("a"), u16("b"));
+	gen.op("maxi").args(u16("dst"), u16("a"), u64("imm")).i_of("max");
+	gen.op("maxf").float_of("max", "Binary");
 
-	g.opcode("add")
-		.variants("kf")
-		.unboxed_float_kind("Binary")
-		.operand("uint16_t", "dst")
-		.operand("uint16_t", "a")
-		.operand("uint16_t", "b");
-
-	g.opcode("sub")
-		.variants("kf")
-		.unboxed_float_kind("Binary")
-		.operand("uint16_t", "dst")
-		.operand("uint16_t", "a")
-		.operand("uint16_t", "b");
-
-	g.opcode("mul")
-		.variants("kf")
-		.unboxed_float_kind("Binary")
-		.operand("uint16_t", "dst")
-		.operand("uint16_t", "a")
-		.operand("uint16_t", "b");
-
-	g.opcode("div")
-		.variants("kf")
-		.unboxed_float_kind("Binary")
-		.operand("uint16_t", "dst")
-		.operand("uint16_t", "a")
-		.operand("uint16_t", "b");
-
-	g.opcode("cmp")
-		.variants("kf")
-		.branch_fusion()
-		.unboxed_float_kind("Comparison")
-		.operand("uint16_t", "dst")
-		.operand("uint16_t", "a")
-		.operand("uint16_t", "b");
-
-	g.opcode("eq")
-		.variants("k")
-		.branch_fusion()
-		.operand("uint16_t", "dst")
-		.operand("uint16_t", "a")
-		.operand("uint16_t", "b");
-
-	g.opcode("lt")
-		.variants("kf")
-		.branch_fusion()
-		.unboxed_float_kind("Comparison")
-		.operand("uint16_t", "dst")
-		.operand("uint16_t", "a")
-		.operand("uint16_t", "b");
-
-	g.opcode("le")
-		.variants("f")
-		.branch_fusion()
-		.unboxed_float_kind("Comparison")
-		.operand("uint16_t", "dst")
-		.operand("uint16_t", "a")
-		.operand("uint16_t", "b");
-
-	g.opcode("gt")
-		.variants("f")
-		.branch_fusion()
-		.unboxed_float_kind("Comparison")
-		.operand("uint16_t", "dst")
-		.operand("uint16_t", "a")
-		.operand("uint16_t", "b");
-
-	g.opcode("ge")
-		.variants("f")
-		.branch_fusion()
-		.unboxed_float_kind("Comparison")
-		.operand("uint16_t", "dst")
-		.operand("uint16_t", "a")
-		.operand("uint16_t", "b");
-
-	g.opcode("bn")
-		.operand("uint16_t", "src")
-		.operand("uint32_t", "size");
-
-	g.opcode("bcmp")
-		.if_comparison()
-		.variants("k")
-		.operand("uint16_t", "a")
-		.operand("uint16_t", "b")
-		.operand("uint32_t", "size");
-
-	g.opcode("beq")
-		.if_comparison()
-		.variants("k")
-		.operand("uint16_t", "a")
-		.operand("uint16_t", "b")
-		.operand("uint32_t", "size");
-
-	g.opcode("blt")
-		.if_comparison()
-		.variants("k")
-		.operand("uint16_t", "a")
-		.operand("uint16_t", "b")
-		.operand("uint32_t", "size");
-
-	g.opcode("ble")
-		.if_comparison()
-		.operand("uint16_t", "a")
-		.operand("uint16_t", "b")
-		.operand("uint32_t", "size");
-
-	g.opcode("bgt")
-		.if_comparison()
-		.operand("uint16_t", "a")
-		.operand("uint16_t", "b")
-		.operand("uint32_t", "size");
-
-	g.opcode("bge")
-		.if_comparison()
-		.operand("uint16_t", "a")
-		.operand("uint16_t", "b")
-		.operand("uint32_t", "size");
-
-	g.opcode("ret")
-		.operand("uint16_t", "src");
-
-	g.opcode("c")
-		.call_shaped()
-		.operand("uint16_t", "w")
-		.operand("uint16_t", "callee")
-		.operand("uint16_t", "nargs");
-
-	g.opcode("ct")
-		.operand("uint16_t", "w")
-		.operand("uint16_t", "callee")
-		.operand("uint16_t", "nargs");
-
-	g.opcode("cst")
-		.call_shaped()
-		.operand("uint16_t", "w")
-		.operand("uint16_t", "nargs");
-
-	g.opcode("cs")
-		.replicated()
-		.call_shaped()
-		.operand("uint16_t", "w")
-		.operand("uint16_t", "nargs");
-
-	g.opcode("app")
-		.operand("uint16_t", "w");
-
-	g.opcode("itn1")
-		.operand("uint16_t", "cursor")
-		.operand("uint16_t", "dst")
-		.operand("uint32_t", "size")
-		.icfield("uint64_t", "dispatch_key");
-
-	g.opcode("itn2")
-		.operand("uint16_t", "cursor")
-		.operand("uint16_t", "dst0")
-		.operand("uint16_t", "dst1")
-		.operand("uint32_t", "size")
-		.icfield("uint64_t", "dispatch_key");
-
-	g.opcode("cl")
-		.replicated()
-		.call_shaped()
-		.operand("uint16_t", "w")
-		.operand("uint16_t", "idx")
-		.operand("uint16_t", "nargs")
-		.icfield("uint16_t", "ic_n_locals")
-		.icfield("uint32_t", "ic_epoch")
-		.icfield("uint64_t", "ic_atom")
-		.icfield("uint64_t", "ic_code");
-
-	g.opcode("clt")
-		.replicated()
-		.operand("uint16_t", "w")
-		.operand("uint16_t", "idx")
-		.operand("uint16_t", "nargs")
-		.icfield("uint16_t", "ic_n_locals")
-		.icfield("uint32_t", "ic_epoch")
-		.icfield("uint64_t", "ic_atom")
-		.icfield("uint64_t", "ic_code");
-
-	g.opcode("cc")
-		.replicated()
-		.call_shaped()
-		.operand("uint16_t", "w")
-		.operand("uint16_t", "idx")
-		.operand("uint16_t", "nargs")
-		.icfield("uint16_t", "ic_n_locals")
-		.icfield("uint32_t", "ic_epoch")
-		.icfield("uint64_t", "ic_atom")
-		.icfield("uint64_t", "ic_code");
-
-	g.opcode("cct")
-		.replicated()
-		.operand("uint16_t", "w")
-		.operand("uint16_t", "idx")
-		.operand("uint16_t", "nargs")
-		.icfield("uint16_t", "ic_n_locals")
-		.icfield("uint32_t", "ic_epoch")
-		.icfield("uint64_t", "ic_atom")
-		.icfield("uint64_t", "ic_code");
-
-	g.opcode("ccb")
-		.replicated()
-		.call_shaped()
-		.operand("uint16_t", "w")
-		.operand("uint16_t", "upvalue_idx")
-		.operand("uint16_t", "nargs")
-		.icfield("uint16_t", "ic_n_locals")
-		.icfield("uint32_t", "ic_epoch")
-		.icfield("uint64_t", "ic_slot")
-		.icfield("uint64_t", "ic_atom")
-		.icfield("uint64_t", "ic_code")
-		.icfield("uint64_t", "ic_version");
-
-	g.opcode("ccbt")
-		.replicated()
-		.operand("uint16_t", "w")
-		.operand("uint16_t", "upvalue_idx")
-		.operand("uint16_t", "nargs")
-		.icfield("uint16_t", "ic_n_locals")
-		.icfield("uint32_t", "ic_epoch")
-		.icfield("uint64_t", "ic_slot")
-		.icfield("uint64_t", "ic_atom")
-		.icfield("uint64_t", "ic_code")
-		.icfield("uint64_t", "ic_version");
-
-	g.opcode("ldk")
-		.variants("kh")
-		.operand("uint16_t", "dst")
-		.operand("uint16_t", "obj")
-		.operand("uint16_t", "key")
-		.icfield("uint64_t", "dispatch_key")
-		.icfield("uint64_t", "cached_index")
-		.icfield("uint64_t", "cached_key");
-
-	g.opcode("stk")
-		.variants("k")
-		.operand("uint16_t", "obj")
-		.operand("uint16_t", "key")
-		.operand("uint16_t", "val")
-		.icfield("uint64_t", "dispatch_key")
-		.icfield("uint64_t", "cached_index")
-		.icfield("uint64_t", "cached_key");
-
-	g.opcode("ldkd")
-		.variants("k")
-		.operand("uint16_t", "dst")
-		.operand("uint16_t", "obj")
-		.operand("uint16_t", "key")
-		.operand("uint16_t", "dfl")
-		.icfield("uint64_t", "dispatch_key")
-		.icfield("uint64_t", "cached_index")
-		.icfield("uint64_t", "cached_key");
-
-	g.opcode("rst")
-		.call_shaped()
-		.operand("uint16_t", "w");
-
-	g.opcode("retx")
-		.operand("Struct*", "escape");
-
-	g.opcode("coro")
-		.call_shaped()
-		.operand("uint16_t", "w");
-
-	g.opcode("retr");
-	g.opcode("retn");
-	g.opcode("reth");
-
-	g.opcode("trunc")
-		.variants("f")
-		.unboxed_float_kind("Unary")
-		.operand("uint16_t", "dst")
-		.operand("uint16_t", "src");
-
-	g.opcode("sqrt")
-		.variants("f")
-		.unboxed_float_kind("Unary")
-		.operand("uint16_t", "dst")
-		.operand("uint16_t", "src");
-
-	g.opcode("floor")
-		.variants("f")
-		.unboxed_float_kind("Unary")
-		.operand("uint16_t", "dst")
-		.operand("uint16_t", "src");
-
-	g.opcode("round")
-		.variants("f")
-		.unboxed_float_kind("Unary")
-		.operand("uint16_t", "dst")
-		.operand("uint16_t", "src");
-
-	g.opcode("ceil")
-		.variants("f")
-		.unboxed_float_kind("Unary")
-		.operand("uint16_t", "dst")
-		.operand("uint16_t", "src");
-
-	g.opcode("min")
-		.variants("kf")
-		.unboxed_float_kind("Binary")
-		.operand("uint16_t", "dst")
-		.operand("uint16_t", "a")
-		.operand("uint16_t", "b");
-
-	g.opcode("max")
-		.variants("kf")
-		.unboxed_float_kind("Binary")
-		.operand("uint16_t", "dst")
-		.operand("uint16_t", "a")
-		.operand("uint16_t", "b");
+	gen.expand_replicas();
+	gen.fixup();
 
 	if (argc == 2 && std::string_view{argv[1]} == "handlers")
 	{
-		g.print_handlers();
+		print_handlers(gen);
 	}
 	else if (argc == 2 && std::string_view{argv[1]} == "disasm")
 	{
-		g.print_disasm();
+		print_disasm(gen);
 	}
 	else
 	{
-		g.print();
+		print_enum(gen);
+		print_structs(gen);
+		print_info(gen);
 	}
 
 	return 0;
