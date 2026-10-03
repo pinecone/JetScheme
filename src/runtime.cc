@@ -411,6 +411,45 @@ Atom make_vector(VmState& vm, Atom size, Atom fill)
 	return vm.gc.alloc_tagged<Vec>(vm, slow_unbox<uint64_t>(vm, size), fill);
 }
 
+static Atom vector_copy(VmState& vm, Atom vector, Atom start, Atom end)
+{
+	size_t start_idx{slow_unbox<uint64_t>(vm, start)};
+	size_t end_idx{slow_unbox<uint64_t>(vm, end)};
+	Vec& src{*slow_unbox<Vec>(vm, vector)};
+	JET_DIE_UNLESS(
+		&vm,
+		start_idx <= end_idx && end_idx <= src.size(),
+		"vector-copy range {}..{} out of bounds",
+		start_idx,
+		end_idx);
+	return vm.gc.alloc_tagged<Vec>(vm, src.begin() + start_idx, src.begin() + end_idx);
+}
+
+static Atom vector_copy_bang(VmState& vm, Atom to, Atom at, Atom from, Atom start, Atom end)
+{
+	size_t at_idx{slow_unbox<uint64_t>(vm, at)};
+	size_t start_idx{slow_unbox<uint64_t>(vm, start)};
+	size_t end_idx{slow_unbox<uint64_t>(vm, end)};
+	Vec& dst{*slow_unbox<Vec>(vm, to)};
+	Vec& src{*slow_unbox<Vec>(vm, from)};
+	JET_DIE_UNLESS(
+		&vm,
+		start_idx <= end_idx && end_idx <= src.size(),
+		"vector-copy! source range {}..{} out of bounds",
+		start_idx,
+		end_idx);
+	size_t len{end_idx - start_idx};
+	JET_DIE_UNLESS(
+		&vm,
+		at_idx <= dst.size() && len <= dst.size() - at_idx,
+		"vector-copy! destination range out of bounds");
+	if (len != 0)
+	{
+		std::memmove(dst.data() + at_idx, src.data() + start_idx, len * sizeof(Atom));
+	}
+	return to;
+}
+
 Atom vector_ref(VmState& vm, Atom vector, Atom index_atom)
 {
 	size_t index{slow_unbox<uint64_t>(vm, index_atom)};
@@ -568,6 +607,8 @@ void init_vecs(VmState& vm)
 	env.bind("vector-set!", make_prim<vector_set>(vm));
 	env.bind("make-vector", make_prim<make_vector>(vm));
 	env.bind("vector", make_prim<vector_ctor>(vm, n_ary()));
+	env.bind("vector-copy", make_prim<vector_copy>(vm));
+	env.bind("vector-copy!", make_prim<vector_copy_bang>(vm));
 }
 
 Atom bytevector_u8_ref(VmState& vm, Atom bytevector, Atom index_atom)

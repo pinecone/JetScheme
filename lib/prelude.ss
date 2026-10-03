@@ -212,6 +212,8 @@
 (define vector-push! (%prim "vector-push!"))
 (define vector-pop! (%prim "vector-pop!"))
 (define vector-pop-first! (%prim "vector-pop-first!"))
+(define vector-copy (%prim "vector-copy"))
+(define vector-copy! (%prim "vector-copy!"))
 
 ;;; bytevectors
 (define bytevector (%prim "bytevector"))

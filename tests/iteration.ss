@@ -26,6 +26,18 @@
 (setf! replaced-vector 1 21)
 ($check (= 21 (%if/next! ((value) replaced-cursor) value)))
 
+;; Copying values does not move cursors or attach them to the new vector.
+(define copied-vector (vector 10 20 30))
+(define copied-cursor (%iter copied-vector))
+($check (= 10 (%if/next! ((value) copied-cursor) value)))
+(define independent-copy (vector-copy copied-vector 0 3))
+(vector-pop-first! independent-copy)
+(vector-copy! copied-vector 1 '#(21 31) 0 2)
+($check (= 21 (%if/next! ((value) copied-cursor) value)))
+($check (= 31 (%if/next! ((value) copied-cursor) value)))
+($check (eq? 'done (%if/next! ((value) copied-cursor) value 'done)))
+($check (equal? independent-copy '#(20 30)))
+
 (define removed-visited-vector (vector 30 40 50))
 (define removed-visited-cursor (%iter removed-visited-vector))
 ($check (= 30 (%if/next! ((value) removed-visited-cursor) value)))

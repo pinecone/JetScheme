@@ -75,6 +75,43 @@
 ($check (eq? 'a (vector-pop-first! gv2)))
 ($check (= 0 (vector-length gv2)))
 
+;; Copy ranges are shallow, fresh, and may be empty.
+(define copy-source (vector 1 'two (vector 3) "four"))
+(define copy-result (vector-copy copy-source 1 4))
+($check (equal? copy-result '#(two #(3) "four")))
+($check (not (eq? copy-result copy-source)))
+($check (eq? (ref copy-result 1) (ref copy-source 2)))
+(setf! copy-result 0 'changed)
+($check (eq? (ref copy-source 1) 'two))
+($check (equal? '#() (vector-copy copy-source 4 4)))
+($check (equal? '#() (vector-copy '#() 0 0)))
+($check (equal? copy-source (apply vector-copy (list copy-source 0 4))))
+
+;; Copying into a vector preserves its identity and length, including overlap.
+(define copy-dst (vector 0 0 0 0 0))
+($check (eq? copy-dst (vector-copy! copy-dst 1 copy-source 0 4)))
+($check (equal? copy-dst '#(0 1 two #(3) "four")))
+($check (eq? (ref copy-dst 3) (ref copy-source 2)))
+($check (eq? copy-dst (vector-copy! copy-dst 5 '#() 0 0)))
+(define copy-empty (vector))
+($check (eq? copy-empty (vector-copy! copy-empty 0 copy-empty 0 0)))
+(define copy-overlap (vector 1 2 3 4 5))
+(vector-copy! copy-overlap 2 copy-overlap 0 3)
+($check (equal? copy-overlap '#(1 2 1 2 3)))
+(vector-copy! copy-overlap 0 copy-overlap 2 5)
+($check (equal? copy-overlap '#(1 2 3 2 3)))
+(vector-copy! copy-overlap 0 copy-overlap 0 5)
+($check (equal? copy-overlap '#(1 2 3 2 3)))
+($check (= 5 (vector-length copy-overlap)))
+
+;; Exercise copied heap values across VM collection points.
+(let loop ((i 0) (values (vector (vector 42))))
+  (if (= i 10000)
+      ($check (= 42 (ref (ref values 0) 0)))
+      (let ((next (make-vector 1 #f)))
+        (vector-copy! next 0 (vector-copy values 0 1) 0 1)
+        (loop (+ i 1) next))))
+
 (define rdv (vector 10 20 30))
 ($check (= (ref rdv 0 :default 99) 10))
 ($check (= (ref rdv 2 :default 99) 30))
