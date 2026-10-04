@@ -1,4 +1,4 @@
-# Builds one binary per variant: build/jet[suffix]
+# Builds one binary per variant: <BUILD>/jet[suffix] (default build/; redirect with make BUILD=...)
 #
 #		make										release build (default)
 #		make debug							debug build:	 build/jet-debug
@@ -295,14 +295,14 @@ test: | check-python-deps
 test-release:
 	$(Q)$(MAKE) VARIANT=release
 	@printf '  TEST release\n'
-	$(Q)cd tests && JET=../build/jet JET_MODULE_TESTS='$(MODULE_TESTS)' ./run-tests
+	$(Q)cd tests && JET=../$(BUILD)/jet JET_MODULE_TESTS='$(MODULE_TESTS)' ./run-tests
 
 test-profile: | check-python-deps
 	$(Q)$(MAKE) VARIANT=profile
 	@printf '  TEST profile\n'
-	$(Q)cd tests && JET=../build/jet-profile JET_MODULE_TESTS='$(MODULE_TESTS)' ./run-tests
+	$(Q)cd tests && JET=../$(BUILD)/jet-profile JET_MODULE_TESTS='$(MODULE_TESTS)' ./run-tests
 	$(Q)$(MAKE) VARIANT=profile $(BUILD)/profile/profile-test
-	$(Q)cd tests && JET=../build/jet-profile ./run-profile-tests
+	$(Q)cd tests && JET=../$(BUILD)/jet-profile ./run-profile-tests
 
 show-sanitizers:
 	@list=$$($(CXX) $(CXXFLAGS) -x c++ /dev/null -c -o /dev/null -### 2>&1 | tr ' ' '\n' | \

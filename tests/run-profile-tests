@@ -9,6 +9,7 @@ import time
 
 
 jet = os.environ.get("JET", "../build/jet-profile")
+profile_test = os.environ.get("PROFILE_TEST") or os.path.join(os.path.dirname(jet), "profile", "profile-test")
 
 
 def run(arguments, data=None, status=0):
@@ -86,13 +87,13 @@ failed = run([jet, "eval", "--no-prelude", '('], status=1)
 assert b"--- JET_PROFILE ---" not in failed.stderr
 
 for primitive, status in [("process-exit", 7), ("process-fail", 1)]:
-    exited = run(["../build/profile/profile-test", f'((%prim "{primitive}"))'], status=status)
+    exited = run([profile_test, f'((%prim "{primitive}"))'], status=status)
     report = exited.stderr.decode()
     assert report.count("--- JET_PROFILE ---") == 1
     counts = {row[-1]: int(row[0]) for row in rows(report, "primitive samples (")}
     assert counts == {primitive: 1}, counts
 
-native = run(["../build/profile/profile-test"])
+native = run([profile_test])
 report = native.stderr.decode()
 assert report.count("--- JET_PROFILE ---") == 1
 assert "host-to-VM calls: 2 calls," in report
