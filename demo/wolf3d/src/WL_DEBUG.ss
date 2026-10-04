@@ -5,7 +5,6 @@
 (define extravbls 0)
 (define VIEWTILEX 20)
 (define VIEWTILEY 10)
-(define MAXWALLTILES 64)
 (define NUMBERCHARS 9)
 (define maporgx 0)
 (define maporgy 0)

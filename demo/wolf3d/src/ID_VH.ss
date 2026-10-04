@@ -73,14 +73,6 @@
             (rows (+ row 1))))
         (planes (+ plane 1))))))
 
-(define (VWB_DrawPic x y chunknum)
-  (let* ((left (bitwise-and x -8))
-         (pic (ref pictable (- chunknum STARTPICS)))
-         (width (ref pic 'width))
-         (height (ref pic 'height)))
-    (when (VW_MarkUpdateBlock left y (+ left width -1) (+ y height -1))
-      (VH_DrawPicAt left y chunknum))))
-
 (define (VWB_Bar x y width height color)
   (when (VW_MarkUpdateBlock x y (+ x width) (+ y height -1))
     (let rows ((row 0))

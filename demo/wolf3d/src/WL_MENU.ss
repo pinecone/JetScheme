@@ -528,32 +528,6 @@
           ((= which 11) (SD_SetMusicMode smm_AdLib) (StartCPMusic MENUSONG) (CP_Sound))
           (else (MenuFadeOut) #f))))
 
-;; WL_MENU.C:1761-1829. Joystick and gamepad choices are inactive because the
-;; configured input backend exposes neither device.
-(define (CP_Control)
-  (DrawCtlScreen)
-  (WaitKeyUp)
-  (let loop ()
-    (let ((which (HandleMenu CtlItems control-active control-text #f)))
-      (cond ((= which 0)
-             (set! mouseenabled (not mouseenabled))
-             (DrawCtlScreen)
-             (ShootSnd)
-             (loop))
-            ((= which 4)
-             (MouseSensitivity)
-             (DrawCtlScreen)
-             (WaitKeyUp)
-             (loop))
-            ((= which 5)
-             (CustomControls)
-             (DrawCtlScreen)
-             (WaitKeyUp)
-             (loop))
-            (else
-             (MenuFadeOut)
-             #f)))))
-
 (define (DrawMouseSens)
   (ClearMScreen)
   (VWB_DrawPic 112 184 C_MOUSELBACKPIC)
@@ -911,6 +885,8 @@
 (define (CalibrateJoystick)
   #f)
 
+;; WL_MENU.C:1761-1829. Joystick and gamepad choices are inactive because the
+;; configured input backend exposes neither device.
 (define (CP_Control)
   (DrawCtlScreen)
   (MenuFadeIn)
@@ -957,18 +933,6 @@
   (VW_UpdateScreen)
   (MenuFadeIn)
   (WaitKeyUp))
-
-(define (CP_EndGame)
-  (if (not (Confirm "Are you sure you want to\nend the game you\nare playing? (Y or N):"))
-      #f
-      (begin
-        (set! pickquick #f)
-        (set! lives 0)
-        (set! playstate ex_died)
-        (setf! main-active 4 0)
-        (setf! main-routine 7 'viewscores)
-        (setf! main-text 7 "View Scores")
-        #t)))
 
 (define (CP_NewGame)
   (let choose-episode ()

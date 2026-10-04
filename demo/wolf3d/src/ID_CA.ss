@@ -410,8 +410,6 @@
     (VW_MarkUpdateBlock 0 0 319 199)))
 
 (define NUMSNDCHUNKS 288)
-(define STARTPCSOUNDS 0)
-(define STARTADLIBSOUNDS 87)
 (define STARTDIGISOUNDS 174)
 (define STARTMUSIC 261)
 
@@ -497,7 +495,6 @@
 (define grneeded (make-bytevector NUMCHUNKS 0))
 (define STARTTILE8 (+ 135 graphics-offset))
 (define STARTEXTERNS (+ STARTTILE8 1))
-(define NUMTILE8 72)
 (define BLOCK 64)
 
 (define pictable (make-vector NUMPICS 0))

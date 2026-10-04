@@ -108,20 +108,6 @@
       (set! gamepal palette)
       (VL_SetPalette palette))))
 
-(define (VL_SetColor color red green blue)
-  (let ((offset (* color 3)))
-    (setf! curpal offset red)
-    (setf! curpal (+ offset 1) green)
-    (setf! curpal (+ offset 2) blue)
-    (unless demo-headless (dos:set-palette curpal))))
-
-
-(define (VL_GetColor color)
-  (let ((offset (* color 3)))
-    (tuple (ref curpal offset)
-           (ref curpal (+ offset 1))
-           (ref curpal (+ offset 2)))))
-
 (define (VL_SetPalette palette)
   (let loop ((index 0))
     (when (< index PALETTEBYTES)
@@ -144,47 +130,6 @@
         (setf! filled (+ (* color 3) 2) blue)
         (loop (+ color 1))))
     (VL_SetPalette filled)))
-
-(define (VL_FadeOut start end red green blue steps)
-  (VL_WaitVBL 1)
-  (let ((original (bytevector-copy curpal 0 PALETTEBYTES))
-        (faded (bytevector-copy curpal 0 PALETTEBYTES)))
-    (let frames ((frame 0))
-      (when (< frame steps)
-        (let colors ((color start))
-          (when (<= color end)
-            (let ((offset (* color 3)))
-              (setf! faded offset (+ (ref original offset)
-                                     (truncate (/ (* (- red (ref original offset)) frame) steps))) )
-              (setf! faded (+ offset 1) (+ (ref original (+ offset 1))
-                                           (truncate (/ (* (- green (ref original (+ offset 1))) frame) steps))))
-              (setf! faded (+ offset 2) (+ (ref original (+ offset 2))
-                                           (truncate (/ (* (- blue (ref original (+ offset 2))) frame) steps)))))
-            (colors (+ color 1))))
-        (VL_WaitVBL 1)
-        (VL_SetPalette faded)
-        (frames (+ frame 1)))))
-  (VL_FillPalette red green blue)
-  (set! screenfaded #t))
-
-(define (VL_FadeIn start end palette steps)
-  (VL_WaitVBL 1)
-  (let ((original (bytevector-copy curpal 0 PALETTEBYTES))
-        (faded (bytevector-copy curpal 0 PALETTEBYTES))
-        (first (* start 3))
-        (last (+ (* end 3) 2)))
-    (let frames ((frame 0))
-      (when (< frame steps)
-        (let bytes ((index first))
-          (when (<= index last)
-            (setf! faded index (+ (ref original index)
-                                  (truncate (/ (* (- (ref palette index) (ref original index)) frame) steps))))
-            (bytes (+ index 1))))
-        (VL_WaitVBL 1)
-        (VL_SetPalette faded)
-        (frames (+ frame 1)))))
-  (VL_SetPalette palette)
-  (set! screenfaded #f))
 
 (define (VL_TestPaletteSet)
   (let ((palette1 (make-bytevector PALETTEBYTES 0))
@@ -244,28 +189,6 @@
                    (ref source (+ (* plane count) index)))
             (bytes (+ index 1))))
         (planes (+ plane 1))))))
-
-;; ID_VL.C: VL_MemToScreen. Source is four contiguous planar runs; plane
-;; zero begins at x's VGA plane, so each successive run advances one pixel.
-(define (VL_MemToScreen source width height x y)
-  (let* ((bytes-wide (quotient width 4))
-         (count (* bytes-wide height)))
-    (let planes ((plane 0))
-      (when (< plane 4)
-        (let rows ((row 0))
-          (when (< row height)
-            (let bytes ((byte 0))
-              (when (< byte bytes-wide)
-                (VL_Plot (+ x (* byte 4) plane) (+ y row)
-                         (ref source (+ (* plane count) (* row bytes-wide) byte)))
-                (bytes (+ byte 1))))
-            (rows (+ row 1))))
-        (planes (+ plane 1))))))
-
-;; ID_VL.C names this a masked transfer, but its mask initialization is
-;; commented out; its data-copy loop is the same four-plane transfer.
-(define (VL_MaskedToScreen source width height x y)
-  (VL_MemToScreen source width height x y))
 
 ;; ID_VL.C: VL_LatchToScreen, VGA write mode 1 expressed over the linear
 ;; framebuffer: each latched planar byte supplies its corresponding pixel.

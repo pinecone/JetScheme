@@ -444,28 +444,6 @@
   (setf! actor-dir new north)
   (setf! actor-temp1 new 6))
 
-(define (T_BJRun index tics)
-  (let loop ((move (* 2048 tics)))
-    (when (> move 0)
-      (if (< move (ref actor-distance index))
-          (MoveObj index move)
-          (let ((distance (ref actor-distance index)))
-            (center-on-tile index)
-            (SelectPathDir index)
-            (setf! actor-temp1 index (- (ref actor-temp1 index) 1))
-            (if (= (ref actor-temp1 index) 0)
-                (NewState index s_bjjump1)
-                (loop (- move distance))))))))
-
-(define (T_BJJump index tics)
-  (MoveObj index (* 680 tics)))
-
-(define (T_BJYell index tics)
-  (PlaySoundLocActor YEAHSND index))
-
-(define (T_BJDone index tics)
-  (set! playstate ex_victorious))
-
 (define lastsound -1)
 
 (define (PlaySoundLocActor sound index)
@@ -501,39 +479,6 @@
       ((= which gretelobj) (SD_PlaySound MEINSND))
       ((= which giftobj) (SD_PlaySound DONNERSND))
       ((= which fatobj) (SD_PlaySound ROSESND)))))
-
-;; WL_ACT2.C: T_Shoot.  C's global tics is irrelevant to this instant action.
-(define (T_Shoot index tics)
-  (when (and (areabyplayer-at (ref actor-areanumber index)) (CheckLine index))
-    (let* ((dx (abs (- (ref actor-tilex index) player-tilex)))
-           (dy (abs (- (ref actor-tiley index) player-tiley)))
-           (base-dist (max dx dy))
-           (which (ref actor-class index))
-           (dist (if (or (= which (class-of en_ss)) (= which bossobj))
-                     (truncate (/ (* base-dist 2) 3)) base-dist))
-           (visible (not (= 0 (bitwise-and (ref actor-flags index) FL_VISABLE))))
-           (hitchance (if (>= thrustspeed RUNSPEED)
-                          (- 160 (* dist (if visible 16 8)))
-                          (- 256 (* dist (if visible 16 8))))))
-      (when (< (US_RndT) hitchance)
-        (TakeDamage (arithmetic-shift (US_RndT)
-                                      (if (< dist 2) -2 (if (< dist 4) -3 -4))) index))
-      (PlaySoundLocActor
-       (cond ((= which (class-of en_ss)) SSFIRESND)
-             ((or (= which giftobj) (= which fatobj)) MISSILEFIRESND)
-             ((or (= which mechahitlerobj) (= which realhitlerobj) (= which bossobj)) BOSSFIRESND)
-             ((= which schabbobj) SCHABBSTHROWSND)
-             ((= which fakeobj) FLAMETHROWERSND)
-             (else NAZIFIRESND))
-       index))))
-
-(define (T_Bite index tics)
-  (PlaySoundLocActor DOGATTACKSND index)
-  (let ((dx (- (abs (- player-x (ref actor-x index))) TILEGLOBAL)))
-    (when (<= dx MINACTORDIST)
-      (let ((dy (- (abs (- player-y (ref actor-y index))) TILEGLOBAL)))
-        (when (and (<= dy MINACTORDIST) (< (US_RndT) 180))
-          (TakeDamage (arithmetic-shift (US_RndT) -4) index))))))
 
 (define (CheckPosition index)
   (let ((xl (tileof (- (ref actor-x index) PLAYERSIZE)))
