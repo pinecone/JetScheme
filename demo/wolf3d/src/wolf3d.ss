@@ -10,6 +10,7 @@ Start the game, record a demo, or play a recorded demo.
   --record-demo FILE     Record level 1 without sound; Escape saves and exits.
   --play-demo FILE       Play a recording without sound, then exit.
   --headless             Play without a window; requires --play-demo.
+  --fullscreen           Start in fullscreen; otherwise start in a 320x200 window.
   --turn-speed NUMBER    Plus turn speed (default: 62.5).
   --walk-speed NUMBER    Plus walk speed (default: 52.5).
 
@@ -46,7 +47,8 @@ Examples:
                (entry (assoc name '(("--datadir" . path) ("--record-demo" . file)
                                     ("--play-demo" . file) ("--turn-speed" . number)
                                     ("--walk-speed" . number) ("--plus" . flag)
-                                    ("--hardcore" . flag) ("--headless" . flag))))
+                                    ("--hardcore" . flag) ("--headless" . flag)
+                                    ("--fullscreen" . flag))))
                (kind (and entry (cdr entry))))
           (cond
             ((string=? name "--help") (print-help) (exit 0))
@@ -303,4 +305,4 @@ Examples:
                 (run-demo)
                 (dos:request-quit))
               (run-game))))
-      (dos:frame-loop "Wolfenstein 3D" screenwidth screenheight 'crt frame)))
+      (dos:frame-loop "Wolfenstein 3D" screenwidth screenheight 'crt (if (option "--fullscreen" #f) #t #f) frame)))

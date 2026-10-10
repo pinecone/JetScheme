@@ -527,7 +527,14 @@ void main() {
 
 } // namespace
 
-static Atom frame_loop(VmState& s, Atom title, Atom width, Atom height, Atom emulation, Atom frame)
+static Atom frame_loop(
+	VmState& s,
+	Atom title,
+	Atom width,
+	Atom height,
+	Atom emulation,
+	Atom fullscreen,
+	Atom frame)
 {
 	JET_DIE_UNLESS(&s, video.vm == nullptr, "frame-loop: already running");
 
@@ -555,6 +562,7 @@ static Atom frame_loop(VmState& s, Atom title, Atom width, Atom height, Atom emu
 		"frame-loop: window is {}x{}",
 		video.width,
 		video.height);
+	JET_DIE_UNLESS(&s, is_type<jet::Type::Boolean>(fullscreen), "frame-loop: fullscreen expects a boolean");
 
 	s.stack_top = s.stack_base + s.frames.back().top;
 
@@ -565,7 +573,7 @@ static Atom frame_loop(VmState& s, Atom title, Atom width, Atom height, Atom emu
 	app.event_cb = event_cb;
 	app.width = video.width * WINDOW_SCALE;
 	app.height = static_cast<int>(video.height * WINDOW_SCALE * PIXEL_ASPECT);
-	app.fullscreen = true;
+	app.fullscreen = unbox<bool>(fullscreen);
 	app.window_title = slow_unbox<String>(s, title)->c_str();
 	app.logger.func = slog_func;
 	sapp_run(&app);
