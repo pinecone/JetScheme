@@ -1939,18 +1939,11 @@
   (let* ((gx (- xintercept viewx))
          (gy (- yintercept viewy))
          (nx (- (FixedByFrac gx viewcos) (FixedByFrac gy viewsin)))
-         (dist (max nx MINDIST)))
+         (dist (max nx 1024)))
     (truncate (/ heightnumerator (truncate (/ dist 256))))))
 
 (define (plus:rows height)
-  (let* ((raw (truncate (/ height 8)))
-         (scale (cond ((< raw 1) 1)
-                      ((> raw maxscale) maxscale)
-                      (else raw)))
-         (scaled (if (< scale stepbytwo)
-                     scale
-                     (+ stepbytwo (* 3 (truncate (/ (- scale stepbytwo) 3)))))))
-    (* 2 scaled)))
+  (* 2 (clamp (truncate (/ height 8)) 1 8192)))
 
 (define (plus:scale-post pixx scaleheight page column tilex tiley vertical)
   (unless plus:*visibility-only*
