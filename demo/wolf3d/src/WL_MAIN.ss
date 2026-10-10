@@ -44,20 +44,24 @@
       (loop (+ index 1)))))
 
 (define (MS_CheckParm check)
-  (let scan ((index 1))
-    (if (>= index (vector-length argv))
-        #f
-        (let* ((argument (ref argv index))
-               (start (let skip ((offset 0))
-                        (if (and (< offset (string-length argument))
-                                 (not (char-alphabetic? (string-ref argument offset))))
-                            (skip (+ offset 1))
-                            offset))))
-          (if (and (= (- (string-length argument) start) (string-length check))
-                   (string=? (ascii-downcase (substring argument start (string-length argument)))
-                        (ascii-downcase check)))
-              #t
-              (scan (+ index 1)))))))
+  ;; Cheats are always on; "goobers" needs no flag. The flag itself is still
+  ;; accepted for compatibility but has no effect beyond this.
+  (if (string=? (ascii-downcase check) "goobers")
+      #t
+      (let scan ((index 1))
+        (if (>= index (vector-length argv))
+            #f
+            (let* ((argument (ref argv index))
+                   (start (let skip ((offset 0))
+                            (if (and (< offset (string-length argument))
+                                     (not (char-alphabetic? (string-ref argument offset))))
+                                (skip (+ offset 1))
+                                offset))))
+              (if (and (= (- (string-length argument) start) (string-length check))
+                       (string=? (ascii-downcase (substring argument start (string-length argument)))
+                            (ascii-downcase check)))
+                  #t
+                  (scan (+ index 1))))))))
 
 (define (config-string bytes offset limit)
   (let loop ((index 0) (name ""))
