@@ -664,6 +664,10 @@ struct Compiler
 	};
 	std::unordered_map<Expr*, LambdaBindings> lambda_bindings_;
 
+	std::vector<bool> definitely_assigned_refs_;
+	void compute_definite_assignment(Program& program);
+	bool definitely_assigned(Expr* ref);
+
 	ResolvedBinding binding(Expr* expr);
 	bool is_tail(Expr* expr);
 	bool is_self_tail_call(Expr* call, Expr* current);
@@ -672,7 +676,7 @@ struct Compiler
 	std::optional<ResolvedBinding> lookup_name(std::string_view name);
 	void push_lambda_scope(Expr* lambda);
 	void pop_lambda_scope();
-	bool prim_binding_lowerable(ResolvedBinding binding, std::string_view prim);
+	bool prim_binding_lowerable(Expr* ref, std::string_view prim);
 	struct PrimLowering
 	{
 		enum class Kind { None, Unary, Arith, Ref };
@@ -3205,18 +3209,19 @@ void Compiler::verify_anf(Expr* expr)
 	}
 }
 
-bool Compiler::prim_binding_lowerable(ResolvedBinding binding, std::string_view prim)
+bool Compiler::prim_binding_lowerable(Expr* ref, std::string_view prim)
 {
-	if (binding.lambda != toplevel_lambda_)
+	ResolvedBinding resolved{binding(ref)};
+	if (resolved.lambda != toplevel_lambda_ || !definitely_assigned(ref))
 	{
 		return false;
 	}
 	LambdaBindings& tl = lambda_bindings_[toplevel_lambda_];
-	if (get(tl.reassigned_after_init, binding.breadth))
+	if (get(tl.reassigned_after_init, resolved.breadth))
 	{
 		return false;
 	}
-	Expr* init = get(tl.bound_init, binding.breadth);
+	Expr* init = get(tl.bound_init, resolved.breadth);
 	return init && init->kind == ExprKind::PrimRef && init->prim_ref.name == prim;
 }
 
@@ -3391,8 +3396,174 @@ bool Compiler::binding_used(Expr* owner, uint32_t breadth)
 	return binding_use_count(owner, breadth) != 0;
 }
 
+namespace
+{
+
+	struct DefiniteAssignment
+	{
+		Compiler& db;
+		std::unordered_set<uint64_t> defined{};
+		std::vector<uint64_t> log{};
+		std::vector<Expr*> pending{};
+
+		void define(ResolvedBinding binding)
+		{
+			if (binding.lambda && defined.insert(binding_key(binding)).second)
+			{
+				log.push_back(binding_key(binding));
+			}
+		}
+
+		void rollback(size_t mark)
+		{
+			for (size_t i = mark; i < log.size(); ++i)
+			{
+				defined.erase(log[i]);
+			}
+			log.resize(mark);
+		}
+
+		void flush()
+		{
+			std::vector<Expr*> ready{std::exchange(pending, {})};
+			for (Expr* lambda : ready)
+			{
+				analyze_body(lambda->lambda.body);
+			}
+		}
+
+		void analyze_body(Slice<Expr*> body)
+		{
+			size_t mark{log.size()};
+			for (Expr* form : body)
+			{
+				walk(form);
+			}
+			flush();
+			rollback(mark);
+		}
+
+		void walk_arms(Expr* consequent, Expr* alternate)
+		{
+			size_t mark{log.size()};
+			walk(consequent);
+			flush();
+			rollback(mark);
+			if (alternate)
+			{
+				walk(alternate);
+				flush();
+				rollback(mark);
+			}
+		}
+
+		void walk(Expr* expr)
+		{
+			switch (expr->kind)
+			{
+				case ExprKind::NumberLit:
+				case ExprKind::StringLit:
+				case ExprKind::BooleanLit:
+				case ExprKind::CharacterLit:
+				case ExprKind::SymbolLit:
+				case ExprKind::UnknownLit:
+				case ExprKind::PrimRef:
+					break;
+
+				case ExprKind::VarRef:
+					if (ResolvedBinding binding{get(db.bindings_, expr->id)};
+							binding.lambda && defined.count(binding_key(binding)))
+					{
+						set(db.definitely_assigned_refs_, expr->id, true);
+					}
+					break;
+
+				case ExprKind::Lambda:
+					pending.push_back(expr);
+					break;
+
+				case ExprKind::Call:
+				case ExprKind::Apply:
+					walk_children(db, expr, [&](Expr* child)
+					{
+						walk(child);
+					});
+					flush();
+					break;
+
+				case ExprKind::SetBang:
+					walk(expr->set_bang.value);
+					if (expr->set_bang.is_init)
+					{
+						define(get(db.bindings_, expr->id));
+					}
+					break;
+
+				case ExprKind::SetRef:
+					walk_children(db, expr, [&](Expr* child)
+					{
+						walk(child);
+					});
+					break;
+
+				case ExprKind::If:
+					walk(expr->if_.test);
+					flush();
+					walk_arms(expr->if_.consequent, expr->if_.alternate);
+					break;
+
+				case ExprKind::IterNext:
+					walk(expr->iter_next.cursor);
+					flush();
+					walk_arms(expr->iter_next.consequent, expr->iter_next.alternate);
+					break;
+
+				case ExprKind::Let:
+				{
+					for (Expr* val : expr->let.vals)
+					{
+						walk(val);
+					}
+					Compiler::LambdaBindings& owner_bindings{db.lambda_bindings_[expr->let.owner]};
+					for (uint32_t i = 0; i < expr->let.names.size(); ++i)
+					{
+						size_t slot{expr->let.slot_base + i};
+						if (!get(owner_bindings.is_initialized, slot) && !get(owner_bindings.reassigned_after_init, slot))
+						{
+							define({expr->let.owner, slot});
+						}
+					}
+					for (Expr* form : expr->let.body)
+					{
+						walk(form);
+					}
+					break;
+				}
+
+				default:
+					JETC_DIE(db, expr->loc, "definite-assignment: unhandled ExprKind {}", expr->kind);
+			}
+		}
+	};
+
+}
+
+void Compiler::compute_definite_assignment(Program& program)
+{
+	definitely_assigned_refs_.assign(next_expr_id_ + 1, false);
+	DefiniteAssignment pass{.db = *this};
+	pass.analyze_body(program.forms);
+}
+
+bool Compiler::definitely_assigned(Expr* ref)
+{
+	return get(definitely_assigned_refs_, ref->id);
+}
+
 void Compiler::run_optimization_passes(Program& program)
 {
+	compute_definite_assignment(program);
+
 	if (flags_.inlining)
 	{
 		run_anf_inline(program);
@@ -3942,7 +4113,7 @@ Compiler::PrimLowering Compiler::prim_call_lowering(Expr* call)
 	if (call->call.args.size() == 1)
 	{
 		std::optional<Opcode> unary{unary_arith_opcode(name)};
-		if (unary && prim_binding_lowerable(binding(proc), name))
+		if (unary && prim_binding_lowerable(proc, name))
 		{
 			return {PrimLowering::Kind::Unary, *unary};
 		}
@@ -3956,7 +4127,7 @@ Compiler::PrimLowering Compiler::prim_call_lowering(Expr* call)
 	{
 		return {};
 	}
-	if (!prim_binding_lowerable(binding(proc), name))
+	if (!prim_binding_lowerable(proc, name))
 	{
 		return {};
 	}
@@ -4331,8 +4502,6 @@ namespace
 	struct AnfInline
 	{
 		Compiler& db;
-		// A hit means the binding provably holds this init wherever it is
-		// referenced, so a call may splice it and a reference may become it.
 		std::unordered_map<uint64_t, Expr*> lambda_cands{};
 		std::unordered_map<uint64_t, Expr*> const_cands{};
 		std::unordered_set<Expr*> candidate_lambdas{};
@@ -4431,6 +4600,7 @@ namespace
 				case ExprKind::VarRef:
 					e->var_ref = orig->var_ref;
 					set(db.bindings_, e->id, translate(get(db.bindings_, orig->id), ctx));
+					set(db.definitely_assigned_refs_, e->id, db.definitely_assigned(orig));
 					break;
 				case ExprKind::Call:
 					e->call.proc = clone(orig->call.proc, ctx);
@@ -4577,7 +4747,7 @@ namespace
 				case ExprKind::VarRef:
 				{
 					auto it = const_cands.find(binding_key(get(db.bindings_, expr->id)));
-					if (it == const_cands.end())
+					if (it == const_cands.end() || !db.definitely_assigned(expr))
 					{
 						return expr;
 					}
@@ -4603,7 +4773,7 @@ namespace
 				case ExprKind::Call:
 				{
 					Expr* proc = expr->call.proc;
-					if (proc->kind == ExprKind::VarRef)
+					if (proc->kind == ExprKind::VarRef && db.definitely_assigned(proc))
 					{
 						if (auto it = lambda_cands.find(binding_key(get(db.bindings_, proc->id)));
 								it != lambda_cands.end())
@@ -4735,7 +4905,7 @@ namespace
 				return false;
 			}
 			std::string_view name = e->call.proc->var_ref.name;
-			return is_binarizable(name) && db.prim_binding_lowerable(db.binding(e->call.proc), name);
+			return is_binarizable(name) && db.prim_binding_lowerable(e->call.proc, name);
 		}
 
 		Expr* make_binary(SourceLoc loc, Expr* proc, Expr* lhs, Expr* rhs)
@@ -4753,6 +4923,7 @@ namespace
 			Expr* e = db.make_expr(proc->loc, ExprKind::VarRef);
 			e->var_ref.name = proc->var_ref.name;
 			set(db.bindings_, e->id, source);
+			set(db.definitely_assigned_refs_, e->id, db.definitely_assigned(proc));
 			return e;
 		}
 

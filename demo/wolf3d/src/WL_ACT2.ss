@@ -450,11 +450,6 @@
   (set! lastsound sound)
   (PlaySoundLocGlobal sound (ref actor-x index) (ref actor-y index)))
 
-(define deathscreams
-  (if shareware
-      (vector DEATHSCREAM1SND DEATHSCREAM2SND)
-      (vector DEATHSCREAM1SND DEATHSCREAM2SND DEATHSCREAM3SND DEATHSCREAM4SND
-              DEATHSCREAM5SND DEATHSCREAM7SND DEATHSCREAM8SND DEATHSCREAM9SND)))
 
 ;; WL_ACT2.C:1080-1160. The bosses are not positioned; C plays them flat.
 (define (A_DeathScream index tics)

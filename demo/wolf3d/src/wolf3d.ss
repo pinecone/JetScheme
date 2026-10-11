@@ -104,6 +104,11 @@ Examples:
 (include "WL_ACT1.ss")
 (include "WL_ACT2.ss")
 (include "ID_SD.ss")
+(define deathscreams
+  (if shareware
+      (vector DEATHSCREAM1SND DEATHSCREAM2SND)
+      (vector DEATHSCREAM1SND DEATHSCREAM2SND DEATHSCREAM3SND DEATHSCREAM4SND
+              DEATHSCREAM5SND DEATHSCREAM7SND DEATHSCREAM8SND DEATHSCREAM9SND)))
 (include "ID_MM.ss")
 (include "ID_US_1.ss")
 (include "WL_STATE.ss")

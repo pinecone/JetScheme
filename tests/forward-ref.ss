@@ -1,0 +1,26 @@
+(define early (vector FWD-A FWD-B))
+(define FWD-A 29)
+(define FWD-B 22)
+(write early) (newline)
+
+(define (late) (vector FWD-C FWD-D))
+(define FWD-C 7)
+(define FWD-D 8)
+($check (equal? #(7 8) (late)))
+
+(define (reads-e) FWD-E)
+(define (call-thunk thunk) (thunk))
+(define via-call (call-thunk reads-e))
+(define FWD-E 5)
+(write via-call) (newline)
+
+(define (internal)
+  (define v (vector FWD-F))
+  (define FWD-F 1)
+  v)
+(write (internal)) (newline)
+
+(define (reads-g) FWD-G)
+(define branch-val (if FWD-A 1 2))
+(define FWD-G 6)
+($check (= 6 (reads-g)))
