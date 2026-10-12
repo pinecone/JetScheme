@@ -5,14 +5,24 @@
 #include "runtime.h"
 
 #include <cstdlib>
+#include <fstream>
+#include <limits>
 
 static Atom enter(VmState& state, Atom callback)
 {
 	uint64_t* samples{g_profile.active.load()};
 	SiteProfile* site{g_profile.context.site};
+	uint64_t generation{g_profile.generation};
 	Atom result{jet_enter_vm(state, callback, nullptr, 0)};
-	JET_DIE_UNLESS(&state, g_profile.active.load() == samples && g_profile.context.site == site,
-	               "profile: restored caller attribution");
+	bool restored{g_profile.context.site == site};
+	if (generation != g_profile.generation)
+	{
+		restored = !g_profile.context.linked;
+	}
+	JET_DIE_UNLESS(
+		&state,
+		g_profile.active.load() == samples && restored,
+		"profile: restored caller attribution");
 	return result;
 }
 
@@ -128,6 +138,123 @@ static void test_samples()
 	}
 }
 
+static void test_reset()
+{
+	Profile profile;
+	Code instruction[OPCODE_SIZE]{};
+	instruction[OPCODE_SIZE - 1] = static_cast<uint8_t>(Opcode::ldi);
+	uint8_t op{instruction[OPCODE_SIZE - 1]};
+	profile.code_begin = reinterpret_cast<uintptr_t>(instruction);
+	profile.code_size = sizeof(instruction);
+	profile.site_index = {0};
+	profile.sites.push_back({instruction, 0, op});
+	SiteProfile* site{&profile.sites.front()};
+	profile.primitives.push_back({"reset-test"});
+	PrimitiveProfile* primitive{&profile.primitives.front()};
+
+	profile.op(instruction);
+	profile.op(instruction);
+	profile.sample();
+	profile.field(Opcode::ldk, FieldReceiver::Vector, false);
+	profile.key_miss();
+	profile.miss(0, 1, instruction);
+	profile.primitive(primitive);
+	profile.sample();
+	profile.lambda_calls = 7;
+	profile.gc_collections = 3;
+	profile.gc_samples = 4;
+	profile.host_samples = 5;
+	profile.entry_samples = 6;
+	profile.op_samples[op] = 8;
+	profile.gc_pauses.add(100);
+	profile.host_calls.add(200);
+	uint64_t before{profile_wall_ns()};
+	profile.reset();
+	JET_DIE_UNLESS(
+		nullptr,
+		profile.start_ns >= before && profile.generation == 1,
+		"profile: reset wall origin");
+	JET_DIE_UNLESS(
+		nullptr,
+		profile.code_begin == reinterpret_cast<uintptr_t>(instruction)
+			&& profile.code_size == sizeof(instruction) && profile.site_index == std::vector<uint32_t>{0}
+			&& &profile.sites.front() == site && site->owner == instruction && site->callee_code == instruction,
+		"profile: reset preserves site and cache metadata");
+	JET_DIE_UNLESS(
+		nullptr,
+		&profile.primitives.front() == primitive && primitive->name == "reset-test"
+			&& profile.active.load() == &primitive->work.samples,
+		"profile: reset preserves primitive attribution");
+	for (size_t i = 0; i < std::size(profile.op_counts); ++i)
+	{
+		JET_DIE_UNLESS(
+			nullptr,
+			profile.op_counts[i] == 0 && profile.op_samples[i] == 0 && profile.ic_misses[i] == 0,
+			"profile: reset opcode counters");
+		for (uint64_t count : profile.pair_after[i])
+		{
+			JET_DIE_UNLESS(nullptr, count == 0, "profile: reset opcode pairs");
+		}
+		for (const FieldProfile& field : profile.fields[i])
+		{
+			JET_DIE_UNLESS(nullptr, field.count == 0, "profile: reset field counters");
+			for (uint64_t count : field.outcome_counts)
+			{
+				JET_DIE_UNLESS(nullptr, count == 0, "profile: reset field outcomes");
+			}
+		}
+	}
+	JET_DIE_UNLESS(
+		nullptr,
+		site->work.count == 0 && site->work.samples == 0 && site->misses.total() == 0
+			&& primitive->work.count == 0 && primitive->work.samples == 0 && !profile.context.linked,
+		"profile: reset work and context");
+	JET_DIE_UNLESS(
+		nullptr,
+		profile.lambda_calls == 0 && profile.prim_calls == 0 && profile.gc_collections == 0
+			&& profile.gc_samples == 0 && profile.host_samples == 0 && profile.entry_samples == 0,
+		"profile: reset global counters");
+	JET_DIE_UNLESS(
+		nullptr,
+		profile.gc_pauses.count == 0 && profile.host_calls.count == 0
+			&& profile.gc_pauses.minimum == std::numeric_limits<uint64_t>::max()
+			&& profile.host_calls.minimum == std::numeric_limits<uint64_t>::max(),
+		"profile: reset durations");
+
+	profile.op(instruction);
+	uint64_t* caller_samples{profile.active.load()};
+	{
+		Profile::HostTimer timer{profile};
+		profile.reset();
+		profile.op(instruction);
+		profile.sample();
+	}
+	JET_DIE_UNLESS(
+		nullptr,
+		profile.active.load() == caller_samples && !profile.context.linked
+			&& profile.host_calls.count == 1 && profile.host_calls.total <= profile_wall_ns() - profile.start_ns,
+		"profile: reset during callback");
+	profile.op(instruction);
+	JET_DIE_UNLESS(nullptr, profile.pair_after[op][op] == 0, "profile: no pre-reset opcode pair");
+	profile.primitive(primitive);
+	{
+		Profile::GcTimer timer{profile};
+		profile.reset();
+		profile.sample();
+	}
+	JET_DIE_UNLESS(
+		nullptr,
+		profile.active.load() == &primitive->work.samples
+			&& profile.gc_samples == 1 && profile.gc_pauses.count == 1,
+		"profile: reset during gc timer");
+	profile.begin();
+	profile.select(&primitive->work.samples);
+	profile.reset();
+	bool sampled{wait_sample(primitive->work.samples)};
+	profile.stop();
+	JET_DIE_UNLESS(nullptr, sampled && profile.generation == 4, "profile: reset restarts sampler");
+}
+
 static void test_durations()
 {
 	ProfileDurations durations;
@@ -162,6 +289,7 @@ static void test_durations()
 int main(int argc, char* argv[])
 {
 	test_samples();
+	test_reset();
 	test_durations();
 
 	Env env;
@@ -202,7 +330,12 @@ int main(int argc, char* argv[])
 )"};
 	if (argc > 1)
 	{
-		source = argv[1];
+		// The argument is a path to a Scheme source file.
+		std::ifstream stream{argv[1]};
+		JET_DIE_UNLESS(nullptr, stream.is_open(), "profile-test: cannot read '{}'", argv[1]);
+		std::string text{std::istreambuf_iterator<char>{stream}, std::istreambuf_iterator<char>{}};
+		static std::string storage{std::move(text)};
+		source = storage.c_str();
 	}
 	Bytecode code{compile(source, "profile-test", {.inlining = false, .lift_lambdas = false})};
 	LoadedProgram program{load_program(state, code.data(), code.size())};

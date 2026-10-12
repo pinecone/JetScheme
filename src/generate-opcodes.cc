@@ -518,6 +518,10 @@ int main(int argc, char* argv[])
 	gen.op("maxi").args(u16("dst"), u16("a"), u64("imm")).i_of("max");
 	gen.op("maxf").float_of("max", "Binary");
 
+	gen.op("ash").args(u16("dst"), u16("a"), u16("b"));
+	gen.op("ashi").args(u16("dst"), u16("a"), u64("imm")).i_of("ash");
+	gen.op("ashf").float_of("ash", "Binary");
+
 	gen.expand_replicas();
 	gen.fixup();
 

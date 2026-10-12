@@ -90,8 +90,56 @@ void Profile::stop()
 	select(nullptr);
 }
 
+void Profile::reset()
+{
+	bool running{sampler.joinable()};
+	uint64_t* samples{active.load(std::memory_order_relaxed)};
+	// The sampler may already have loaded a counter address. Join it before clearing counters.
+	stop();
+	std::fill_n(op_counts, std::size(op_counts), 0);
+	std::fill_n(op_samples, std::size(op_samples), 0);
+	std::fill_n(ic_misses, std::size(ic_misses), 0);
+	for (auto& row : pair_after)
+	{
+		std::fill_n(row, std::size(row), 0);
+	}
+	for (auto& receivers : fields)
+	{
+		for (FieldProfile& field : receivers)
+		{
+			field = {};
+		}
+	}
+	// Keep addresses and cache-classification metadata stable for primitives and suspended host entries.
+	for (SiteProfile& site : sites)
+	{
+		site.work = {};
+		site.misses = {};
+	}
+	for (PrimitiveProfile& primitive : primitives)
+	{
+		primitive.work = {};
+	}
+	lambda_calls = 0;
+	prim_calls = 0;
+	gc_collections = 0;
+	gc_samples = 0;
+	host_samples = 0;
+	entry_samples = 0;
+	gc_pauses = {};
+	host_calls = {};
+	context = {};
+	++generation;
+	start_ns = profile_wall_ns();
+	if (running)
+	{
+		begin();
+	}
+	select(samples);
+}
+
 Profile::GcTimer::GcTimer(Profile& profile)
-	: profile{profile}, start{profile_wall_ns()},
+	: profile{profile}, start{profile_wall_ns()}, generation{profile.generation},
 	samples{profile.active.load(std::memory_order_relaxed)}
 {
 	profile.select(&profile.gc_samples);
@@ -99,12 +147,13 @@ Profile::GcTimer::GcTimer(Profile& profile)
 
 Profile::GcTimer::~GcTimer()
 {
-	profile.gc_pauses.add(profile_wall_ns() - start);
+	uint64_t measured_start{generation == profile.generation ? start : profile.start_ns};
+	profile.gc_pauses.add(profile_wall_ns() - measured_start);
 	profile.select(samples);
 }
 
 Profile::HostTimer::HostTimer(Profile& profile)
-	: profile{profile}, start{profile_wall_ns()}, context{profile.context},
+	: profile{profile}, start{profile_wall_ns()}, generation{profile.generation}, context{profile.context},
 	samples{profile.active.load(std::memory_order_relaxed)}
 {
 	profile.context = {};
@@ -113,8 +162,10 @@ Profile::HostTimer::HostTimer(Profile& profile)
 
 Profile::HostTimer::~HostTimer()
 {
-	profile.host_calls.add(profile_wall_ns() - start);
-	profile.context = context;
+	// A callback can reset the profile: exclude the old interval and do not revive its opcode context.
+	uint64_t measured_start{generation == profile.generation ? start : profile.start_ns};
+	profile.host_calls.add(profile_wall_ns() - measured_start);
+	profile.context = generation == profile.generation ? context : ProfileContext{};
 	profile.select(samples);
 }
 
@@ -321,7 +372,8 @@ static void print_work(const VmState& state, uint64_t total_samples)
 	std::vector<const PrimitiveProfile*> primitives;
 	for (const PrimitiveProfile& primitive : g_profile.primitives)
 	{
-		if (primitive.work.count != 0)
+		// A primitive entered before a reset may still receive samples after it.
+		if (primitive.work.count != 0 || primitive.work.samples != 0)
 		{
 			primitives.push_back(&primitive);
 		}

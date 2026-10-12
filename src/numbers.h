@@ -4,9 +4,44 @@
 #pragma once
 
 #include "atom.h"
+#include "error.h"
 #include "platform.h"
 
+#include <cmath>
 #include <cstdint>
+
+JET_ALWAYS_INLINE inline int32_t to_int32(VmState& vm, double value)
+{
+	JET_DIE_UNLESS(&vm, std::isfinite(value), "bitwise op requires a finite number, given {}", value);
+	return static_cast<int32_t>(static_cast<int64_t>(value));
+}
+
+template <bool shift_left>
+JET_ALWAYS_INLINE inline double arithmetic_shift_immediate(VmState& vm, double value, uint32_t count)
+{
+	int32_t value_bits{to_int32(vm, value)};
+	if constexpr (shift_left)
+	{
+		return static_cast<double>(static_cast<int32_t>(static_cast<uint32_t>(value_bits) << count));
+	}
+	else
+	{
+		return static_cast<double>(value_bits >> count);
+	}
+}
+
+JET_ALWAYS_INLINE inline double arithmetic_shift_number(VmState& vm, double value, double shift)
+{
+	int32_t value_bits{to_int32(vm, value)};
+	int32_t shift_count{to_int32(vm, shift)};
+	// Unsigned negation also handles INT32_MIN without signed overflow.
+	uint32_t count_bits{static_cast<uint32_t>(shift_count)};
+	int32_t shifted{
+		shift_count >= 0
+			? static_cast<int32_t>(static_cast<uint32_t>(value_bits) << (count_bits & 31))
+			: value_bits >> ((0U - count_bits) & 31)};
+	return static_cast<double>(shifted);
+}
 
 JET_ALWAYS_INLINE inline bool as_uint64(Atom atom, uint64_t& value)
 {

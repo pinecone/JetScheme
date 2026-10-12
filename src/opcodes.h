@@ -31,6 +31,7 @@ struct OP_unboxed_float
 	uint16_t dst;
 	uint16_t a;
 	// Register number for register modes; baked atom for constant modes.
+	// Loading valid ashf immediates replaces the atom with a masked shift magnitude.
 	uint64_t b;
 	UnboxedFloatMode mode;
 };

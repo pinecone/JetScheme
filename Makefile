@@ -287,7 +287,7 @@ check-tags-deps check-python-deps:
 # --- Run targets (variant-aware via JET env var) --------------------
 
 # Recipe lines run in order, so a test target never builds variants in parallel.
-test: | check-python-deps
+test:
 	$(Q)$(MAKE) test-release
 	$(Q)$(MAKE) test-profile
 	$(Q)$(MAKE) sanitize
@@ -297,12 +297,12 @@ test-release:
 	@printf '  TEST release\n'
 	$(Q)cd tests && JET=../$(BUILD)/jet JET_MODULE_TESTS='$(MODULE_TESTS)' ./run-tests
 
-test-profile: | check-python-deps
+test-profile:
 	$(Q)$(MAKE) VARIANT=profile
 	@printf '  TEST profile\n'
 	$(Q)cd tests && JET=../$(BUILD)/jet-profile JET_MODULE_TESTS='$(MODULE_TESTS)' ./run-tests
 	$(Q)$(MAKE) VARIANT=profile $(BUILD)/profile/profile-test
-	$(Q)cd tests && JET=../$(BUILD)/jet-profile ./run-profile-tests
+	$(Q)./$(BUILD)/profile/profile-test
 
 show-sanitizers:
 	@list=$$($(CXX) $(CXXFLAGS) -x c++ /dev/null -c -o /dev/null -### 2>&1 | tr ' ' '\n' | \

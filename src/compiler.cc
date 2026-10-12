@@ -3928,6 +3928,10 @@ namespace
 		{
 			return Opcode::div;
 		}
+		if (name == "arithmetic-shift")
+		{
+			return Opcode::ash;
+		}
 		if (name == "min")
 		{
 			return Opcode::min;
@@ -6540,6 +6544,7 @@ namespace
 						case Opcode::sub:
 						case Opcode::mul:
 						case Opcode::div:
+						case Opcode::ash:
 						case Opcode::min:
 						case Opcode::max:
 						case Opcode::cmp:
@@ -6552,6 +6557,7 @@ namespace
 						case Opcode::subi:
 						case Opcode::muli:
 						case Opcode::divi:
+						case Opcode::ashi:
 						case Opcode::mini:
 						case Opcode::maxi:
 						case Opcode::cmpi:
@@ -7044,6 +7050,7 @@ namespace
 				case Opcode::sub: emit_binary.template operator()<OP_sub>(); break;
 				case Opcode::mul: emit_binary.template operator()<OP_mul>(); break;
 				case Opcode::div: emit_binary.template operator()<OP_div>(); break;
+				case Opcode::ash: emit_binary.template operator()<OP_ash>(); break;
 				case Opcode::min: emit_binary.template operator()<OP_min>(); break;
 				case Opcode::max: emit_binary.template operator()<OP_max>(); break;
 				case Opcode::cmp: emit_binary.template operator()<OP_cmp>(); break;
@@ -7056,6 +7063,7 @@ namespace
 				case Opcode::subi: emit_binary_imm.template operator()<OP_subi>(); break;
 				case Opcode::muli: emit_binary_imm.template operator()<OP_muli>(); break;
 				case Opcode::divi: emit_binary_imm.template operator()<OP_divi>(); break;
+				case Opcode::ashi: emit_binary_imm.template operator()<OP_ashi>(); break;
 				case Opcode::mini: emit_binary_imm.template operator()<OP_mini>(); break;
 				case Opcode::maxi: emit_binary_imm.template operator()<OP_maxi>(); break;
 				case Opcode::cmpi: emit_binary_imm.template operator()<OP_cmpi>(); break;
@@ -7066,6 +7074,7 @@ namespace
 				case Opcode::subf:
 				case Opcode::mulf:
 				case Opcode::divf:
+				case Opcode::ashf:
 				case Opcode::minf:
 				case Opcode::maxf:
 				case Opcode::truncf:

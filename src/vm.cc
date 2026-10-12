@@ -45,8 +45,37 @@ static constexpr GcDestructor gc_destructor_table[jet_tag::TAG_MAX]{
 
 static_assert(gc_destructor_table[jet_tag::pair] == gc_destroy<Cons>);
 static_assert(gc_destructor_table[jet_tag::struct_] == nullptr);
+enum class ShiftDirection : uint8_t
+{
+	Dynamic,
+	Left,
+	Right,
+};
+
 static VmOp dispatch_table[256];
 static VmOp unboxed_float_handler(Opcode opcode, UnboxedFloatMode mode);
+static VmOp ash_immediate_handler(UnboxedFloatMode mode, ShiftDirection direction);
+static VmOp ashi_handler(ShiftDirection direction);
+
+static ShiftDirection prepare_shift_immediate(uint64_t bits, uint32_t& magnitude)
+{
+	Atom value{Atom::from_bits(bits)};
+	if (!is_type<jet::Type::Number>(value))
+	{
+		return ShiftDirection::Dynamic;
+	}
+	double shift{unbox<Number>(value)};
+	// Invalid counts must still fail at execution, not while loading an unused function.
+	if (!std::isfinite(shift) || shift < -0x1p63 || shift >= 0x1p63)
+	{
+		return ShiftDirection::Dynamic;
+	}
+	int32_t count{static_cast<int32_t>(static_cast<int64_t>(shift))};
+	uint32_t count_bits{static_cast<uint32_t>(count)};
+	// Loaded immediates hold a masked magnitude; unsigned negation handles INT32_MIN.
+	magnitude = (count >= 0 ? count_bits : 0U - count_bits) & 31;
+	return count >= 0 ? ShiftDirection::Left : ShiftDirection::Right;
+}
 
 uint16_t Gc::register_struct_destructor(VmState& vm, StructDestructor destructor)
 {
@@ -581,10 +610,34 @@ LoadedProgram load_program(VmState& vm, Code* bytecode, size_t n_bytes)
 			}
 
 			VmOp handler{dispatch_table[opcode]};
-			if (unboxed_float_kind(static_cast<Opcode>(opcode)) != UnboxedFloatKind::None)
+			if (static_cast<Opcode>(opcode) == Opcode::ashi)
+			{
+				OP_ashi* operands{reinterpret_cast<OP_ashi*>(code + OPCODE_SIZE)};
+				uint32_t magnitude{};
+				ShiftDirection direction{prepare_shift_immediate(operands->imm, magnitude)};
+				if (direction != ShiftDirection::Dynamic)
+				{
+					operands->imm = magnitude;
+					handler = ashi_handler(direction);
+				}
+			}
+			else if (unboxed_float_kind(static_cast<Opcode>(opcode)) != UnboxedFloatKind::None)
 			{
 				OP_unboxed_float* operands{reinterpret_cast<OP_unboxed_float*>(code + OPCODE_SIZE)};
 				handler = unboxed_float_handler(static_cast<Opcode>(opcode), operands->mode);
+				if (static_cast<Opcode>(opcode) == Opcode::ashf
+				    && (operands->mode == UnboxedFloatMode::StartImm
+				        || operands->mode == UnboxedFloatMode::Imm
+				        || operands->mode == UnboxedFloatMode::StoreImm))
+				{
+					uint32_t magnitude{};
+					ShiftDirection direction{prepare_shift_immediate(operands->b, magnitude)};
+					if (direction != ShiftDirection::Dynamic)
+					{
+						operands->b = magnitude;
+						handler = ash_immediate_handler(operands->mode, direction);
+					}
+				}
 			}
 			std::memcpy(code, &handler, sizeof(handler));
 
@@ -1501,6 +1554,15 @@ JET_ALWAYS_INLINE static Atom div_atoms(VmState& vm, Atom lhs, Atom rhs)
 	return box(Number::from_ieee(unbox<Number>(lhs) / unbox<Number>(rhs)));
 }
 
+JET_ALWAYS_INLINE static Atom ash_atoms(VmState& vm, Atom lhs, Atom rhs)
+{
+	JET_DIE_UNLESS(
+		&vm,
+		is_type<jet::Type::Number>(lhs) && is_type<jet::Type::Number>(rhs),
+		"arithmetic-shift: expected numbers");
+	return box(Number::trusted(arithmetic_shift_number(vm, unbox<Number>(lhs), unbox<Number>(rhs))));
+}
+
 JET_ALWAYS_INLINE static Atom min_atoms(VmState& vm, Atom lhs, Atom rhs)
 {
 	JET_DIE_UNLESS(
@@ -1755,6 +1817,33 @@ JET_PRESERVE_NONE static void op_binop_ri_impl(VM_OP_PARAMS)
 	DISPATCH();
 }
 
+template <bool shift_left>
+JET_PRESERVE_NONE static void op_ashi_immediate(VM_OP_PARAMS)
+{
+	OP_ashi* operands{reinterpret_cast<OP_ashi*>(pc)};
+	pc += sizeof(*operands);
+	Atom lhs{frame_regs[operands->a]};
+	JET_DIE_UNLESS(&s, is_type<jet::Type::Number>(lhs), "arithmetic-shift: expected numbers");
+	double result{arithmetic_shift_immediate<shift_left>(
+		s, unbox<Number>(lhs), static_cast<uint32_t>(operands->imm))};
+	frame_regs[operands->dst] = box(Number::trusted(result));
+	DISPATCH();
+}
+
+static VmOp ashi_handler(ShiftDirection direction)
+{
+	switch (direction)
+	{
+		case ShiftDirection::Left:
+			return op_ashi_immediate<true>;
+		case ShiftDirection::Right:
+			return op_ashi_immediate<false>;
+		case ShiftDirection::Dynamic:
+			return op_binop_ri_impl<ash_atoms, OP_ashi>;
+	}
+	JET_DIE(nullptr, "invalid shift direction {}", static_cast<uint8_t>(direction));
+}
+
 static constexpr const char* unboxed_float_name(Opcode op)
 {
 	switch (op)
@@ -1767,6 +1856,8 @@ static constexpr const char* unboxed_float_name(Opcode op)
 			return "*";
 		case Opcode::divf:
 			return "/";
+		case Opcode::ashf:
+			return "arithmetic-shift";
 		case Opcode::minf:
 			return "min";
 		case Opcode::maxf:
@@ -1819,7 +1910,7 @@ JET_ALWAYS_INLINE static void unboxed_float_check(VmState& vm, const Atom& value
 	}
 }
 
-template <Opcode op, UnboxedFloatMode mode>
+template <Opcode op, UnboxedFloatMode mode, ShiftDirection direction = ShiftDirection::Dynamic>
 JET_PRESERVE_NONE static void op_unboxed_float(VM_OP_PARAMS)
 {
 	static_assert(unboxed_float_valid(op, mode));
@@ -1856,13 +1947,15 @@ JET_PRESERVE_NONE static void op_unboxed_float(VM_OP_PARAMS)
 		}
 	}()};
 
+	constexpr bool prepared_shift{op == Opcode::ashf && direction != ShiftDirection::Dynamic};
+	static_assert(!prepared_shift || addressing.imm);
 	OP_unboxed_float* operands{reinterpret_cast<OP_unboxed_float*>(pc)};
 	pc += sizeof(*operands);
 	if constexpr (!addressing.left_unboxed)
 	{
 		unboxed_float_check<op>(s, frame_regs[operands->a]);
 	}
-	if constexpr (!addressing.right_unboxed && !unboxed_float_unary(op))
+	if constexpr (!addressing.right_unboxed && !unboxed_float_unary(op) && !prepared_shift)
 	{
 		unboxed_float_check<op>(
 			s, addressing.imm ? Atom::from_bits(operands->b) : frame_regs[operands->b]);
@@ -1874,7 +1967,7 @@ JET_PRESERVE_NONE static void op_unboxed_float(VM_OP_PARAMS)
 	{
 		left = load_float_volatile(&frame_regs[operands->a].bits);
 	}
-	if constexpr (!addressing.right_unboxed && !unboxed_float_unary(op))
+	if constexpr (!addressing.right_unboxed && !unboxed_float_unary(op) && !prepared_shift)
 	{
 		Atom rhs{addressing.imm ? Atom::from_bits(operands->b) : frame_regs[operands->b]};
 		right = load_float_volatile(&rhs.bits);
@@ -1924,6 +2017,18 @@ JET_PRESERVE_NONE static void op_unboxed_float(VM_OP_PARAMS)
 		{
 			result = left / right;
 		}
+		else if constexpr (op == Opcode::ashf)
+		{
+			if constexpr (prepared_shift)
+			{
+				result = arithmetic_shift_immediate<direction == ShiftDirection::Left>(
+					s, left, static_cast<uint32_t>(operands->b));
+			}
+			else
+			{
+				result = arithmetic_shift_number(s, left, right);
+			}
+		}
 		else if constexpr (op == Opcode::minf)
 		{
 			result = right < left ? right : left;
@@ -1962,7 +2067,12 @@ JET_PRESERVE_NONE static void op_unboxed_float(VM_OP_PARAMS)
 				result = 0.0;
 			}
 		}
-		if constexpr (op == Opcode::minf || op == Opcode::maxf)
+		if constexpr (op == Opcode::ashf)
+		{
+			// An int32 result converts exactly to a canonical double: no NaN or negative-zero fixup.
+			unboxed_float = Number::trusted(result).value;
+		}
+		else if constexpr (op == Opcode::minf || op == Opcode::maxf)
 		{
 			unboxed_float = result;
 		}
@@ -1977,6 +2087,31 @@ JET_PRESERVE_NONE static void op_unboxed_float(VM_OP_PARAMS)
 		}
 	}
 	DISPATCH();
+}
+
+template <ShiftDirection direction>
+static VmOp ash_immediate_handler(UnboxedFloatMode mode)
+{
+	switch (mode)
+	{
+		case UnboxedFloatMode::StartImm:
+			return op_unboxed_float<Opcode::ashf, UnboxedFloatMode::StartImm, direction>;
+		case UnboxedFloatMode::Imm:
+			return op_unboxed_float<Opcode::ashf, UnboxedFloatMode::Imm, direction>;
+		case UnboxedFloatMode::StoreImm:
+			return op_unboxed_float<Opcode::ashf, UnboxedFloatMode::StoreImm, direction>;
+		default:
+			JET_DIE(nullptr, "invalid immediate shift mode {}", static_cast<uint8_t>(mode));
+	}
+}
+
+static VmOp ash_immediate_handler(UnboxedFloatMode mode, ShiftDirection direction)
+{
+	if (direction == ShiftDirection::Left)
+	{
+		return ash_immediate_handler<ShiftDirection::Left>(mode);
+	}
+	return ash_immediate_handler<ShiftDirection::Right>(mode);
 }
 
 template <Opcode op, UnboxedFloatMode mode>
@@ -2026,6 +2161,8 @@ static VmOp unboxed_float_handler(Opcode opcode, UnboxedFloatMode mode)
 			return unboxed_float_handler<Opcode::mulf>(mode);
 		case Opcode::divf:
 			return unboxed_float_handler<Opcode::divf>(mode);
+		case Opcode::ashf:
+			return unboxed_float_handler<Opcode::ashf>(mode);
 		case Opcode::minf:
 			return unboxed_float_handler<Opcode::minf>(mode);
 		case Opcode::maxf:
@@ -2059,6 +2196,7 @@ static constexpr auto& op_addf = op_unboxed_float<Opcode::addf, UnboxedFloatMode
 static constexpr auto& op_subf = op_unboxed_float<Opcode::subf, UnboxedFloatMode::Start>;
 static constexpr auto& op_mulf = op_unboxed_float<Opcode::mulf, UnboxedFloatMode::Start>;
 static constexpr auto& op_divf = op_unboxed_float<Opcode::divf, UnboxedFloatMode::Start>;
+static constexpr auto& op_ashf = op_unboxed_float<Opcode::ashf, UnboxedFloatMode::Start>;
 static constexpr auto& op_minf = op_unboxed_float<Opcode::minf, UnboxedFloatMode::Start>;
 static constexpr auto& op_maxf = op_unboxed_float<Opcode::maxf, UnboxedFloatMode::Start>;
 static constexpr auto& op_truncf = op_unboxed_float<Opcode::truncf, UnboxedFloatMode::Start>;
@@ -2076,6 +2214,7 @@ static constexpr auto& op_add = op_binop_rr_impl<add_atoms, OP_add>;
 static constexpr auto& op_sub = op_binop_rr_impl<sub_atoms, OP_sub>;
 static constexpr auto& op_mul = op_binop_rr_impl<mul_atoms, OP_mul>;
 static constexpr auto& op_div = op_binop_rr_impl<div_atoms, OP_div>;
+static constexpr auto& op_ash = op_binop_rr_impl<ash_atoms, OP_ash>;
 static constexpr auto& op_min = op_binop_rr_impl<min_atoms, OP_min>;
 static constexpr auto& op_max = op_binop_rr_impl<max_atoms, OP_max>;
 static constexpr auto& op_cmp = op_binop_rr_impl<numeq_atoms, OP_cmp>;
@@ -2088,6 +2227,7 @@ static constexpr auto& op_addi = op_binop_ri_impl<add_atoms, OP_addi>;
 static constexpr auto& op_subi = op_binop_ri_impl<sub_atoms, OP_subi>;
 static constexpr auto& op_muli = op_binop_ri_impl<mul_atoms, OP_muli>;
 static constexpr auto& op_divi = op_binop_ri_impl<div_atoms, OP_divi>;
+static constexpr auto& op_ashi = op_binop_ri_impl<ash_atoms, OP_ashi>;
 static constexpr auto& op_mini = op_binop_ri_impl<min_atoms, OP_mini>;
 static constexpr auto& op_maxi = op_binop_ri_impl<max_atoms, OP_maxi>;
 static constexpr auto& op_cmpi = op_binop_ri_impl<numeq_atoms, OP_cmpi>;

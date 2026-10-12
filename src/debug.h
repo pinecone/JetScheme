@@ -163,6 +163,7 @@ struct Profile
 	uint64_t host_samples{};
 	uint64_t entry_samples{};
 	uint64_t start_ns{};
+	uint64_t generation{};
 	ProfileContext context;
 	ProfileDurations gc_pauses;
 	ProfileDurations host_calls;
@@ -173,6 +174,7 @@ struct Profile
 	{
 		Profile& profile;
 		uint64_t start;
+		uint64_t generation;
 		uint64_t* samples;
 
 		explicit GcTimer(Profile& profile);
@@ -183,6 +185,7 @@ struct Profile
 	{
 		Profile& profile;
 		uint64_t start;
+		uint64_t generation;
 		ProfileContext context;
 		uint64_t* samples;
 
@@ -194,6 +197,7 @@ struct Profile
 	void sample();
 	void begin();
 	void stop();
+	void reset();
 	void bind(std::string_view name, Atom atom);
 	void prepare(const VmState& state, const Code* code, size_t size);
 
@@ -297,6 +301,7 @@ inline uint64_t profile_wall_ns()
 #define JET_PROFILE_FIELD_KEY_MISS() g_profile.key_miss()
 #define JET_PROFILE_GC_TIMER Profile::GcTimer profile_gc_timer{g_profile}
 #define JET_PROFILE_BEGIN(vm) profile_begin(vm)
+#define JET_PROFILE_RESET() g_profile.reset()
 #define JET_PROFILE_MISS(cached, current) g_profile.miss(cached, current)
 #define JET_PROFILE_CALL_MISS(cached, current) \
 	g_profile.miss(cached, current.bits, \
@@ -318,6 +323,7 @@ void profile_begin(VmState& vm);
 #define JET_PROFILE_FIELD_KEY_MISS() ((void)0)
 #define JET_PROFILE_GC_TIMER ((void)0)
 #define JET_PROFILE_BEGIN(vm) ((void)0)
+#define JET_PROFILE_RESET() ((void)0)
 #define JET_PROFILE_MISS(cached, current) ((void)0)
 #define JET_PROFILE_CALL_MISS(cached, current) ((void)0)
 #define JET_PROFILE_HOST ((void)0)

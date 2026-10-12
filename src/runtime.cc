@@ -3,6 +3,7 @@
 
 #include "runtime.h"
 #include "compiler.h"
+#include "debug.h"
 #include "platform.h"
 
 #include <algorithm>
@@ -179,12 +180,6 @@ struct JetMin
 	T operator()(VmState& vm, T lhs, T rhs) { return std::min(lhs, rhs); }
 };
 
-static int32_t to_int32(VmState& vm, double value)
-{
-	JET_DIE_UNLESS(&vm, std::isfinite(value), "bitwise op requires a finite number, given {}", value);
-	return static_cast<int32_t>(static_cast<int64_t>(value));
-}
-
 template <typename T>
 struct BitAnd
 {
@@ -215,17 +210,6 @@ struct BitXor
 static double jet_bitwise_not(VmState& vm, double value)
 {
 	return static_cast<double>(~to_int32(vm, value));
-}
-
-static double jet_arithmetic_shift(VmState& vm, double value, double shift)
-{
-	int32_t value_bits{to_int32(vm, value)};
-	int32_t shift_count{to_int32(vm, shift)};
-	int32_t shifted{
-		shift_count >= 0
-			? static_cast<int32_t>(static_cast<uint32_t>(value_bits) << (shift_count & 31))
-			: value_bits >> ((-shift_count) & 31)};
-	return static_cast<double>(shifted);
 }
 
 static double jet_abs(double value)
@@ -365,7 +349,7 @@ void init_number(VmState& vm)
 		make_prim<arith_unary_fun<double, jet_bitwise_not, Number::trusted>>(vm, exactly(1)));
 	env.bind(
 		"arithmetic-shift",
-		make_prim<arith_binary_fun<double, jet_arithmetic_shift, Number::trusted>>(vm, exactly(2)));
+		make_prim<arith_binary_fun<double, arithmetic_shift_number, Number::trusted>>(vm, exactly(2)));
 
 	env.bind("exact?", make_prim<arith_unary_pred<double, jet_is_exact>>(vm, exactly(1)));
 	env.bind("integer?", make_prim<arith_unary_pred<double, jet_is_integer>>(vm, exactly(1)));
@@ -2816,6 +2800,12 @@ static Atom exit_(VmState& vm, Atom status)
 	vm_exit(vm, static_cast<int>(slow_unbox<Number>(vm, status)));
 }
 
+static Atom profile_reset(VmState&)
+{
+	JET_PROFILE_RESET();
+	return Atom{};
+}
+
 void init_runtime(VmState& vm)
 {
 	Env& env{vm.env};
@@ -2844,6 +2834,7 @@ void init_runtime(VmState& vm)
 	env.bind("char?", make_prim<type_pred<jet::Type::Character>>(vm));
 	env.bind("procedure?", make_prim<is_procedure>(vm));
 	env.bind("%check", make_prim<prim_check>(vm, exactly(4)));
+	env.bind("%profile-reset", make_prim<profile_reset>(vm));
 	env.bind("time-monotonic", make_prim<time_monotonic>(vm));
 	env.bind("exit", make_prim<exit_>(vm));
 }

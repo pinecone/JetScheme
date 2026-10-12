@@ -207,8 +207,14 @@ Examples:
   (VL_SetPalette gamepal)
   (set! screenfaded #f)
   (set! fizzlein #f)
+  ;; Resolve lazy page loads and view setup before the timed workload, without advancing gameplay.
+  (PM_Preload (lambda (current total) #f))
+  (if plus:*enabled*
+      (when (plus:resize) (DrawPlayBorder))
+      (SetPlaneViewSize))
   (set! demo-lasttimecount 0)
   (set! demo-deadline (time-monotonic))
+  ((%prim "%profile-reset"))
   (let ((started (time-monotonic)))
     (let loop ()
       (when (and (= playstate ex_stillplaying)
