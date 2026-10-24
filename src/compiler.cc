@@ -3583,6 +3583,44 @@ void Compiler::run_optimization_passes(Program& program)
 	}
 }
 
+static uint32_t push_bound_names(
+	Compiler& db,
+	Slice<std::string_view>& names,
+	std::vector<std::pair<std::string_view, std::optional<size_t>>>& shadowed)
+{
+	std::vector<std::string_view>& frame = db.frame_names_.back();
+	std::unordered_map<std::string_view, size_t>& idx = db.lambda_name_index_.back();
+	uint32_t slot_base{static_cast<uint32_t>(frame.size())};
+	for (std::string_view name : names)
+	{
+		size_t breadth = frame.size();
+		frame.push_back(name);
+		auto it = idx.find(name);
+		shadowed.push_back({name,
+			it == idx.end() ? std::nullopt : std::optional<size_t>(it->second)});
+		idx[name] = breadth;
+	}
+	return slot_base;
+}
+
+static void pop_bound_names(
+	Compiler& db,
+	const std::vector<std::pair<std::string_view, std::optional<size_t>>>& shadowed)
+{
+	std::unordered_map<std::string_view, size_t>& idx = db.lambda_name_index_.back();
+	for (auto it = shadowed.rbegin(); it != shadowed.rend(); ++it)
+	{
+		if (it->second)
+		{
+			idx[it->first] = *it->second;
+		}
+		else
+		{
+			idx.erase(it->first);
+		}
+	}
+}
+
 void Compiler::compute_binding_addresses_in(Expr* expr)
 {
 	switch (expr->kind)
@@ -3624,42 +3662,15 @@ void Compiler::compute_binding_addresses_in(Expr* expr)
 			}
 
 			std::vector<std::pair<std::string_view, std::optional<size_t>>> shadowed;
-			{
-				std::vector<std::string_view>& frame = frame_names_.back();
-				std::unordered_map<std::string_view, size_t>& idx = lambda_name_index_.back();
-				expr->let.slot_base = static_cast<uint32_t>(frame.size());
-				expr->let.owner = lambdas_.back();
-				for (std::string_view name : expr->let.names)
-				{
-					size_t breadth = frame.size();
-					frame.push_back(name);
-					auto it = idx.find(name);
-					shadowed.push_back({name, it == idx.end()
-															? std::nullopt
-															: std::optional<size_t>(it->second)});
-					idx[name] = breadth;
-				}
-			}
+			expr->let.owner = lambdas_.back();
+			expr->let.slot_base = push_bound_names(*this, expr->let.names, shadowed);
 
 			for (Expr* form : expr->let.body)
 			{
 				compute_binding_addresses_in(form);
 			}
 
-			// A lambda in the body pushes lambda_name_index_, which can
-			// reallocate it: no reference to it may survive the body walk.
-			std::unordered_map<std::string_view, size_t>& idx = lambda_name_index_.back();
-			for (auto it = shadowed.rbegin(); it != shadowed.rend(); ++it)
-			{
-				if (it->second)
-				{
-					idx[it->first] = *it->second;
-				}
-				else
-				{
-					idx.erase(it->first);
-				}
-			}
+			pop_bound_names(*this, shadowed);
 			break;
 		}
 
@@ -3667,35 +3678,10 @@ void Compiler::compute_binding_addresses_in(Expr* expr)
 		{
 			compute_binding_addresses_in(expr->iter_next.cursor);
 			std::vector<std::pair<std::string_view, std::optional<size_t>>> shadowed;
-			{
-				std::vector<std::string_view>& frame = frame_names_.back();
-				std::unordered_map<std::string_view, size_t>& idx = lambda_name_index_.back();
-				expr->iter_next.slot_base = static_cast<uint32_t>(frame.size());
-				expr->iter_next.owner = lambdas_.back();
-				for (std::string_view name : expr->iter_next.names)
-				{
-					size_t breadth = frame.size();
-					frame.push_back(name);
-					auto it = idx.find(name);
-					shadowed.push_back({name, it == idx.end()
-															? std::nullopt
-															: std::optional<size_t>(it->second)});
-					idx[name] = breadth;
-				}
-			}
+			expr->iter_next.owner = lambdas_.back();
+			expr->iter_next.slot_base = push_bound_names(*this, expr->iter_next.names, shadowed);
 			compute_binding_addresses_in(expr->iter_next.consequent);
-			std::unordered_map<std::string_view, size_t>& idx = lambda_name_index_.back();
-			for (auto it = shadowed.rbegin(); it != shadowed.rend(); ++it)
-			{
-				if (it->second)
-				{
-					idx[it->first] = *it->second;
-				}
-				else
-				{
-					idx.erase(it->first);
-				}
-			}
+			pop_bound_names(*this, shadowed);
 			if (expr->iter_next.alternate)
 			{
 				compute_binding_addresses_in(expr->iter_next.alternate);
