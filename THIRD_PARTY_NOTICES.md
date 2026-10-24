@@ -29,9 +29,9 @@ is in `vendor/ymfm/LICENSE`.
 
 ## DeltaBlue
 
-`bench/bench-deltablue.ss`, `bench/bench-deltablue.lua`, and
-`bench/bench-deltablue.py` are translated or modified versions of the
-DeltaBlue benchmark. `bench/bench-deltablue.js` is the upstream JavaScript
+`bench/deltablue.ss`, `bench/deltablue.lua`, and
+`bench/deltablue.py` are translated or modified versions of the
+DeltaBlue benchmark. `bench/deltablue.js` is the upstream JavaScript
 source.
 
 Copyright 2008 the V8 project authors. All rights reserved.

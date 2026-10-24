@@ -10,7 +10,7 @@
 # Ported from the Are-We-Fast-Yet Python benchmark (deltablue.py); harness
 # stripped, som.Vector replaced with a thin list-backed shim, IdentityDictionary
 # replaced with a plain dict (Sym instances are unique singletons). N=12000 to
-# match bench-deltablue.lua.
+# match deltablue.lua.
 
 from abc import abstractmethod
 from enum import Enum

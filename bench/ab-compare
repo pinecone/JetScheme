@@ -12,7 +12,7 @@ Usage:
 Examples:
     ./ab-compare HEAD~1 HEAD
     ./ab-compare main perf-branch -n 30
-    ./ab-compare 5fc6008 2105bcf -b bench-fib -b bench-tak
+    ./ab-compare 5fc6008 2105bcf -b astar -b richards
 """
 import argparse
 import os
@@ -28,7 +28,7 @@ from ab_stats import collect, holm_p, percent_result, show_progress
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
-DEFAULT_BENCHES = sorted(p.stem for p in HERE.glob("bench-*.ss"))
+DEFAULT_BENCHES = sorted(p.stem for p in HERE.glob("*.ss"))
 
 
 def die(msg):

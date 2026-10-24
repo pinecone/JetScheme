@@ -4,7 +4,7 @@
 # A correct run produces queueCount = 232625 and holdCount = 93050.
 #
 # Ported from the Are-We-Fast-Yet Python benchmark (richards.py); harness
-# stripped, idle-task count raised to 100000 to match bench-richards.lua.
+# stripped, idle-task count raised to 100000 to match richards.lua.
 
 _NO_TASK = None
 _NO_WORK = None

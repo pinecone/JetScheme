@@ -88,6 +88,6 @@ function runSplayBenchmark() {
     }
   }
   if (hits !== size) {
-    throw new Error(`bench-splay produced ${hits} hits, expected ${size}`);
+    throw new Error(`splay produced ${hits} hits, expected ${size}`);
   }
 }

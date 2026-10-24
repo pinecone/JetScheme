@@ -25,7 +25,7 @@ Apple's JavaScriptCore framework.
 Examples:
     ./ab-cross                       # use HEAD
     ./ab-cross HEAD~1
-    ./ab-cross perf-branch -n 30 -b bench-fib -b bench-tak
+    ./ab-cross perf-branch -n 30 -b astar -b richards
 """
 import argparse
 import os
@@ -44,7 +44,7 @@ from ab_stats import collect, holm_p, rival_percent, show_progress
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
-DEFAULT_BENCHES = sorted(p.stem for p in HERE.glob("bench-*.ss"))
+DEFAULT_BENCHES = sorted(p.stem for p in HERE.glob("*.ss"))
 SYSTEM_JSC = Path("/System/Library/Frameworks/JavaScriptCore.framework/Versions/A/Helpers/jsc")
 
 

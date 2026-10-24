@@ -1,6 +1,6 @@
 ;; astar: A* pathfinding on a 500x500 grid using a binary heap.
 ;; Stresses heap push/pop/rescore, neighbor expansion, and struct mutation.
-;; Port of bench-astar.lua.
+;; Port of astar.lua.
 
 (define WIDTH 500)
 (define HEIGHT 500)

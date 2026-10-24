@@ -120,7 +120,7 @@ VENDOR_OBJ := $(patsubst %.cpp,$(OBJDIR)/%.o,$(MODULE_VENDOR_CC))
 ALL_OBJ := $(patsubst %.cc,$(OBJDIR)/%.o,$(ALL_CC)) $(SOKOL_OBJ) $(VENDOR_OBJ)
 PRELUDE_SOURCES := $(PRELUDE) $(MODULE_PRELUDE)
 MODULES_H := $(BUILD)/modules.h
-BENCHMARK_SS := $(sort $(wildcard bench/bench-*.ss))
+BENCHMARK_SS := $(sort $(wildcard bench/*.ss))
 SANITIZE_OPTIONS ?= halt_on_error=1:print_stacktrace=1
 SANITIZE_MARKER := Sanitizer
 SANITIZE_ENV := ASAN_OPTIONS='$(SANITIZE_OPTIONS)' UBSAN_OPTIONS='$(SANITIZE_OPTIONS)' \
@@ -316,7 +316,7 @@ define sanitize_run
 	@set -e; \
 		echo "runnin' benchmarks:"; \
 		for benchmark in $(BENCHMARK_SS); do \
-			name=$${benchmark#bench/bench-}; \
+			name=$${benchmark#bench/}; \
 			name=$${name%.ss}; \
 			printf "   %s... " "$$name"; \
 			if diagnostics=$$($(SANITIZE_ENV) $(BUILD)/jet$(2) run "$$benchmark" 2>&1 >/dev/null) && \

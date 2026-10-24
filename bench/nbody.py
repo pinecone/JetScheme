@@ -3,7 +3,7 @@
 # field mutation.
 #
 # Ported from the Are-We-Fast-Yet Python benchmark (nbody.py); harness
-# stripped. Same ITERS=250000 and expected energy as bench-nbody.lua.
+# stripped. Same ITERS=250000 and expected energy as nbody.lua.
 
 from math import sqrt
 

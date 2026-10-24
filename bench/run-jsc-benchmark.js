@@ -30,7 +30,7 @@ function runJson() {
     benchmark.benchmark();
   }
   if (!benchmark.verifyResult(benchmark.benchmark())) {
-    throw new Error('bench-json failed verification');
+    throw new Error(`${benchmarkName} failed verification`);
   }
 }
 
@@ -52,49 +52,49 @@ function runAstar() {
     pathHash = Math.imul(pathHash ^ node.y, 16777619) >>> 0;
   }
   if (result.length !== 446 || result[result.length - 1] !== end || pathHash !== 0x5088932e) {
-    throw new Error('bench-astar failed verification');
+    throw new Error(`${benchmarkName} failed verification`);
   }
 }
 
 switch (benchmarkName) {
-  case 'bench-astar':
+  case 'astar':
     runAstar();
     break;
-  case 'bench-basic':
+  case 'basic':
     load(benchmarkFile);
     runBasic(30);
     break;
-  case 'bench-cdjs':
+  case 'cdjs':
     runAwfy(1000);
     break;
-  case 'bench-deltablue':
+  case 'deltablue':
     load(benchmarkFile);
     chainTest(12000);
     projectionTest(12000);
     break;
-  case 'bench-json':
+  case 'json':
     runJson();
     break;
-  case 'bench-havlak':
+  case 'havlak':
     load(benchmarkFile);
     break;
-  case 'bench-nbody':
+  case 'nbody':
     runAwfy(250000);
     break;
-  case 'bench-raytrace':
+  case 'raytrace':
     loadOctane();
     for (let i = 0; i < 60; i += 1) {
       renderScene();
     }
     break;
-  case 'bench-richards':
+  case 'richards':
     loadOctane();
     COUNT = 100000;
     EXPECTED_QUEUE_COUNT = 232625;
     EXPECTED_HOLD_COUNT = 93050;
     runRichards();
     break;
-  case 'bench-splay':
+  case 'splay':
     load(benchmarkFile);
     runSplayBenchmark();
     break;
