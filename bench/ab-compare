@@ -132,8 +132,13 @@ def main():
     for b in benches:
         # Each ref compiles its own worktree copy of the benchmark, so the two refs
         # may differ in surface syntax while expressing the same workload.
-        src_old = wt_old / "bench" / f"{b}.ss"
-        src_new = wt_new / "bench" / f"{b}.ss"
+        # Benchmarks were renamed from bench-<name>.ss to <name>.ss; refs older
+        # than the rename still use the old spelling, so accept either.
+        def bench_src(wt):
+            src = wt / "bench" / f"{b}.ss"
+            return src if src.exists() else wt / "bench" / f"bench-{b}.ss"
+        src_old = bench_src(wt_old)
+        src_new = bench_src(wt_new)
         missing = [ref for ref, src in ((args.ref_old, src_old), (args.ref_new, src_new))
                    if not src.exists()]
         if missing:
