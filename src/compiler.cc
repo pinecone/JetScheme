@@ -5373,10 +5373,17 @@ namespace
 		SourceLoc loc;
 	};
 
-	struct UnboxedFloatChain
+	// Unboxed-float chain state: describes code.back() when a following
+	// arithmetic op may fuse it into a float chain. expr is the defining
+	// expression; binding, when present, is a single-use, non-reassigned
+	// local whose home register equals dst. Every emit clears the state, so
+	// it is valid only while code.back() is still the producer.
+	struct UnboxedFloatProducer
 	{
-		std::optional<uint64_t> binding;
 		Expr* expr{nullptr};
+		std::optional<uint64_t> binding;
+		uint16_t dst{};
+		explicit operator bool() const { return expr != nullptr; }
 	};
 
 	struct LirLambda
@@ -5404,7 +5411,7 @@ namespace
 		// register (call results adopted as homes).
 		std::unordered_map<uint16_t, uint16_t> phys_home;
 		std::unordered_set<uint16_t> temp_regs;
-		UnboxedFloatChain chain;
+		UnboxedFloatProducer producer;
 	};
 
 	struct LirProgram
@@ -5453,7 +5460,7 @@ namespace
 		{
 			i.loc = loc;
 			LirLambda& lambda{current_lambda()};
-			lambda.chain = {};
+			lambda.producer = {};
 			lambda.code.push_back(i);
 		}
 
@@ -5487,7 +5494,7 @@ namespace
 			if (opcode && unboxed_float_kind(*opcode) != UnboxedFloatKind::Comparison
 					&& code.back().u.arith.dst == home)
 			{
-				current_lambda().chain.binding = binding_key({.lambda = owner, .breadth = breadth});
+				current_lambda().producer.binding = binding_key({.lambda = owner, .breadth = breadth});
 			}
 		}
 
@@ -5495,29 +5502,28 @@ namespace
 		{
 			LirLambda& lambda{current_lambda()};
 			std::optional<Opcode> opcode{unboxed_float_opcode(inst.op)};
-			if (opcode && !lambda.code.empty() && (lambda.chain.binding || lambda.chain.expr))
+			if (opcode && lambda.producer)
 			{
 				LirInst& previous{lambda.code.back()};
 				auto&& matches = [&](size_t arg)
 				{
 					Expr* argument{expression->call.args[arg]};
-					return argument == lambda.chain.expr
-								 || (lambda.chain.binding && argument->kind == ExprKind::VarRef
-										 && binding_key(db.binding(argument)) == *lambda.chain.binding);
+					return argument == lambda.producer.expr
+								 || (lambda.producer.binding && argument->kind == ExprKind::VarRef
+										 && binding_key(db.binding(argument)) == *lambda.producer.binding);
 				};
 				bool imm{is_iform(inst.op)};
-				bool lhs{matches(0) && inst.u.arith.lhs == previous.u.arith.dst};
+				bool lhs{matches(0) && inst.u.arith.lhs == lambda.producer.dst};
 				bool rhs{expression->call.args.size() == 2 && !imm && matches(1)
-								 && inst.u.arith.rhs == previous.u.arith.dst};
+								 && inst.u.arith.rhs == lambda.producer.dst};
 				if (lhs || rhs)
 				{
+					// code.back() is the last instruction, so it cannot be a consumed
+					// input half (Left/Right/Imm): those are always followed by their
+					// Store* partner. Start/StartImm means it is not yet in the chain.
 					UnboxedFloatMode mode;
 					switch (previous.unboxed_float_mode)
 					{
-						case UnboxedFloatMode::Start:
-							mode = is_iform(previous.op)
-										 ? UnboxedFloatMode::StartImm : UnboxedFloatMode::Start;
-							break;
 						case UnboxedFloatMode::StoreLeft:
 							mode = UnboxedFloatMode::Left;
 							break;
@@ -5528,7 +5534,7 @@ namespace
 							mode = UnboxedFloatMode::Imm;
 							break;
 						default:
-							JETC_DIE(db, expression->loc, "codegen: unfinished unboxed float chain");
+							mode = is_iform(previous.op) ? UnboxedFloatMode::StartImm : UnboxedFloatMode::Start;
 					}
 					unboxed_float_rewrite(previous.loc, previous, *unboxed_float_opcode(previous.op), mode);
 					unboxed_float_rewrite(
@@ -5545,7 +5551,7 @@ namespace
 			emit(expression->loc, inst);
 			if (opcode && unboxed_float_kind(*opcode) != UnboxedFloatKind::Comparison)
 			{
-				lambda.chain.expr = expression;
+				lambda.producer = {.expr = expression, .binding = std::nullopt, .dst = inst.u.arith.dst};
 			}
 		}
 
