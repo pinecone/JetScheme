@@ -998,18 +998,20 @@
         (right (min (- MAPSIZE 1) (arithmetic-shift (+ worldx plus:*ao-width*) -16)))
         (top (max 0 (arithmetic-shift (- worldy plus:*ao-width*) -16)))
         (bottom (min (- MAPSIZE 1) (arithmetic-shift (+ worldy plus:*ao-width*) -16))))
-    (let columns ((tilex left) (distance (* plus:*ao-width* plus:*ao-width*)))
-      (if (or (> tilex right) (zero? distance))
-          distance
-          (columns (+ tilex 1)
-                   (let rows ((tiley top) (nearest distance))
-                     (if (or (> tiley bottom) (zero? nearest))
-                         nearest
-                         (rows (+ tiley 1)
-                               (if (zero? (tileat tilex tiley))
-                                   nearest
-                                   (min nearest
-                                        (plus:wall-distance worldx worldy tilex tiley)))))))))))
+    (if (and (= left right) (= top bottom) (zero? (tileat left top)))
+        (* plus:*ao-width* plus:*ao-width*)
+        (let columns ((tilex left) (distance (* plus:*ao-width* plus:*ao-width*)))
+          (if (or (> tilex right) (zero? distance))
+              distance
+              (columns (+ tilex 1)
+                       (let rows ((tiley top) (nearest distance))
+                         (if (or (> tiley bottom) (zero? nearest))
+                             nearest
+                             (rows (+ tiley 1)
+                                   (if (zero? (tileat tilex tiley))
+                                       nearest
+                                       (min nearest
+                                            (plus:wall-distance worldx worldy tilex tiley))))))))))))
 
 (define (plus:corner-wall? tilex tiley)
   (and (plus:in-map? tilex tiley)
