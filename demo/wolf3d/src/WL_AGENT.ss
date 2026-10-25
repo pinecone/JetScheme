@@ -341,16 +341,21 @@
   (InitAreas))
 
 (define (T_Player controlx controly tics)
-  (if victoryflag
-      (VictorySpin tics)
-      (begin
-        (UpdateFace tics)
-        (CheckWeaponChange)
-        (when (ref buttonstate bt_use)
-          (Cmd_Use))
-        (when (and (ref buttonstate bt_attack) (not (ref buttonheld bt_attack)))
-          (Cmd_Fire))
-        (ControlMovement controlx controly))))
+  ;; C puts the player in s_deathcam (WL_ACT2.C:3632), whose NULL think stops
+  ;; T_Player/T_Attack (WL_PLAY.C:1409-1410); the port must freeze the player
+  ;; during the death cam the same way or VictorySpin drags the view away.
+  (cond (deathcam-active #f)
+        (victoryflag
+         (VictorySpin tics))
+        (else
+         (begin
+           (UpdateFace tics)
+           (CheckWeaponChange)
+           (when (ref buttonstate bt_use)
+             (Cmd_Use))
+           (when (and (ref buttonstate bt_attack) (not (ref buttonheld bt_attack)))
+             (Cmd_Fire))
+           (ControlMovement controlx controly)))))
 
 (define (VictorySpin tics)
   (cond ((> player-angle 270)
@@ -455,20 +460,23 @@
           #t))))
 
 (define (T_Attack controlx controly tics)
-  (UpdateFace tics)
-  (if victoryflag
-      (VictorySpin tics)
+  (if deathcam-active
+      #f
       (begin
-        (when (and (ref buttonstate bt_use) (not (ref buttonheld bt_use)))
-          (setf! buttonstate bt_use #f))
-        (when (and (ref buttonstate bt_attack) (not (ref buttonheld bt_attack)))
-          (setf! buttonstate bt_attack #f))
-        (ControlMovement controlx controly)
-        (unless victoryflag
-          (set! attackcount (- attackcount tics))
-          (let loop ()
-            (when (and (<= attackcount 0) (attack-step))
-              (loop)))))))
+        (UpdateFace tics)
+        (if victoryflag
+            (VictorySpin tics)
+            (begin
+              (when (and (ref buttonstate bt_use) (not (ref buttonheld bt_use)))
+                (setf! buttonstate bt_use #f))
+              (when (and (ref buttonstate bt_attack) (not (ref buttonheld bt_attack)))
+                (setf! buttonstate bt_attack #f))
+              (ControlMovement controlx controly)
+              (unless victoryflag
+                (set! attackcount (- attackcount tics))
+                (let loop ()
+                  (when (and (<= attackcount 0) (attack-step))
+                    (loop)))))))))
 
 (define (solid-at x y)
   (if (or (< x 0) (>= x MAPSIZE) (< y 0) (>= y MAPSIZE))

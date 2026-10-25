@@ -892,7 +892,7 @@
 
 ;; WL_ACT2.C:3765-3819
 (define (A_StartDeathCam index tics)
-  (FinishPaletteShifts)
+    (FinishPaletteShifts)
   (VL_WaitVBL 100)
   (if victoryflag
       (set! playstate ex_victorious)
@@ -922,6 +922,8 @@
                   (set! player-tiley (tileof y)))
                 (position (+ dist 4096)))))
         (DrawPlayBorder)
+        ;; WL_ACT2.C:3852 sets fizzlein so the next ThreeDRefresh dissolves in.
+        (set! fizzlein #t)
         (let ((which (ref actor-class index)))
           (cond ((= which schabbobj) (NewState index s_schabbdeathcam))
                 ((= which realhitlerobj) (NewState index s_hitlerdeathcam))
