@@ -1125,7 +1125,7 @@
 (define s_fatdie1 (caddr fat-states))
 (define s_fatshoot1 (cadr (cddr fat-states)))
 (define s_fatdeathcam (caddr (cddr fat-states)))
-(define s_fatshoot2 (car (cddr (cddr fat-states))))
+(define s_fatshoot2 (cadr (cddr (cddr fat-states))))
 (define s_fatshoot3 (mkstate #f (+ SPR_FAT_SHOOT1 2) 10 #f T_Shoot))
 (define s_fatshoot4 (mkstate #f (+ SPR_FAT_SHOOT1 3) 10 #f T_Shoot))
 (define s_fatshoot5 (mkstate #f (+ SPR_FAT_SHOOT1 2) 10 #f T_Shoot))
