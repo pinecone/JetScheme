@@ -1699,6 +1699,12 @@ JET_PRESERVE_NONE static void op_unary(VM_OP_PARAMS)
 	DISPATCH();
 }
 
+static double square_number(double value)
+{
+	return value * value;
+}
+
+static constexpr auto& op_sqr = op_unary<square_number, OP_sqr>;
 static constexpr auto& op_sqrt = op_unary<std::sqrt, OP_sqrt, Number::from_sum>;
 static constexpr auto& op_floor = op_unary<std::floor, OP_floor>;
 static constexpr auto& op_round = op_unary<std::round, OP_round>;
@@ -2045,6 +2051,10 @@ JET_PRESERVE_NONE static void op_unboxed_float(VM_OP_PARAMS)
 		{
 			result = std::sqrt(left);
 		}
+		else if constexpr (op == Opcode::sqrf)
+		{
+			result = left * left;
+		}
 		else if constexpr (op == Opcode::floorf)
 		{
 			result = std::floor(left);
@@ -2171,6 +2181,8 @@ static VmOp unboxed_float_handler(Opcode opcode, UnboxedFloatMode mode)
 			return unboxed_float_handler<Opcode::truncf>(mode);
 		case Opcode::sqrtf:
 			return unboxed_float_handler<Opcode::sqrtf>(mode);
+		case Opcode::sqrf:
+			return unboxed_float_handler<Opcode::sqrf>(mode);
 		case Opcode::floorf:
 			return unboxed_float_handler<Opcode::floorf>(mode);
 		case Opcode::roundf:
@@ -2201,6 +2213,7 @@ static constexpr auto& op_minf = op_unboxed_float<Opcode::minf, UnboxedFloatMode
 static constexpr auto& op_maxf = op_unboxed_float<Opcode::maxf, UnboxedFloatMode::Start>;
 static constexpr auto& op_truncf = op_unboxed_float<Opcode::truncf, UnboxedFloatMode::Start>;
 static constexpr auto& op_sqrtf = op_unboxed_float<Opcode::sqrtf, UnboxedFloatMode::Start>;
+static constexpr auto& op_sqrf = op_unboxed_float<Opcode::sqrf, UnboxedFloatMode::Start>;
 static constexpr auto& op_floorf = op_unboxed_float<Opcode::floorf, UnboxedFloatMode::Start>;
 static constexpr auto& op_roundf = op_unboxed_float<Opcode::roundf, UnboxedFloatMode::Start>;
 static constexpr auto& op_ceilf = op_unboxed_float<Opcode::ceilf, UnboxedFloatMode::Start>;

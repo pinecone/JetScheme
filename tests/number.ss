@@ -2,6 +2,31 @@
 
 ;; Basic arithmetic
 ($check (= 0 (+ 0 0)))
+;; Squaring preserves multiplication semantics across execution modes.
+(define (test-square value) (* value value))
+(define (test-square-chain value) (+ 1 (* value value)))
+;; A numeric producer before squaring exercises the unboxed-float chain.
+(define (test-square-producer value)
+  (let ((shifted (+ value 1)))
+    (+ (* shifted shifted) 2)))
+(for-each
+  (lambda (value)
+    (let* ((shifted (+ value 1))
+           (expected (+ ((lambda (multiply) (multiply shifted shifted)) *) 2)))
+      ($check (eq? (test-square-producer value) expected))))
+  (list 0 -1 1.5 -2.5 1e200 1e-200 (/ 1 0) (/ -1 0) (/ 0 0)))
+(for-each
+  (lambda (value)
+    (let ((expected ((lambda (multiply) (multiply value value)) *)))
+      ($check (eq? (test-square value) expected))
+      ($check (eq? (test-square-chain value) (+ 1 expected)))))
+  (list 0 1 -1 1.5 -2.5 1e200 1e-200 (/ 1 0) (/ -1 0) (/ 0 0)))
+($check (= 0 (let ((* (lambda (left right) (- left right)))) (* 7 7))))
+($check (= 14 (let ((* *)) (set! * +) (* 7 7))))
+(let ((calls 0))
+  (define (next) (set! calls (+ calls 1)) calls)
+  ($check (= 2 (* (next) (next))))
+  ($check (= calls 2)))
 ($check (= 0 (- 5 5)))
 ($check (= 1 (* 1 1)))
 ($check (= 2 (/ 10 5)))

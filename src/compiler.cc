@@ -4123,6 +4123,15 @@ Compiler::PrimLowering Compiler::prim_call_lowering(Expr* call)
 	}
 	if (arith)
 	{
+		Expr* lhs{call->call.args[0]};
+		Expr* rhs{call->call.args[1]};
+		if (*arith == Opcode::mul
+		    && lhs->kind == ExprKind::VarRef
+		    && rhs->kind == ExprKind::VarRef
+		    && lhs->var_ref.name == rhs->var_ref.name)
+		{
+			return {PrimLowering::Kind::Unary, Opcode::sqr};
+		}
 		return {PrimLowering::Kind::Arith, *arith};
 	}
 	return {PrimLowering::Kind::Ref, Opcode::ldk, Opcode::ldki};
@@ -6521,6 +6530,7 @@ namespace
 					{
 						case Opcode::trunc:
 						case Opcode::sqrt:
+						case Opcode::sqr:
 						case Opcode::floor:
 						case Opcode::round:
 						case Opcode::ceil:
@@ -6973,6 +6983,7 @@ namespace
 
 				case Opcode::trunc: emit_unary.template operator()<OP_trunc>(); break;
 				case Opcode::sqrt: emit_unary.template operator()<OP_sqrt>(); break;
+				case Opcode::sqr: emit_unary.template operator()<OP_sqr>(); break;
 				case Opcode::floor: emit_unary.template operator()<OP_floor>(); break;
 				case Opcode::round: emit_unary.template operator()<OP_round>(); break;
 				case Opcode::ceil: emit_unary.template operator()<OP_ceil>(); break;
@@ -7071,6 +7082,7 @@ namespace
 				case Opcode::maxf:
 				case Opcode::truncf:
 				case Opcode::sqrtf:
+				case Opcode::sqrf:
 				case Opcode::floorf:
 				case Opcode::roundf:
 				case Opcode::ceilf:

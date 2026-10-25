@@ -504,6 +504,8 @@ int main(int argc, char* argv[])
 	gen.op("truncf").float_of("trunc", "Unary");
 	gen.op("sqrt").args(u16("dst"), u16("src"));
 	gen.op("sqrtf").float_of("sqrt", "Unary");
+	gen.op("sqr").args(u16("dst"), u16("src"));
+	gen.op("sqrf").float_of("sqr", "Unary");
 	gen.op("floor").args(u16("dst"), u16("src"));
 	gen.op("floorf").float_of("floor", "Unary");
 	gen.op("round").args(u16("dst"), u16("src"));
